@@ -17,7 +17,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "3.1.0";
+const VERSION = "3.3.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -268,7 +268,7 @@ class CharroSecurityCard extends CharroBase {
     const isCover = String(c.entity || "").startsWith("cover.");
     return {
       label: c.label || "",
-      icon: c.icon || (isCover ? "mdi:garage" : "mdi:shield-check"),
+      icon: c.icon || (isCover ? "" : "mdi:shield-check"),
       alert_mode: c.alert_mode || (isCover ? "open" : "violated"),
       vehicle_entity: c.vehicle_entity || "",
       toggle_button: c.toggle_button || "",
