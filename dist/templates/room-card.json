@@ -112,7 +112,7 @@
         "min-width": "0"
       },
       {
-        "font-size": "[[[\n  const n = (variables.room_name || '').length;\n  if (n <= 6) return '18px';\n  if (n <= 9) return '16px';\n  if (n <= 12) return '14px';\n  return '12px';\n]]]\n"
+        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  /* 86px = icon col + alert col + gaps + card padding */\n  return `clamp(11px, calc((100cqw - 86px) / ${n} * 1.6), 18px)`;\n]]]"
       }
     ],
     "custom_fields": {
@@ -779,6 +779,6 @@
     "alert": "[[[\n  const cs = variables.confirm_sensor;\n  if (cs) {\n    const cst = states[cs]?.state;\n    if (!(cst === 'Violated' || cst === 'on' || cst === 'open')) return '';\n  }\n  const list = variables.alert_sensors || [];\n  const open = list.filter(e => {\n    const s = states[e]?.state;\n    if (!s) return false;\n    if (e.startsWith('cover.')) return s !== 'closed';\n    return s === 'Violated' || s === 'on' || s === 'open';\n  });\n  if (!open.length) return '';\n  const id = open[0];\n  let icon = 'mdi:door-open';\n  if (id.startsWith('cover.')) icon = 'mdi:garage-open';\n  else if (id.includes('window')) icon = 'mdi:window-open-variant';\n  else if (id.includes('motion')) icon = 'mdi:motion-sensor';\n  const n = open.length > 1 ? ` ${open.length}` : '';\n  return `<ha-icon icon=\"${icon}\" style=\"width:24px;height:24px;--mdc-icon-size:24px;vertical-align:-6px;\"></ha-icon>${n}`;\n]]]\n"
   },
   "card_mod": {
-    "style": ":host {\n  display: block !important;\n  width: 100% !important;\n  min-width: 100% !important;\n}\nha-card {\n  width: 100% !important;\n  min-width: 100% !important;\n  height: 100% !important;\n  box-sizing: border-box !important;\n}\n#container { width: 100% !important; }\n"
+    "style": ":host {\n  display: block !important;\n  width: 100% !important;\n  min-width: 100% !important;\n}\nha-card {\n  container-type: inline-size;\n  container-name: roomcard;\n  width: 100% !important;\n  min-width: 100% !important;\n  height: 100% !important;\n  box-sizing: border-box !important;\n}\n#container { width: 100% !important; }\n"
   }
 }
