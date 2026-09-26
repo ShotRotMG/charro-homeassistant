@@ -290,7 +290,7 @@
           }
         },
         "card_mod": {
-          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+          "style": "#container {\n  display: flex !important;\n  flex-direction: row !important;\n  flex-wrap: nowrap !important;\n  justify-content: center !important;\n  align-items: center !important;\n  gap: 4px !important;\n  width: 100% !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  grid-template-areas: none !important;\n  grid-template-columns: none !important;\n}\n#container > * { grid-area: auto !important; }\nha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
         },
         "custom_fields": {
           "lights": {
@@ -669,7 +669,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'heat') return 'rgba(244,67,54,0.18)';\n  if (s === 'cool') return 'rgba(33,150,243,0.18)';\n  if (s === 'heat_cool') return 'rgba(156,39,176,0.18)';\n  return 'transparent';\n]]]\n"
+                    "background": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'transparent';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return 'rgba(33,150,243,0.18)';\n  if (act === 'heating') return 'rgba(244,67,54,0.18)';\n  if (act === 'idle' || act === 'fan') return 'rgba(76,175,80,0.18)';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? 'rgba(76,175,80,0.18)' : 'rgba(33,150,243,0.18)';\n  if (s === 'heat') return (known && cur >= set) ? 'rgba(76,175,80,0.18)' : 'rgba(244,67,54,0.18)';\n  if (s === 'heat_cool') return 'rgba(156,39,176,0.18)';\n  return 'transparent';\n]]]"
                   }
                 ],
                 "grid": [
@@ -694,7 +694,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'heat') return '#f44336';\n  if (s === 'cool') return '#2196f3';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'var(--disabled-text-color)';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return '#2196f3';\n  if (act === 'heating') return '#f44336';\n  if (act === 'idle' || act === 'fan') return '#4caf50';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? '#4caf50' : '#2196f3';\n  if (s === 'heat') return (known && cur >= set) ? '#4caf50' : '#f44336';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]"
                   }
                 ],
                 "name": [
@@ -708,7 +708,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'heat') return '#f44336';\n  if (s === 'cool') return '#2196f3';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'var(--disabled-text-color)';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return '#2196f3';\n  if (act === 'heating') return '#f44336';\n  if (act === 'idle' || act === 'fan') return '#4caf50';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? '#4caf50' : '#2196f3';\n  if (s === 'heat') return (known && cur >= set) ? '#4caf50' : '#f44336';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]"
                   }
                 ]
               },
