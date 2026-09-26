@@ -1,0 +1,128 @@
+{
+  "variables": {
+    "label": "",
+    "icon": "mdi:shield-check",
+    "alert_mode": "open",
+    "vehicle_entity": "",
+    "toggle_button": ""
+  },
+  "show_name": true,
+  "show_icon": false,
+  "show_state": false,
+  "tap_action": {
+    "action": "more-info"
+  },
+  "styles": {
+    "card": [
+      {
+        "padding": "10px 12px"
+      },
+      {
+        "border-radius": "14px"
+      },
+      {
+        "box-shadow": "none"
+      }
+    ],
+    "grid": [
+      {
+        "grid-template-areas": "\"i n\" \"i s\""
+      },
+      {
+        "grid-template-columns": "40px 1fr"
+      },
+      {
+        "grid-template-rows": "auto auto"
+      },
+      {
+        "column-gap": "12px"
+      },
+      {
+        "align-items": "center"
+      }
+    ],
+    "name": [
+      {
+        "justify-self": "start"
+      },
+      {
+        "align-self": "end"
+      },
+      {
+        "font-size": "15px"
+      },
+      {
+        "font-weight": 500
+      },
+      {
+        "color": "[[[\n  const m = variables.alert_mode;\n  const bad = m === 'open' ? entity.state !== 'closed' : entity.state === 'Violated';\n  const veh = variables.vehicle_entity && states[variables.vehicle_entity]?.state === 'on';\n  if (bad) return '#f44336';\n  if (veh) return '#4CAF50';\n  return 'var(--primary-text-color)';\n]]]\n"
+      }
+    ],
+    "custom_fields": {
+      "s": [
+        {
+          "justify-self": "start"
+        },
+        {
+          "align-self": "start"
+        },
+        {
+          "font-size": "13px"
+        },
+        {
+          "color": "[[[\n  const m = variables.alert_mode;\n  const bad = m === 'open' ? entity.state !== 'closed' : entity.state === 'Violated';\n  const veh = variables.vehicle_entity && states[variables.vehicle_entity]?.state === 'on';\n  if (bad) return '#f44336';\n  if (veh) return '#4CAF50';\n  return 'var(--secondary-text-color)';\n]]]\n"
+        }
+      ]
+    }
+  },
+  "name": "[[[\n  return variables.label || entity.attributes.friendly_name;\n]]]\n",
+  "custom_fields": {
+    "i": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ return entity.entity_id ]]]",
+        "show_icon": true,
+        "show_name": false,
+        "icon": "[[[ return variables.icon ]]]",
+        "tap_action": {
+          "action": "call-service",
+          "service": "button.press",
+          "service_data": {
+            "entity_id": "[[[ return variables.toggle_button ]]]"
+          }
+        },
+        "styles": {
+          "card": [
+            {
+              "width": "36px"
+            },
+            {
+              "height": "36px"
+            },
+            {
+              "padding": 0
+            },
+            {
+              "border-radius": "50%"
+            },
+            {
+              "background": "[[[\n  const m = variables.alert_mode;\n  const bad = m === 'open' ? entity.state !== 'closed' : entity.state === 'Violated';\n  const veh = variables.vehicle_entity && states[variables.vehicle_entity]?.state === 'on';\n  if (bad) return 'rgba(244,67,54,0.20)';\n  if (veh) return 'rgba(76,175,80,0.20)';\n  return 'rgba(255,255,255,0.12)';\n]]]\n"
+            }
+          ],
+          "icon": [
+            {
+              "width": "22px"
+            },
+            {
+              "color": "[[[\n  const m = variables.alert_mode;\n  const bad = m === 'open' ? entity.state !== 'closed' : entity.state === 'Violated';\n  const veh = variables.vehicle_entity && states[variables.vehicle_entity]?.state === 'on';\n  if (bad) return '#f44336';\n  if (veh) return '#4CAF50';\n  return 'white';\n]]]\n"
+            }
+          ]
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    },
+    "s": "[[[\n  const st = entity.state.charAt(0).toUpperCase() + entity.state.slice(1);\n  const secs = (Date.now() - new Date(entity.last_changed).getTime()) / 1000;\n  const m = Math.floor(secs / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);\n  let ago;\n  if (d > 0) ago = `${d} day${d > 1 ? 's' : ''} ago`;\n  else if (h > 0) ago = `${h} hour${h > 1 ? 's' : ''} ago`;\n  else if (m > 0) ago = `${m} minute${m > 1 ? 's' : ''} ago`;\n  else ago = 'just now';\n  return `${st} · ${ago}`;\n]]]\n"
+  }
+}

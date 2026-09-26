@@ -1,0 +1,6 @@
+{
+  "name": "Charro Home Assistant",
+  "render_readme": true,
+  "filename": "charro-cards.js",
+  "homeassistant": "2024.8.0"
+}

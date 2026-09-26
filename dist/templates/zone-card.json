@@ -1,0 +1,365 @@
+{
+  "variables": {
+    "zone_name": "",
+    "source_entity": "",
+    "volume_entity": "",
+    "amp_key": "",
+    "zone_num": 0,
+    "volume_step": 1
+  },
+  "show_name": false,
+  "show_icon": false,
+  "tap_action": {
+    "action": "none"
+  },
+  "styles": {
+    "card": [
+      {
+        "padding": "8px"
+      },
+      {
+        "border-radius": "14px"
+      },
+      {
+        "box-shadow": "none"
+      },
+      {
+        "background": "rgba(var(--rgb-primary-text-color), 0.02)"
+      }
+    ],
+    "grid": [
+      {
+        "grid-template-areas": "\"power source name vol_down vol_level vol_up\""
+      },
+      {
+        "grid-template-columns": "40px 45px 1fr 40px 30px 40px"
+      },
+      {
+        "column-gap": "5px"
+      }
+    ],
+    "custom_fields": {
+      "vol_level": [
+        {
+          "font-size": "15px"
+        },
+        {
+          "font-weight": "600"
+        },
+        {
+          "justify-self": "center"
+        }
+      ]
+    }
+  },
+  "custom_fields": {
+    "power": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ return entity.entity_id ]]]",
+        "show_icon": true,
+        "show_name": false,
+        "icon": "mdi:power",
+        "tap_action": {
+          "action": "toggle"
+        },
+        "styles": {
+          "card": [
+            {
+              "padding": 0
+            },
+            {
+              "background": "none !important"
+            },
+            {
+              "backdrop-filter": "none !important"
+            },
+            {
+              "-webkit-backdrop-filter": "none !important"
+            },
+            {
+              "box-shadow": "none !important"
+            },
+            {
+              "--ha-card-background": "transparent"
+            },
+            {
+              "--ha-card-border-width": "0"
+            },
+            {
+              "--ha-card-box-shadow": "none"
+            },
+            {
+              "--ha-card-backdrop-filter": "none"
+            }
+          ],
+          "icon": [
+            {
+              "width": "24px"
+            },
+            {
+              "color": "[[[\n  return entity.state === 'on'\n    ? 'var(--primary-color)'\n    : 'var(--disabled-text-color)';\n]]]\n"
+            }
+          ]
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    },
+    "source": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ return entity.entity_id ]]]",
+        "name": "[[[ return `S${states[variables.source_entity]?.state ?? \"?\"}`; ]]]",
+        "show_icon": false,
+        "styles": {
+          "card": [
+            {
+              "height": "30px"
+            },
+            {
+              "width": "40px"
+            },
+            {
+              "border-radius": "8px"
+            },
+            {
+              "font-weight": 700
+            },
+            {
+              "margin-left": "8px"
+            },
+            {
+              "border": "[[[\n  return entity.state === 'on'\n    ? '2px solid var(--primary-color) !important'\n    : '1px solid var(--divider-color) !important';\n]]]\n"
+            },
+            {
+              "background": "none !important"
+            },
+            {
+              "backdrop-filter": "none !important"
+            },
+            {
+              "-webkit-backdrop-filter": "none !important"
+            },
+            {
+              "box-shadow": "none !important"
+            },
+            {
+              "--ha-card-background": "transparent"
+            },
+            {
+              "--ha-card-border-width": "0"
+            },
+            {
+              "--ha-card-box-shadow": "none"
+            },
+            {
+              "--ha-card-backdrop-filter": "none"
+            }
+          ]
+        },
+        "tap_action": {
+          "action": "call-service",
+          "service": "select.select_option",
+          "service_data": {
+            "entity_id": "[[[ return variables.source_entity ]]]",
+            "option": "[[[ return states[variables.source_entity]?.state === \"1\" ? \"2\" : \"1\"; ]]]"
+          }
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    },
+    "name": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ return entity.entity_id ]]]",
+        "name": "[[[ return variables.zone_name ]]]",
+        "show_icon": false,
+        "tap_action": {
+          "action": "toggle"
+        },
+        "styles": {
+          "card": [
+            {
+              "background": "none !important"
+            },
+            {
+              "backdrop-filter": "none !important"
+            },
+            {
+              "-webkit-backdrop-filter": "none !important"
+            },
+            {
+              "box-shadow": "none !important"
+            },
+            {
+              "--ha-card-background": "transparent"
+            },
+            {
+              "--ha-card-border-width": "0"
+            },
+            {
+              "--ha-card-box-shadow": "none"
+            },
+            {
+              "--ha-card-backdrop-filter": "none"
+            }
+          ],
+          "name": [
+            {
+              "justify-self": "start"
+            },
+            {
+              "font-weight": 700
+            },
+            {
+              "font-size": "16px"
+            },
+            {
+              "color": "[[[\n  return entity.state === 'on'\n    ? 'var(--primary-color)'\n    : 'var(--primary-text-color)';\n]]]\n"
+            }
+          ]
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    },
+    "vol_down": {
+      "card": {
+        "type": "custom:button-card",
+        "icon": "mdi:volume-minus",
+        "show_name": false,
+        "styles": {
+          "card": [
+            {
+              "border-radius": "999px"
+            },
+            {
+              "border": "none !important"
+            },
+            {
+              "background": "none !important"
+            },
+            {
+              "backdrop-filter": "none !important"
+            },
+            {
+              "-webkit-backdrop-filter": "none !important"
+            },
+            {
+              "box-shadow": "none !important"
+            },
+            {
+              "--ha-card-background": "transparent"
+            },
+            {
+              "--ha-card-border-width": "0"
+            },
+            {
+              "--ha-card-box-shadow": "none"
+            },
+            {
+              "--ha-card-backdrop-filter": "none"
+            }
+          ],
+          "icon": [
+            {
+              "width": "20px"
+            }
+          ]
+        },
+        "tap_action": {
+          "action": "call-service",
+          "service": "number.set_value",
+          "service_data": {
+            "entity_id": "[[[ return variables.volume_entity ]]]",
+            "value": "[[[\n  const cur = Number(states[variables.volume_entity]?.state ?? 0);\n  return Math.max(0, cur - (variables.volume_step || 1));\n]]]\n"
+          }
+        },
+        "hold_action": {
+          "action": "call-service",
+          "service": "number.set_value",
+          "service_data": {
+            "entity_id": "[[[ return variables.volume_entity ]]]",
+            "value": "[[[\n  const cur = Number(states[variables.volume_entity]?.state ?? 0);\n  return Math.max(0, cur - (variables.volume_step || 1));\n]]]\n"
+          },
+          "repeat": 400
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    },
+    "vol_level": "[[[ return states[variables.volume_entity]?.state ?? \"-\"; ]]]",
+    "vol_up": {
+      "card": {
+        "type": "custom:button-card",
+        "icon": "mdi:volume-plus",
+        "show_name": false,
+        "styles": {
+          "card": [
+            {
+              "border-radius": "999px"
+            },
+            {
+              "border": "none !important"
+            },
+            {
+              "background": "none !important"
+            },
+            {
+              "backdrop-filter": "none !important"
+            },
+            {
+              "-webkit-backdrop-filter": "none !important"
+            },
+            {
+              "box-shadow": "none !important"
+            },
+            {
+              "--ha-card-background": "transparent"
+            },
+            {
+              "--ha-card-border-width": "0"
+            },
+            {
+              "--ha-card-box-shadow": "none"
+            },
+            {
+              "--ha-card-backdrop-filter": "none"
+            }
+          ],
+          "icon": [
+            {
+              "width": "20px"
+            }
+          ]
+        },
+        "tap_action": {
+          "action": "call-service",
+          "service": "number.set_value",
+          "service_data": {
+            "entity_id": "[[[ return variables.volume_entity ]]]",
+            "value": "[[[\n  const cur = Number(states[variables.volume_entity]?.state ?? 0);\n  return Math.min(75, cur + (variables.volume_step || 1));\n]]]\n"
+          }
+        },
+        "hold_action": {
+          "action": "call-service",
+          "service": "number.set_value",
+          "service_data": {
+            "entity_id": "[[[ return variables.volume_entity ]]]",
+            "value": "[[[\n  const cur = Number(states[variables.volume_entity]?.state ?? 0);\n  return Math.min(75, cur + (variables.volume_step || 1));\n]]]\n"
+          },
+          "repeat": 400
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    }
+  }
+}

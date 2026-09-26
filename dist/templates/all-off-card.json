@@ -1,0 +1,33 @@
+{
+  "variables": {
+    "label": "All Zones Off — Both Amps",
+    "entities": []
+  },
+  "show_icon": true,
+  "icon": "mdi:power",
+  "name": "[[[ return variables.label ]]]",
+  "custom_fields": {
+    "sub": "[[[\n  const list = variables.entities || [];\n  const onCount = list.filter(e => states[e]?.state === 'on').length;\n  return onCount > 0 ? `${onCount} on` : 'all off';\n]]]\n"
+  },
+  "styles": {
+    "grid": [
+      {
+        "grid-template-areas": "\"i n\" \"i sub\""
+      },
+      {
+        "grid-template-columns": "36px 1fr"
+      }
+    ],
+    "card": [
+      {
+        "padding": "8px 10px"
+      },
+      {
+        "border-radius": "14px"
+      },
+      {
+        "border": "[[[\n  const anyOn = (variables.entities || []).some(e => states[e]?.state === 'on');\n  return anyOn ? '2px solid seagreen' : '2px solid crimson';\n]]]\n"
+      }
+    ]
+  }
+}
