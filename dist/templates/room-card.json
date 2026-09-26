@@ -159,7 +159,8 @@
         "show_icon": false,
         "show_name": false,
         "tap_action": {
-          "action": "none"
+          "action": "navigate",
+          "navigation_path": "[[[ return variables.popup_hash ]]]"
         },
         "styles": {
           "grid": [
