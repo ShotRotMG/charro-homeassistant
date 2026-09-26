@@ -165,7 +165,7 @@
         "styles": {
           "grid": [
             {
-              "display": "flex !important"
+              "display": "flex"
             },
             {
               "flex-direction": "row"
@@ -180,7 +180,7 @@
               "align-items": "center"
             },
             {
-              "gap": "6px"
+              "gap": "4px"
             },
             {
               "width": "100%"
@@ -206,7 +206,7 @@
               "background": "none"
             },
             {
-              "width": "100% !important"
+              "width": "100%"
             }
           ],
           "custom_fields": {
@@ -216,6 +216,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return (variables.light_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
               }
             ],
             "landscape": [
@@ -224,6 +227,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return (variables.landscape_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
               }
             ],
             "fans": [
@@ -232,6 +238,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return (variables.fan_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
               }
             ],
             "bathfans": [
@@ -240,6 +249,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
               }
             ],
             "fountain": [
@@ -248,6 +260,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return states[variables.fountain_entity]?.state === 'on' ? 0 : 1; ]]]"
               }
             ],
             "climate": [
@@ -256,6 +271,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return (() => { const s = states[variables.climate_entity]?.state; return s && s !== 'off' && s !== 'unavailable'; })() ? 0 : 1; ]]]"
               }
             ],
             "music": [
@@ -264,6 +282,9 @@
               },
               {
                 "align-items": "center"
+              },
+              {
+                "order": "[[[ return true ? 0 : 1; ]]]"
               }
             ]
           }
