@@ -17,7 +17,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "3.9.0";
+const VERSION = "4.0.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -167,7 +167,8 @@ const ROOM_LISTS = [
   "light_entities", "landscape_entities", "fan_entities",
   "bath_fan_entities", "music_powers", "alert_sensors",
 ];
-const ROOM_SINGLES = ["fountain_entity", "climate_entity", "confirm_sensor"];
+const ROOM_SINGLES = ["fountain_entity", "climate_entity", "confirm_sensor",
+                      "tv_entity", "projector_entity", "receiver_entity"];
 
 class CharroRoomCard extends CharroBase {
   static getConfigElement() { return document.createElement("charro-room-card-editor"); }
@@ -188,6 +189,9 @@ class CharroRoomCard extends CharroBase {
       climate_entity: c.climate_entity || "",
       music_player: c.music_player || "",
       confirm_sensor: c.confirm_sensor || "",
+      tv_entity: c.tv_entity || "",
+      projector_entity: c.projector_entity || "",
+      receiver_entity: c.receiver_entity || "",
     };
     for (const k of ROOM_LISTS) v[k] = c[k] || [];
     return v;
@@ -225,6 +229,11 @@ makeEditor("charro-room-card-editor", [
     { name: "music_powers", selector: ent(["switch"], true) },
     { name: "music_player", selector: ent(["media_player"]) },
   ]},
+  { type: "expandable", name: "", title: "Media", icon: "mdi:television", schema: [
+    { name: "tv_entity", selector: ent(["media_player"]) },
+    { name: "projector_entity", selector: ent(["switch", "media_player", "light"]) },
+    { name: "receiver_entity", selector: ent(["media_player"]) },
+  ]},
   { type: "expandable", name: "", title: "Door / motion alert", icon: "mdi:door-open", schema: [
     { name: "alert_sensors", selector: ent(["sensor", "binary_sensor", "cover"], true) },
     { name: "confirm_sensor", selector: ent(["sensor", "binary_sensor"]) },
@@ -241,6 +250,9 @@ makeEditor("charro-room-card-editor", [
   fountain_entity: "Fountain",
   music_powers: "Music zone power switches",
   music_player: "Media player (hold the chip)",
+  tv_entity: "TV",
+  projector_entity: "Projector",
+  receiver_entity: "AV receiver",
   alert_sensors: "Door / window / motion / garage sensors",
   confirm_sensor: "Only alert when this is also open",
 }, {
@@ -248,6 +260,8 @@ makeEditor("charro-room-card-editor", [
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   music_powers: "The chip shows how many of these are on.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
+  tv_entity: "Chip appears only while the TV is on.",
+  receiver_entity: "Chip shows the current source while the receiver is on.",
 });
 
 /* ======================================================== SECURITY CARD == */
