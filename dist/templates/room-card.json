@@ -12,7 +12,12 @@
     "music_powers": [],
     "music_player": "",
     "alert_sensors": [],
-    "confirm_sensor": ""
+    "confirm_sensor": "",
+    "fountain_entities": [],
+    "pool_switch": "",
+    "pool_heater": "",
+    "spa_switch": "",
+    "spa_heater": ""
   },
   "show_name": true,
   "show_icon": true,
@@ -256,13 +261,13 @@
             ],
             "fountain": [
               {
-                "display": "[[[ return variables.fountain_entity ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[ return (variables.fountain_entities || []).length ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return states[variables.fountain_entity]?.state === 'on' ? 0 : 1; ]]]"
+                "order": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
               }
             ],
             "climate": [
@@ -312,6 +317,28 @@
             "receiver": [
               {
                 "display": "[[[ return (variables.receiver_entity && !['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 'flex' : 'none'; ]]]"
+              },
+              {
+                "align-items": "center"
+              },
+              {
+                "order": "0"
+              }
+            ],
+            "pool": [
+              {
+                "display": "[[[ return states[variables.pool_switch]?.state === 'on' ? 'flex' : 'none'; ]]]"
+              },
+              {
+                "align-items": "center"
+              },
+              {
+                "order": "0"
+              }
+            ],
+            "spa": [
+              {
+                "display": "[[[ return states[variables.spa_switch]?.state === 'on' ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
@@ -625,15 +652,14 @@
           "fountain": {
             "card": {
               "type": "custom:button-card",
-              "entity": "[[[ return variables.fountain_entity ]]]",
               "show_icon": true,
-              "show_name": false,
+              "show_name": true,
               "icon": "mdi:fountain",
               "tap_action": {
                 "action": "call-service",
-                "service": "homeassistant.toggle",
+                "service": "[[[\n  const l = variables.fountain_entities || [];\n  const on = l.some(e => states[e]?.state === 'on');\n  /* only ever turns things OFF in a group; single ones can toggle */\n  return on ? 'homeassistant.turn_off' : (l.length === 1 ? 'homeassistant.turn_on' : 'homeassistant.update_entity');\n]]]",
                 "service_data": {
-                  "entity_id": "[[[ return variables.fountain_entity ]]]"
+                  "entity_id": "[[[ return variables.fountain_entities ]]]"
                 }
               },
               "hold_action": {
@@ -655,7 +681,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  return states[variables.fountain_entity]?.state === 'on'\n    ? 'rgba(33,150,243,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? 'rgba(33,150,243,0.22)' : 'transparent'; ]]]"
                   }
                 ],
                 "icon": [
@@ -666,13 +692,42 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  return states[variables.fountain_entity]?.state === 'on'\n    ? '#2196f3' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? '#2196f3' : 'var(--disabled-text-color)'; ]]]"
+                  }
+                ],
+                "grid": [
+                  {
+                    "grid-template-areas": "\"i n\""
+                  },
+                  {
+                    "grid-template-columns": "18px auto"
+                  },
+                  {
+                    "column-gap": "4px"
+                  },
+                  {
+                    "align-items": "center"
+                  }
+                ],
+                "name": [
+                  {
+                    "font-size": "14px"
+                  },
+                  {
+                    "font-weight": 700
+                  },
+                  {
+                    "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? '#2196f3' : 'var(--disabled-text-color)'; ]]]"
                   }
                 ]
               },
               "card_mod": {
                 "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
-              }
+              },
+              "name": "[[[\n  const n = (variables.fountain_entities || []).filter(e => states[e]?.state === 'on').length;\n  return n > 1 ? String(n) : '';\n]]]"
             }
           },
           "climate": {
@@ -987,6 +1042,170 @@
                   },
                   {
                     "color": "'#b388ff'"
+                  }
+                ]
+              },
+              "card_mod": {
+                "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+              }
+            }
+          },
+          "pool": {
+            "card": {
+              "type": "custom:button-card",
+              "entity": "[[[ return variables.pool_heater || variables.pool_switch ]]]",
+              "show_icon": true,
+              "show_name": true,
+              "icon": "mdi:pool",
+              "name": "[[[\n  const h = states[variables.pool_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
+              "tap_action": {
+                "action": "more-info",
+                "entity": "[[[ return variables.pool_heater || variables.pool_switch ]]]"
+              },
+              "hold_action": {
+                "action": "call-service",
+                "service": "switch.toggle",
+                "service_data": {
+                  "entity_id": "[[[ return variables.pool_switch ]]]"
+                }
+              },
+              "styles": {
+                "card": [
+                  {
+                    "padding": "1px 6px"
+                  },
+                  {
+                    "margin": 0
+                  },
+                  {
+                    "border-radius": "999px"
+                  },
+                  {
+                    "width": "max-content"
+                  },
+                  {
+                    "background": "[[[\n  const h = states[variables.pool_heater];\n  if (!h || h.state === 'off') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';\n]]]"
+                  }
+                ],
+                "grid": [
+                  {
+                    "grid-template-areas": "\"i n\""
+                  },
+                  {
+                    "grid-template-columns": "18px auto"
+                  },
+                  {
+                    "column-gap": "4px"
+                  },
+                  {
+                    "align-items": "center"
+                  }
+                ],
+                "icon": [
+                  {
+                    "width": "18px"
+                  },
+                  {
+                    "--mdc-icon-size": "18px"
+                  },
+                  {
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  if (!h || h.state === 'off') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                  }
+                ],
+                "name": [
+                  {
+                    "font-size": "14px"
+                  },
+                  {
+                    "font-weight": 700
+                  },
+                  {
+                    "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  if (!h || h.state === 'off') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                  }
+                ]
+              },
+              "card_mod": {
+                "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+              }
+            }
+          },
+          "spa": {
+            "card": {
+              "type": "custom:button-card",
+              "entity": "[[[ return variables.spa_heater || variables.spa_switch ]]]",
+              "show_icon": true,
+              "show_name": true,
+              "icon": "mdi:hot-tub",
+              "name": "[[[\n  const h = states[variables.spa_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
+              "tap_action": {
+                "action": "more-info",
+                "entity": "[[[ return variables.spa_heater || variables.spa_switch ]]]"
+              },
+              "hold_action": {
+                "action": "call-service",
+                "service": "switch.toggle",
+                "service_data": {
+                  "entity_id": "[[[ return variables.spa_switch ]]]"
+                }
+              },
+              "styles": {
+                "card": [
+                  {
+                    "padding": "1px 6px"
+                  },
+                  {
+                    "margin": 0
+                  },
+                  {
+                    "border-radius": "999px"
+                  },
+                  {
+                    "width": "max-content"
+                  },
+                  {
+                    "background": "[[[\n  const h = states[variables.spa_heater];\n  if (!h || h.state === 'off') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';\n]]]"
+                  }
+                ],
+                "grid": [
+                  {
+                    "grid-template-areas": "\"i n\""
+                  },
+                  {
+                    "grid-template-columns": "18px auto"
+                  },
+                  {
+                    "column-gap": "4px"
+                  },
+                  {
+                    "align-items": "center"
+                  }
+                ],
+                "icon": [
+                  {
+                    "width": "18px"
+                  },
+                  {
+                    "--mdc-icon-size": "18px"
+                  },
+                  {
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  if (!h || h.state === 'off') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                  }
+                ],
+                "name": [
+                  {
+                    "font-size": "14px"
+                  },
+                  {
+                    "font-weight": 700
+                  },
+                  {
+                    "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  if (!h || h.state === 'off') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
                   }
                 ]
               },

@@ -17,7 +17,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.0.0";
+const VERSION = "4.1.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -165,10 +165,11 @@ function makeEditor(tag, schema, labels, helpers) {
 
 const ROOM_LISTS = [
   "light_entities", "landscape_entities", "fan_entities",
-  "bath_fan_entities", "music_powers", "alert_sensors",
+  "bath_fan_entities", "music_powers", "alert_sensors", "fountain_entities",
 ];
-const ROOM_SINGLES = ["fountain_entity", "climate_entity", "confirm_sensor",
-                      "tv_entity", "projector_entity", "receiver_entity"];
+const ROOM_SINGLES = ["climate_entity", "confirm_sensor",
+                      "tv_entity", "projector_entity", "receiver_entity",
+                      "pool_switch", "pool_heater", "spa_switch", "spa_heater"];
 
 class CharroRoomCard extends CharroBase {
   static getConfigElement() { return document.createElement("charro-room-card-editor"); }
@@ -185,7 +186,10 @@ class CharroRoomCard extends CharroBase {
       room_name: c.room_name || "",
       room_icon: c.room_icon || "mdi:home",
       popup_hash: hash,
-      fountain_entity: c.fountain_entity || "",
+      pool_switch: c.pool_switch || "",
+      pool_heater: c.pool_heater || "",
+      spa_switch: c.spa_switch || "",
+      spa_heater: c.spa_heater || "",
       climate_entity: c.climate_entity || "",
       music_player: c.music_player || "",
       confirm_sensor: c.confirm_sensor || "",
@@ -194,6 +198,10 @@ class CharroRoomCard extends CharroBase {
       receiver_entity: c.receiver_entity || "",
     };
     for (const k of ROOM_LISTS) v[k] = c[k] || [];
+    // back-compat: the old single fountain_entity folds into the list
+    if (c.fountain_entity && !v.fountain_entities.includes(c.fountain_entity)) {
+      v.fountain_entities = [c.fountain_entity, ...v.fountain_entities];
+    }
     return v;
   }
 
@@ -202,6 +210,7 @@ class CharroRoomCard extends CharroBase {
     const out = [];
     for (const k of ROOM_LISTS) out.push(...(c[k] || []));
     for (const k of ROOM_SINGLES) if (c[k]) out.push(c[k]);
+    if (c.fountain_entity) out.push(c.fountain_entity);
     return uniq(out);
   }
 
@@ -221,9 +230,15 @@ makeEditor("charro-room-card-editor", [
     { name: "fan_entities", selector: ent(["light", "fan", "switch"], true) },
     { name: "bath_fan_entities", selector: ent(["light", "fan", "switch"], true) },
   ]},
-  { type: "expandable", name: "", title: "Climate & water", icon: "mdi:thermostat", schema: [
+  { type: "expandable", name: "", title: "Climate", icon: "mdi:thermostat", schema: [
     { name: "climate_entity", selector: ent(["climate"]) },
-    { name: "fountain_entity", selector: ent(["switch", "light"]) },
+  ]},
+  { type: "expandable", name: "", title: "Pool & water", icon: "mdi:pool", schema: [
+    { name: "pool_switch", selector: ent(["switch"]) },
+    { name: "pool_heater", selector: ent(["water_heater", "climate"]) },
+    { name: "spa_switch", selector: ent(["switch"]) },
+    { name: "spa_heater", selector: ent(["water_heater", "climate"]) },
+    { name: "fountain_entities", selector: ent(["switch", "light"], true) },
   ]},
   { type: "expandable", name: "", title: "Music", icon: "mdi:music", schema: [
     { name: "music_powers", selector: ent(["switch"], true) },
@@ -247,7 +262,11 @@ makeEditor("charro-room-card-editor", [
   fan_entities: "Ceiling fans",
   bath_fan_entities: "Bathroom fans",
   climate_entity: "Thermostat",
-  fountain_entity: "Fountain",
+  pool_switch: "Pool pump",
+  pool_heater: "Pool heater",
+  spa_switch: "Spa pump",
+  spa_heater: "Spa heater",
+  fountain_entities: "Water features",
   music_powers: "Music zone power switches",
   music_player: "Media player (hold the chip)",
   tv_entity: "TV",
@@ -260,6 +279,9 @@ makeEditor("charro-room-card-editor", [
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   music_powers: "The chip shows how many of these are on.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
+  pool_switch: "The pool chip appears only while this is on.",
+  pool_heater: "Supplies the temperature and the warming/at-temp colour.",
+  fountain_entities: "Fountain, spill, water wall. One chip with a count; tapping turns them all off.",
   tv_entity: "Chip appears only while the TV is on.",
   receiver_entity: "Chip shows the current source while the receiver is on.",
 });
