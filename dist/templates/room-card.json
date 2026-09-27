@@ -1084,7 +1084,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.pool_heater];\n  if (!variables.pool_heater) return 'rgba(3,169,244,0.20)';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'transparent';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';\n]]]"
+                    "background": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "grid": [
@@ -1109,7 +1109,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  if (!variables.pool_heater) return '#03a9f4';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'var(--disabled-text-color)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "name": [
@@ -1123,7 +1123,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  if (!variables.pool_heater) return '#03a9f4';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'var(--disabled-text-color)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
                   }
                 ]
               },
@@ -1166,7 +1166,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.spa_heater];\n  if (!variables.spa_heater) return 'rgba(3,169,244,0.20)';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'transparent';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';\n]]]"
+                    "background": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "grid": [
@@ -1191,7 +1191,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  if (!variables.spa_heater) return '#03a9f4';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'var(--disabled-text-color)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "name": [
@@ -1205,7 +1205,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  if (!variables.spa_heater) return '#03a9f4';          /* no heater configured: pump only */\n  if (!h || h.state === 'off' || h.state === 'unavailable') return 'var(--disabled-text-color)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';\n]]]"
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
                   }
                 ]
               },
