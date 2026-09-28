@@ -9,9 +9,11 @@ each with a visual editor.
 | `charro-security-card` | Elk zone or garage door tile, coloured client-side |
 | `charro-zone-card` | RTI AD-8x single-line zone control |
 | `charro-all-off-card` | Turn every RTI zone off on both amps |
+| `charro-lights-card` | One room of lights — equal rows, dim by dragging |
 
-All four render `custom:button-card` underneath, with the styling in
+The first four render `custom:button-card` underneath, with the styling in
 `dist/templates/*.json`. Nothing goes in `button_card_templates:` any more.
+`charro-lights-card` is standalone — no button-card, no template file.
 
 ## Requirements
 
@@ -128,6 +130,59 @@ entities:
 | `service` | Default `script.all_zones_off` |
 | `confirm` | `false` to fire without asking |
 | `confirm_text` | Custom confirmation wording |
+
+## `charro-lights-card`
+
+One room per card. Every row is the same height whether the light is on, off,
+dimmable or a relay, because the brightness control is a fill bar inside the
+row rather than a slider underneath it. Drag across a lit dimmable row to set
+brightness, tap anywhere to toggle, hold for more-info.
+
+```yaml
+type: custom:charro-lights-card
+title: Kitchen
+icon: mdi:chef-hat
+filter_entity: input_select.light_filter
+entities:
+  - light.kitchen_island
+  - entity: light.kitchen_area
+    name: Cans
+    icon: mdi:light-recessed
+    dim: false
+```
+
+| Option | Description |
+|---|---|
+| `entities` | **Required.** Entity ids, or objects with `entity` plus any of `name`, `icon`, `dim`, `fountain` |
+| `title` | Room name in the header. Blank hides the header |
+| `icon` | Icon beside the title |
+| `filter_entity` | An `input_select` driving which rows show — see below |
+| `row_height` | Row height in px. Default 46 |
+| `keep_empty` | `true` to keep the card visible when the filter hides every row |
+
+Per-light keys:
+
+| Key | Description |
+|---|---|
+| `dim` | `false` for a Lutron relay or wall switch. Home Assistant reports brightness support for those, which is wrong, so it has to be stated |
+| `fountain` | Forces in or out of the Fountains filter. Blank guesses from the name |
+| `name` / `icon` | Override the entity's own |
+
+The filter entity's state selects the rows:
+
+| Option | Shows |
+|---|---|
+| `All` | everything |
+| `On` | only what's currently on |
+| `Lutron` | entities with a `homeworks_address` attribute |
+| `Other` | everything else — Hue, Pentair, ratgdo |
+| `Fountains` | water features |
+
+Lutron and Other are read live from the entity, so new Lutron loads sort
+themselves. A card whose rows are all filtered out hides itself, so the grid
+closes up instead of leaving an empty header.
+
+Fountain rows go blue when on; everything else goes amber.
 
 ---
 

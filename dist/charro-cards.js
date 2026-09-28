@@ -5,9 +5,10 @@
  *   charro-security-card  Elk zone / garage door tile, colours itself client-side
  *   charro-zone-card      RTI AD-8x single-line zone control
  *   charro-all-off-card   all zones off, both amps
+ *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *
  * Installed through HACS, so the Lovelace resource is registered automatically.
- * Each card renders custom:button-card with a template fetched from
+ * The first four render custom:button-card with a template fetched from
  * ./templates/*.json — cache: "no-store", so a hard refresh picks up edits.
  *
  * HACS replaces those files on update. To keep your own copy, put one under
@@ -17,7 +18,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.3.0";
+const VERSION = "4.4.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -429,6 +430,398 @@ makeEditor("charro-all-off-card-editor", [
   entities: "The border goes green when any of these is on, red when all are off.",
 });
 
+/* ========================================================== LIGHTS CARD == */
+/*
+ * charro-lights-card — one room, one card, every row the same height.
+ *
+ * The brightness control lives inside the row as a fill bar instead of a
+ * slider underneath it, so a row is exactly as tall whether the light is on,
+ * off, dimmable or a relay. Drag across a lit dimmable row to set brightness;
+ * tap anywhere to toggle; hold for more-info.
+ *
+ * Honours an input_select filter with the options
+ * All / On / Lutron / Other / Fountains. Lutron vs Other is read live from
+ * each entity's homeworks_address attribute, so it needs no config.
+ */
+
+const LC_FOUNTAIN = /fountain|water ?feature|water ?wall|spill|cascade/i;
+const LC_ROW = 46;
+
+const LC_CSS = `
+:host { display:block; height:100%; }
+ha-card {
+  padding:10px 10px 12px; height:100%; box-sizing:border-box;
+  display:flex; flex-direction:column;
+}
+.hd {
+  display:flex; align-items:center; gap:8px;
+  padding:0 4px 8px; min-height:22px;
+}
+.hd ha-icon { --mdc-icon-size:19px; color:var(--secondary-text-color); flex:none; }
+.hd .t {
+  font-size:15px; font-weight:600; letter-spacing:-.01em;
+  color:var(--primary-text-color); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+.hd .n {
+  margin-left:auto; flex:none; font-size:12px; font-weight:500;
+  color:var(--secondary-text-color); font-variant-numeric:tabular-nums;
+}
+.hd .n.lit { color:var(--state-light-active-color, #ffc107); }
+.list { display:flex; flex-direction:column; gap:4px; flex:0 0 auto; }
+.row {
+  position:relative; height:var(--lc-row,46px); border-radius:12px;
+  overflow:hidden; cursor:pointer; user-select:none;
+  -webkit-user-select:none; -webkit-tap-highlight-color:transparent;
+  touch-action:pan-y; background:rgba(127,127,127,.13);
+}
+.row:focus-visible { outline:2px solid var(--primary-color); outline-offset:1px; }
+.row[hidden] { display:none; }
+.fill {
+  position:absolute; inset:0 auto 0 0; width:0;
+  background:var(--lc-accent, #ffc107); opacity:.30;
+  transition:width .18s ease, opacity .18s ease; pointer-events:none;
+}
+.row.drag .fill { transition:none; }
+.row.unav { opacity:.45; cursor:default; }
+.face {
+  position:relative; height:100%; display:flex; align-items:center;
+  gap:10px; padding:0 12px; pointer-events:none;
+}
+.face ha-icon { --mdc-icon-size:21px; flex:none; color:var(--state-icon-color, var(--secondary-text-color)); }
+.row.on .face ha-icon { color:var(--lc-accent, #ffc107); }
+.nm {
+  font-size:14px; font-weight:500; color:var(--primary-text-color);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+}
+.val {
+  margin-left:auto; flex:none; font-size:12.5px; font-weight:500;
+  color:var(--secondary-text-color); font-variant-numeric:tabular-nums;
+}
+.row.on .val { color:var(--primary-text-color); }
+.empty {
+  padding:6px 4px 2px; font-size:13px; color:var(--secondary-text-color);
+}
+@media (prefers-reduced-motion:reduce){ .fill{ transition:none; } }
+`;
+
+class CharroLightsCard extends HTMLElement {
+  static getConfigElement() { return document.createElement("charro-lights-card-editor"); }
+  static getStubConfig(hass) {
+    const first = Object.keys(hass && hass.states ? hass.states : {})
+      .filter((e) => e.startsWith("light.")).slice(0, 4);
+    return { type: "custom:charro-lights-card", title: "Lights", entities: first };
+  }
+
+  setConfig(config) {
+    if (!config || !Array.isArray(config.entities) || !config.entities.length)
+      throw new Error("charro-lights-card: `entities` is required");
+    this._config = config;
+    this._items = config.entities.map((e) => (typeof e === "string" ? { entity: e } : { ...e }));
+    this._rows = null;
+    this._drag = null;
+    if (this.shadowRoot) this.shadowRoot.innerHTML = "";
+    if (this._hass) this._build();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._rows) this._build();
+    this._update();
+  }
+
+  getCardSize() { return 1 + Math.ceil(this._items.length * 0.7); }
+  getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
+
+  /* ------------------------------------------------------------ build -- */
+
+  _build() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = LC_CSS;
+
+    const card = document.createElement("ha-card");
+    if (this._config.row_height)
+      card.style.setProperty("--lc-row", `${this._config.row_height}px`);
+
+    const hd = document.createElement("div");
+    hd.className = "hd";
+    if (this._config.icon) {
+      const i = document.createElement("ha-icon");
+      i.icon = this._config.icon;
+      hd.appendChild(i);
+    }
+    const t = document.createElement("div");
+    t.className = "t";
+    t.textContent = this._config.title || "";
+    hd.appendChild(t);
+    this._count = document.createElement("div");
+    this._count.className = "n";
+    hd.appendChild(this._count);
+    if (this._config.title || this._config.icon) card.appendChild(hd);
+
+    const list = document.createElement("div");
+    list.className = "list";
+    this._rows = new Map();
+
+    for (const item of this._items) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+
+      const fill = document.createElement("div");
+      fill.className = "fill";
+      const face = document.createElement("div");
+      face.className = "face";
+      const ico = document.createElement("ha-icon");
+      const nm = document.createElement("span");
+      nm.className = "nm";
+      const val = document.createElement("span");
+      val.className = "val";
+      face.append(ico, nm, val);
+      row.append(fill, face);
+
+      this._wire(row, item);
+      list.appendChild(row);
+      this._rows.set(item.entity, { row, fill, ico, nm, val, item });
+    }
+
+    this._empty = document.createElement("div");
+    this._empty.className = "empty";
+    this._empty.textContent = "Nothing on in here.";
+    this._empty.hidden = true;
+
+    card.append(list, this._empty);
+    root.innerHTML = "";
+    root.append(style, card);
+  }
+
+  /* ----------------------------------------------------- interaction --- */
+
+  _wire(row, item) {
+    let sx = 0, moved = false, hold = null, pct = 0;
+
+    const stopHold = () => { if (hold) { clearTimeout(hold); hold = null; } };
+
+    const pctAt = (clientX) => {
+      const r = row.getBoundingClientRect();
+      if (!r.width) return 0;
+      return Math.max(1, Math.min(100, Math.round(((clientX - r.left) / r.width) * 100)));
+    };
+
+    row.addEventListener("pointerdown", (ev) => {
+      if (ev.button != null && ev.button !== 0) return;
+      const st = this._hass && this._hass.states[item.entity];
+      if (!st || st.state === "unavailable") return;
+      sx = ev.clientX; moved = false;
+      row.setPointerCapture(ev.pointerId);
+      hold = setTimeout(() => {
+        hold = null; moved = true;
+        fireEvent(this, "hass-more-info", { entityId: item.entity });
+      }, 500);
+    });
+
+    row.addEventListener("pointermove", (ev) => {
+      if (!row.hasPointerCapture || !row.hasPointerCapture(ev.pointerId)) return;
+      if (Math.abs(ev.clientX - sx) < 7) return;
+      const st = this._hass.states[item.entity];
+      if (!this._dims(item, st) || st.state !== "on") return;
+      stopHold();
+      moved = true;
+      row.classList.add("drag");
+      pct = pctAt(ev.clientX);
+      this._paint(item.entity, pct);
+    });
+
+    const end = (ev) => {
+      if (row.hasPointerCapture && row.hasPointerCapture(ev.pointerId))
+        row.releasePointerCapture(ev.pointerId);
+      const wasDrag = row.classList.contains("drag");
+      row.classList.remove("drag");
+      stopHold();
+      if (wasDrag) {
+        this._hass.callService("light", "turn_on",
+          { entity_id: item.entity, brightness_pct: pct });
+      } else if (!moved) {
+        const st = this._hass.states[item.entity];
+        if (st && st.state !== "unavailable")
+          this._hass.callService(item.entity.split(".")[0], "toggle", { entity_id: item.entity });
+      }
+      moved = false;
+    };
+    row.addEventListener("pointerup", end);
+    row.addEventListener("pointercancel", (ev) => {
+      stopHold(); row.classList.remove("drag"); moved = false;
+      if (row.hasPointerCapture && row.hasPointerCapture(ev.pointerId))
+        row.releasePointerCapture(ev.pointerId);
+    });
+
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      this._hass.callService(item.entity.split(".")[0], "toggle", { entity_id: item.entity });
+    });
+  }
+
+  _paint(entity, pct) {
+    const r = this._rows.get(entity);
+    if (!r) return;
+    r.fill.style.width = `${pct}%`;
+    r.val.textContent = `${pct}%`;
+  }
+
+  /* --------------------------------------------------------- filtering - */
+
+  _mode() {
+    const fe = this._config.filter_entity;
+    const s = fe && this._hass.states[fe];
+    return s ? String(s.state) : "All";
+  }
+
+  _isLutron(st) { return !!(st && st.attributes && st.attributes.homeworks_address); }
+
+  _isFountain(item, st) {
+    if (item.fountain !== undefined) return !!item.fountain;
+    const n = ((st && st.attributes && st.attributes.friendly_name) || "") + " " +
+              (item.name || "") + " " + item.entity;
+    return LC_FOUNTAIN.test(n);
+  }
+
+  _dims(item, st) {
+    if (item.dim !== undefined) return !!item.dim;
+    const m = (st && st.attributes && st.attributes.supported_color_modes) || [];
+    return m.some((x) => x !== "onoff" && x !== "unknown");
+  }
+
+  _visible(item, st) {
+    switch (this._mode()) {
+      case "On":        return !!st && st.state === "on";
+      case "Lutron":    return this._isLutron(st);
+      case "Other":     return !this._isLutron(st);
+      case "Fountains": return this._isFountain(item, st);
+      default:          return true;
+    }
+  }
+
+  /* ------------------------------------------------------------ update - */
+
+  _update() {
+    if (!this._hass || !this._rows) return;
+    let shown = 0, on = 0;
+
+    for (const { row, fill, ico, nm, val, item } of this._rows.values()) {
+      const st = this._hass.states[item.entity];
+      const vis = !!st && this._visible(item, st);
+      row.hidden = !vis;
+      if (!vis) continue;
+      shown++;
+
+      const lit = st.state === "on";
+      if (lit) on++;
+      const unav = st.state === "unavailable" || st.state === "unknown";
+      const fountain = this._isFountain(item, st);
+
+      row.classList.toggle("on", lit);
+      row.classList.toggle("unav", unav);
+      row.style.setProperty("--lc-accent", fountain ? "#03a9f4"
+        : "var(--state-light-active-color, #ffc107)");
+
+      const name = item.name || st.attributes.friendly_name || item.entity;
+      if (nm.textContent !== name) nm.textContent = name;
+      row.setAttribute("aria-label", name);
+
+      const icon = item.icon || st.attributes.icon ||
+        (fountain ? "mdi:fountain" : lit ? "mdi:lightbulb" : "mdi:lightbulb-outline");
+      if (ico.icon !== icon) ico.icon = icon;
+
+      if (row.classList.contains("drag")) continue;
+
+      if (unav) {
+        fill.style.width = "0%"; val.textContent = "—";
+      } else if (!lit) {
+        fill.style.width = "0%"; val.textContent = "Off";
+      } else if (this._dims(item, st) && st.attributes.brightness != null) {
+        const pct = Math.max(1, Math.round((st.attributes.brightness / 255) * 100));
+        fill.style.width = `${pct}%`; val.textContent = `${pct}%`;
+      } else {
+        fill.style.width = "100%"; val.textContent = "On";
+      }
+    }
+
+    this._count.textContent = shown ? `${on}/${shown}` : "";
+    this._count.classList.toggle("lit", on > 0);
+    if (this._empty) this._empty.hidden = shown > 0;
+    this.style.display = shown || this._config.keep_empty ? "" : "none";
+  }
+}
+customElements.define("charro-lights-card", CharroLightsCard);
+
+/* ------------------------------------------------- lights card editor --- */
+
+const LC_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "icon", selector: { icon: {} } },
+  { name: "filter_entity", selector: { entity: { filter: [{ domain: "input_select" }] } } },
+  { name: "row_height", selector: { number: { min: 32, max: 80, step: 2, mode: "slider" } } },
+  { name: "entities", selector: { entity: { multiple: true,
+      filter: [{ domain: "light" }, { domain: "switch" }] } } },
+];
+const LC_LABELS = {
+  title: "Room", icon: "Icon", filter_entity: "Filter dropdown",
+  row_height: "Row height (px)", entities: "Lights",
+};
+const LC_HELPERS = {
+  filter_entity: "An input_select with the options All / On / Lutron / Other / Fountains.",
+  entities: "Per-light overrides (name, icon, dim: false, fountain: true) are kept when you edit here, but can only be added in YAML.",
+};
+
+class CharroLightsCardEditor extends HTMLElement {
+  setConfig(config) { this._config = config || {}; this._render(); }
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass; else this._render();
+  }
+  _render() {
+    if (!this._hass || !this._config) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = LC_SCHEMA;
+      this._form.computeLabel = (s) => LC_LABELS[s.name] || s.name;
+      this._form.computeHelper = (s) => LC_HELPERS[s.name] || "";
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        const next = { ...this._config, ...ev.detail.value };
+
+        // ha-form hands back a plain string list — re-attach any per-light
+        // overrides the YAML had, so editing the room doesn't wipe them.
+        if (Array.isArray(next.entities)) {
+          const keep = new Map();
+          for (const e of this._config.entities || [])
+            if (e && typeof e === "object" && e.entity) keep.set(e.entity, e);
+          next.entities = next.entities.map((e) =>
+            typeof e === "string" ? keep.get(e) || e : e);
+        }
+        for (const k of Object.keys(next)) {
+          if (k === "type") continue;
+          const v = next[k];
+          if (v === "" || v === undefined || (Array.isArray(v) && !v.length)) delete next[k];
+        }
+        this._config = next;
+        fireEvent(this, "config-changed", { config: next });
+      });
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.data = {
+      ...this._config,
+      entities: (this._config.entities || []).map((e) =>
+        typeof e === "string" ? e : e.entity),
+    };
+  }
+}
+customElements.define("charro-lights-card-editor", CharroLightsCardEditor);
+
 /* ------------------------------------------------------------ registry -- */
 
 window.customCards = window.customCards || [];
@@ -440,5 +833,7 @@ window.customCards.push(
   { type: "charro-zone-card", name: "Charro Zone Card",
     description: "RTI AD-8x single-line zone control.", preview: false },
   { type: "charro-all-off-card", name: "Charro All Zones Off",
-    description: "Turn every RTI zone off on both amps.", preview: false }
+    description: "Turn every RTI zone off on both amps.", preview: false },
+  { type: "charro-lights-card", name: "Charro Lights Card",
+    description: "One room of lights — equal rows, dim by dragging the row.", preview: false }
 );
