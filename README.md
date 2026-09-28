@@ -105,16 +105,66 @@ defines those entities, so no room needs a hand-built layout.
 | Block | Appears when the room has |
 |---|---|
 | `climate` | `climate_entity` |
-| `media` | `music_powers`, `tv_entity`, `projector_entity`, `receiver_entity`, `media_player` |
+| `media` | `music_powers`, `tv_entity`, `projector_entity`, `receiver_entity`, `remotes`, `media_player` |
 | `lights` | `light_entities`, `landscape_entities`, `fan_entities`, `bath_fan_entities`, `fountain_entities` |
 | `cameras` | `cameras` |
 | `security` | `alert_sensors` |
 
 Default order is climate, media, lights, cameras, security.
 
-For the one-offs — a projector remote, a scene picker — `cards` drops raw
+For the one-offs — a scene picker, an air-purifier card — `cards` drops raw
 Lovelace into a slot: `start` renders before everything, any block name
 renders after that block, `end` renders last.
+
+### Media players
+
+`media_player` renders a card in the `media` block. If the entity comes from
+the Music Assistant integration it gets `custom:mediocre-media-player-card`,
+otherwise the built-in `media-control`. Set `media_card` to a full card config
+to override. The room tile grows a now-playing chip while that player is
+playing; tapping it opens the media card on its own `#<room>-media` hash.
+
+### Remotes
+
+Every Samsung TV wants the same remote with different entity ids, so the
+layouts live once in `_remotes.json` beside the rooms, and a room names one
+and fills the blanks:
+
+```json
+"remotes": [
+  { "use": "samsung_tv", "title": "Javon TV",
+    "media_player": "media_player.javon_samsung_70",
+    "remote": "remote.javon_samsung_70" }
+]
+```
+
+```json
+// _remotes.json
+{
+  "samsung_tv": {
+    "type": "custom:universal-remote-card",
+    "platform": "Samsung TV",
+    "remote_id": "{{remote}}",
+    "media_player_id": "{{media_player}}",
+    "title": "{{title}}",
+    "rows": [["back", "custom_power", "menu", "home", "source"], ["circlepad"]]
+  }
+}
+```
+
+`{{key}}` anywhere in a template is filled from the room's entry. A string
+that is *exactly* `{{key}}` takes the value's own type, so a number or a list
+survives instead of being stringified.
+
+A remote is wrapped in a `conditional` card watching `media_player`, then
+`remote`, then `entity` — whichever it finds first — so it only appears while
+the device is on rather than off, unavailable, unknown or standby. `when`
+picks a different entity to watch; `always: true` skips the check. Because it
+is a conditional card it follows state live, not just at the moment the panel
+opened.
+
+Name a template that doesn't exist and you get a card saying so, rather than
+silence.
 
 The pop-up is drawn by the card itself into `document.body`, keyed on the
 room's hash, so the browser back button closes it and nothing in the grid can

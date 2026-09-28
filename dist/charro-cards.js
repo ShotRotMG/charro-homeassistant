@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.9.0";
+const VERSION = "4.10.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -242,7 +242,94 @@ function lightCard(l, noDim) {
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
 const ROOM_SECTIONS = ["climate", "media", "lights", "cameras", "security"];
 
-function roomBody(r) {
+/* Music Assistant players get the richer card. hass.entities carries the
+ * platform, which is the authoritative answer; the attributes are the
+ * fallback for older cores that don't populate it. */
+function isMassPlayer(hass, id) {
+  if (!id || !hass) return false;
+  const e = hass.entities && hass.entities[id];
+  if (e && e.platform === "music_assistant") return true;
+  const a = ((hass.states || {})[id] || {}).attributes || {};
+  return !!(a.mass_player_type || a.active_queue || a.mass_player_id);
+}
+
+/* Remote layouts are shared: every Samsung TV is the same card with different
+ * entity ids. A room names the template and fills the blanks:
+ *
+ *   "remotes": [{ "use": "samsung_tv", "title": "Javon TV",
+ *                 "media_player": "media_player.javon_samsung_70",
+ *                 "remote": "remote.javon_samsung_70" }]
+ *
+ * Templates live beside the rooms, in _remotes.json. {{key}} inside a template
+ * is replaced from the room's entry; a string that is exactly {{key}} takes
+ * the value's own type, so numbers and lists survive.
+ */
+const _remoteFiles = new Map();
+
+function loadRemotes(cfg) {
+  const dir = (cfg.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
+  const u = cfg.remotes_url || dir + "_remotes.json";
+  if (!_remoteFiles.has(u)) {
+    const p = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+    _remoteFiles.set(u, p);
+  }
+  return _remoteFiles.get(u);
+}
+
+function fillTemplate(node, vars) {
+  if (typeof node === "string") {
+    const whole = node.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+    if (whole) return vars[whole[1]] !== undefined ? vars[whole[1]] : node;
+    return node.replace(/\{\{\s*([\w.-]+)\s*\}\}/g,
+      (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
+  }
+  if (Array.isArray(node)) return node.map((x) => fillTemplate(x, vars));
+  if (node && typeof node === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) out[fillTemplate(k, vars)] = fillTemplate(v, vars);
+    return out;
+  }
+  return node;
+}
+
+const OFFISH = ["off", "unavailable", "unknown", "standby"];
+
+/* Only show a remote while its device is actually on. A conditional card does
+ * the watching, so it follows state instead of the moment the panel opened. */
+function remoteCards(r, templates) {
+  const out = [];
+  for (const spec of r.remotes || []) {
+    const tpl = templates[spec.use];
+    if (!tpl) {
+      out.push({ type: "markdown",
+                 content: `\`_remotes.json\` has no template named **${spec.use}**.` });
+      continue;
+    }
+    const card = fillTemplate(clone(tpl), spec);
+    const watch = spec.when || spec.media_player || spec.remote || spec.entity;
+    if (spec.always || !watch) { out.push(card); continue; }
+    out.push({ type: "conditional",
+               conditions: OFFISH.map((st) => ({ condition: "state", entity: watch, state_not: st })),
+               card });
+  }
+  return out;
+}
+
+function mediaCard(r, hass) {
+  if (r.media_card) return r.media_card;          // hand-written wins
+  const id = r.media_player;
+  if (!id) return null;
+  if (isMassPlayer(hass, id)) {
+    return { type: "custom:mediocre-media-player-card", entity_id: id,
+             use_art_colors: true, tap_opens_popup: true,
+             options: { show_volume_step_buttons: true } };
+  }
+  return { type: "media-control", entity: id };
+}
+
+function roomBody(r, hass) {
   const order = r.sections && r.sections.length ? r.sections : ROOM_SECTIONS;
   const extra = r.cards || {};
   const out = [];
@@ -273,7 +360,8 @@ function roomBody(r) {
         push({ type: "grid", columns: av.length > 2 ? 3 : av.length, square: false,
                cards: av.map(([e, n, i]) => ({ type: "tile", entity: e, name: n, icon: i })) });
       }
-      if (r.media_player) push({ type: "media-control", entity: r.media_player });
+      for (const c of remoteCards(r, r._remotes || {})) push(c);
+      push(mediaCard(r, hass));
     }
 
     if (name === "lights") {
@@ -313,7 +401,26 @@ function roomBody(r) {
  * hash so the browser back button closes it. One owner per hash, or a room
  * that appears on two views would open two panels. */
 
-const _popupOwners = new Map();
+const _popupOwners = new Map();          // hash -> Set(card)
+
+function claimHash(hash, card) {
+  if (!_popupOwners.has(hash)) _popupOwners.set(hash, new Set());
+  _popupOwners.get(hash).add(card);
+}
+function unclaimHash(hash, card) {
+  const set = _popupOwners.get(hash);
+  if (!set) return;
+  set.delete(card);
+  if (!set.size) _popupOwners.delete(hash);
+}
+/* Whoever is actually on screen and has hass. A card that was torn down by a
+ * view switch shouldn't keep the hash hostage. */
+function ownerFor(hash) {
+  const set = _popupOwners.get(hash);
+  if (!set) return null;
+  for (const c of set) if (c.isConnected && c._hass) return c;
+  return null;
+}
 
 const POPUP_CSS = `
 .charro-pop-backdrop{
@@ -369,8 +476,9 @@ function ensurePopupCss() {
 }
 
 class RoomPopup {
-  constructor(hash, room, hass) {
+  constructor(hash, room, hass, bodyFn, title) {
     this.hash = hash; this.room = room; this._hass = hass;
+    this.bodyFn = bodyFn || null; this.titleOverride = title || null;
     this.el = null; this.backdrop = null;
   }
   set hass(h) {
@@ -401,7 +509,7 @@ class RoomPopup {
     }
     const t = document.createElement("div");
     t.className = "t";
-    t.textContent = this.room.room_name || "";
+    t.textContent = this.titleOverride || this.room.room_name || "";
     hd.appendChild(t);
     const sp = document.createElement("div");
     sp.className = "sp";
@@ -429,7 +537,8 @@ class RoomPopup {
     const body = document.createElement("div");
     body.className = "charro-pop-body";
     this._cards = [];
-    for (const cfg of roomBody(this.room)) {
+    for (const cfg of (this.bodyFn ? this.bodyFn(this.room, this._hass)
+                                   : roomBody(this.room, this._hass))) {
       try {
         const el = helpers.createCardElement(cfg);
         el.hass = this._hass;
@@ -469,18 +578,20 @@ class RoomPopup {
 /* ============================================================ ROOM CARD == */
 
 let _hashWired = false;
+let _syncHash = () => {};
 function wireRoomHash() {
   if (_hashWired) return;
   _hashWired = true;
   const sync = () => {
-    for (const [hash, owner] of _popupOwners) {
-      if (location.hash === hash) owner._openPopup();
-      else owner._closePopup();
-    }
+    const now = location.hash;
+    for (const [hash, set] of _popupOwners)
+      if (hash !== now) for (const c of set) c._closePopup(hash);
+    const owner = ownerFor(now);
+    if (owner) owner._openPopup(now);
   };
-  window.addEventListener("hashchange", sync);
-  window.addEventListener("location-changed", sync);
-  window.addEventListener("popstate", sync);
+  _syncHash = sync;
+  for (const ev of ["hashchange", "location-changed", "popstate"])
+    window.addEventListener(ev, sync);
   setTimeout(sync, 0);
 }
 
@@ -517,11 +628,19 @@ class CharroRoomCard extends CharroBase {
   }
 
   set hass(hass) {
+    const first = !this._hass;
     this._hass = hass;
     if (this._popup) this._popup.hass = hass;
     if (this._pageCards) for (const c of this._pageCards) c.hass = hass;
     if (this._card) this._card.hass = hass;
     else this._build();
+    if (first && (this._hash || this._mediaHash)) _syncHash();
+  }
+
+  connectedCallback() {
+    // moved back into the document by a view switch — take the hash again
+    if (this._hash) { claimHash(this._hash, this); _syncHash(); }
+    if (this._mediaHash) claimHash(this._mediaHash, this);
   }
 
   disconnectedCallback() {
@@ -533,6 +652,8 @@ class CharroRoomCard extends CharroBase {
   async _resolve() {
     if (this._merged) return this._merged;
     const room = await this._roomP;
+    if ((room.remotes || this._config.remotes || []).length)
+      room._remotes = await loadRemotes(this._config);
     const m = { ...room, ...this._config };
     for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
     if (!m.room_name) m.room_name = room.room_name || this._config.room || "";
@@ -570,7 +691,7 @@ class CharroRoomCard extends CharroBase {
       const helpers = await window.loadCardHelpers();
       const frag = document.createDocumentFragment();
       this._pageCards = [];
-      for (const cfg of roomBody(m)) {
+      for (const cfg of roomBody(m, this._hass)) {
         try {
           const el = helpers.createCardElement(cfg);
           el.hass = this._hass;
@@ -596,26 +717,45 @@ class CharroRoomCard extends CharroBase {
   _claimHash(m) {
     if (this._config.popup === false) return;
     const h = roomHash(m);
-    if (!h || this._hash === h) return;
-    this._releaseHash();
-    if (_popupOwners.has(h)) return;        // this room is already on screen
-    _popupOwners.set(h, this);
-    this._hash = h;
+    if (!h) return;
+    if (this._hash !== h) {
+      this._releaseHash();
+      this._hash = h;
+      claimHash(h, this);
+    }
+    // the now-playing chip opens the media card on its own hash
+    const mh = m.media_player ? h + "-media" : null;
+    if (mh && this._mediaHash !== mh) { this._mediaHash = mh; claimHash(mh, this); }
     wireRoomHash();
+    // the hash may already be set — a card that mounts after the navigation
+    // has to catch up, or the panel never appears until a reload
+    _syncHash();
   }
   _releaseHash() {
-    if (this._hash && _popupOwners.get(this._hash) === this) _popupOwners.delete(this._hash);
-    this._hash = null;
+    for (const h of [this._hash, this._mediaHash]) if (h) unclaimHash(h, this);
+    this._hash = null; this._mediaHash = null;
   }
-  async _openPopup() {
-    if (this._popup || !this._hass) return;
+  async _openPopup(hash) {
+    const want = hash || this._hash;
+    if (!this._hass || !want) return;
+    if (this._popup && this._popup.hash === want) return;
+    if (this._opening === want) return;
+    this._opening = want;
     const m = this._merged || (await this._resolve().catch(() => null));
-    if (!m || !this._hash) return;
-    this._popup = new RoomPopup(this._hash, m, this._hass);
+    this._opening = null;
+    if (!m || location.hash !== want) return;   // navigated away while resolving
+    if (this._popup && this._popup.hash === want) return;
+    this._closePopup();
+    this._popup = want === this._mediaHash
+      ? new RoomPopup(want, m, this._hass,
+                      (r, h) => [mediaCard(r, h)].filter(Boolean),
+                      `${m.room_name || ""} — Now playing`.trim())
+      : new RoomPopup(want, m, this._hass);
     await this._popup.open();
   }
-  _closePopup() {
+  _closePopup(hash) {
     if (!this._popup) return;
+    if (hash && this._popup.hash !== hash) return;
     this._popup.close();
     this._popup = null;
   }
@@ -1760,7 +1900,7 @@ class CharroRoomsEditor extends HTMLElement {
         hd.appendChild(t);
         box.appendChild(hd);
         this._prev = [];
-        for (const cfg of roomBody(this._room)) {
+        for (const cfg of roomBody(this._room, this._hass)) {
           try {
             const el = helpers.createCardElement(cfg);
             el.hass = this._hass;

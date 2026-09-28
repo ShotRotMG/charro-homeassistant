@@ -361,6 +361,17 @@
               {
                 "order": "0"
               }
+            ],
+            "nowplaying": [
+              {
+                "display": "[[[ return (variables.media_player && states[variables.media_player]?.state === 'playing') ? 'flex' : 'none'; ]]]"
+              },
+              {
+                "align-items": "center"
+              },
+              {
+                "order": "0"
+              }
             ]
           }
         },
@@ -1221,6 +1232,56 @@
                   },
                   {
                     "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
+                  }
+                ]
+              },
+              "card_mod": {
+                "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+              }
+            }
+          },
+          "nowplaying": {
+            "card": {
+              "type": "custom:button-card",
+              "entity": "[[[ return variables.media_player ]]]",
+              "show_icon": true,
+              "show_name": false,
+              "icon": "mdi:music-note",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "[[[ return (variables.popup_hash || '') + '-media' ]]]"
+              },
+              "hold_action": {
+                "action": "more-info",
+                "entity": "[[[ return variables.media_player ]]]"
+              },
+              "styles": {
+                "card": [
+                  {
+                    "padding": "1px 5px"
+                  },
+                  {
+                    "margin": 0
+                  },
+                  {
+                    "border-radius": "999px"
+                  },
+                  {
+                    "width": "max-content"
+                  },
+                  {
+                    "background": "'rgba(156,39,176,0.20)'"
+                  }
+                ],
+                "icon": [
+                  {
+                    "width": "18px"
+                  },
+                  {
+                    "--mdc-icon-size": "18px"
+                  },
+                  {
+                    "color": "'#ce93d8'"
                   }
                 ]
               },
