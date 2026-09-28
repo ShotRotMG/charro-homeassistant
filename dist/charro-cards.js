@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.6.0";
+const VERSION = "4.8.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1319,8 +1319,13 @@ h4{
   color:var(--secondary-text-color); border-bottom:1px solid var(--divider-color);
   padding-bottom:6px;
 }
-.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }
+.grid2{
+  display:grid; gap:24px; align-items:start;
+  grid-template-columns:minmax(320px,1fr) minmax(380px,1.15fr) 300px;
+}
+@media (max-width:1280px){ .grid2{ grid-template-columns:minmax(0,1fr) 300px; } }
 @media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
+.ttl{ font-size:16px; font-weight:600; letter-spacing:-.01em; margin-right:4px; }
 table{ width:100%; border-collapse:collapse; }
 th{
   text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
@@ -1331,6 +1336,14 @@ td.e{ font-family:ui-monospace,monospace; font-size:12px; color:var(--secondary-
       max-width:230px; overflow-wrap:anywhere; }
 td input[type=text]{ width:100%; padding:5px 7px; font-size:13px; }
 .status{ font-size:13px; color:var(--secondary-text-color); min-height:18px; margin-top:10px; }
+.foot{
+  margin-top:16px; padding-top:10px; border-top:1px solid var(--divider-color);
+  font-size:12px; line-height:1.55; color:var(--secondary-text-color);
+}
+.foot code{
+  font-family:ui-monospace,Menlo,monospace; font-size:11.5px;
+  background:rgba(127,127,127,.14); padding:1px 5px; border-radius:4px;
+}
 .status.err{ color:var(--error-color); }
 .status.ok{ color:var(--success-color, #2d6a4f); }
 .path{ font-family:ui-monospace,monospace; font-size:12px; }
@@ -1342,7 +1355,7 @@ class CharroRoomsEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = config || {};
-    this._keys = (config && config.rooms) || [];
+    this._keys = (config && config.rooms) || null;   // null = discover
     this._key = null; this._room = null; this._orig = null;
     if (this.shadowRoot) this.shadowRoot.innerHTML = "";
     this._built = false;
@@ -1370,6 +1383,11 @@ class CharroRoomsEditor extends HTMLElement {
     const card = document.createElement("ha-card");
 
     const bar = document.createElement("div"); bar.className = "bar";
+    if (this._config.title) {
+      const t = document.createElement("div");
+      t.className = "ttl"; t.textContent = this._config.title;
+      bar.appendChild(t);
+    }
     this._sel = document.createElement("select");
     this._sel.addEventListener("change", () => this._load(this._sel.value));
     const add = document.createElement("button");
@@ -1386,29 +1404,85 @@ class CharroRoomsEditor extends HTMLElement {
 
     const cols = document.createElement("div"); cols.className = "grid2";
     this._left = document.createElement("div");
+    this._mid = document.createElement("div");
     const right = document.createElement("div"); right.className = "preview";
     const ph = document.createElement("h4"); ph.textContent = "Preview";
     this._prevWrap = document.createElement("div");
     right.append(ph, this._prevWrap);
-    cols.append(this._left, right);
+    cols.append(this._left, this._mid, right);
 
     this._status = document.createElement("div"); this._status.className = "status";
+    this._foot = document.createElement("div"); this._foot.className = "foot";
 
-    card.append(bar, cols, this._status);
+    card.append(bar, cols, this._status, this._foot);
     root.innerHTML = ""; root.append(style, card);
     this._built = true;
 
-    this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
     this._saveLabel();
-    if (this._keys.length) this._load(this._keys[0]);
-    else this._say("No rooms listed. Add `rooms: [master, lanai, ...]` to this card.", "err");
+    this._fill();
+  }
+
+  async _fill(select) {
+    if (!this._keys) {
+      this._say("Finding rooms…");
+      this._keys = await this._discover();
+    }
+    this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+    if (!this._keys.length) {
+      this._say("No room files found. Use New room to make one, or set " +
+                "`rooms:` on this card.", "err");
+      return;
+    }
+    this._say("");
+    this._load(select || this._keys[0]);
+  }
+
+  /* Which rooms exist: every `room:` already placed on a dashboard, plus
+   * anything in _index.json, which the save script keeps up to date. A
+   * browser can't list a folder, so those two together stand in for it. */
+  async _discover() {
+    const keys = new Set();
+    try {
+      const dbs = await this._hass.callWS({ type: "lovelace/dashboards/list" });
+      const paths = [null, ...(dbs || []).map((d) => d.url_path)];
+      for (const url_path of paths) {
+        let cfg;
+        try { cfg = await this._hass.callWS({ type: "lovelace/config", url_path }); }
+        catch (err) { continue; }               // YAML-mode or no access
+        const walk = (o) => {
+          if (Array.isArray(o)) return o.forEach(walk);
+          if (!o || typeof o !== "object") return;
+          if (o.type === "custom:charro-room-card" && typeof o.room === "string")
+            keys.add(o.room);
+          Object.values(o).forEach(walk);
+        };
+        walk(cfg);
+      }
+    } catch (err) { /* older core, or no lovelace access */ }
+
+    try {
+      const r = await fetch(`${this._dir()}_index.json?t=${Date.now()}`, { cache: "no-store" });
+      if (r.ok) for (const k of await r.json()) if (k && !k.startsWith("_")) keys.add(k);
+    } catch (err) { /* no index yet */ }
+
+    return [...keys].sort();
   }
 
   _saveLabel() {
-    this._save.textContent = this._canWrite() ? "Save" : "Copy JSON";
-    this._save.title = this._canWrite()
+    const w = this._canWrite();
+    this._save.textContent = w ? "Save" : "Copy JSON";
+    this._save.title = w
       ? `Writes ${this._key ? this._path(this._key) : "the room file"}`
       : "shell_command.charro_write_room isn't configured — this copies instead";
+    if (!this._foot) return;
+    const path = this._key ? this._path(this._key) : `${this._dir()}&lt;room&gt;.json`;
+    this._foot.innerHTML = w
+      ? `Saves to <code>${path}</code> through ` +
+        `<code>shell_command.charro_write_room</code>. Other cards show the change ` +
+        `after a page refresh.`
+      : `Copies the JSON for <code>${path}</code> — ` +
+        `<code>shell_command.charro_write_room</code> isn't configured, so it can't ` +
+        `write the file itself. Other cards show the change after a page refresh.`;
   }
   _say(msg, cls) { this._status.textContent = msg; this._status.className = "status " + (cls || ""); }
 
@@ -1437,8 +1511,9 @@ class CharroRoomsEditor extends HTMLElement {
     const key = (prompt("Room key (file name, no .json)") || "").trim()
       .toLowerCase().replace(/[^a-z0-9_-]/g, "");
     if (!key) return;
+    this._keys = this._keys || [];
     if (!this._keys.includes(key)) {
-      this._keys.push(key);
+      this._keys.push(key); this._keys.sort();
       this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
     }
     this._key = key; this._sel.value = key;
@@ -1470,8 +1545,9 @@ class CharroRoomsEditor extends HTMLElement {
     });
     this._left.appendChild(this._form);
 
+    this._mid.innerHTML = "";
     this._lightsBox = document.createElement("div");
-    this._left.appendChild(this._lightsBox);
+    this._mid.appendChild(this._lightsBox);
 
     const h2 = document.createElement("h4"); h2.textContent = "Sections";
     const secs = document.createElement("input");

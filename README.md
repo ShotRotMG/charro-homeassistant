@@ -283,15 +283,36 @@ Drop it on a config view and edit the room files in place — entity pickers,
 icon pickers, per-light overrides, and a live preview of the tile beside the
 form.
 
+Give it a `type: panel` view of its own — it lays out in three columns
+(settings, the per-light table, a live preview) and wants the width.
+
 ```yaml
-type: custom:charro-rooms-editor
-rooms: [master, lanai, saloon, kitchen, hallway]
+type: panel
+title: Config
+path: config
+cards:
+  - type: custom:charro-rooms-editor
+    title: Rooms
 ```
 
 | Option | Description |
 |---|---|
-| `rooms` | **Required.** The room keys to offer, i.e. the file names without `.json` |
+| `rooms` | Pin the list to these keys. Leave it out and the card finds them |
+| `title` | Shown beside the room picker |
 | `rooms_dir` | Where the files live. Default `/local/rooms/` |
+
+### Finding the rooms
+
+A browser cannot list a folder, so the card works it out two ways and merges
+the results: it reads every dashboard's config over the websocket and collects
+each `room:` already placed on a `charro-room-card`, and it reads
+`_index.json` from the rooms folder, which the save script rewrites on every
+save. Between them a room shows up whether it has been put on a dashboard yet
+or not, and nothing has to be listed by hand.
+
+`_index.json` only exists once you've saved a room through the script. Until
+then the card falls back to what's on your dashboards, which is usually the
+same set.
 
 **New room** adds a key and starts an empty one. The per-light table is the
 part worth having a UI for: name, icon and a dims toggle for every light in
