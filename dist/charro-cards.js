@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.11.0";
+const VERSION = "4.11.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -666,8 +666,12 @@ class CharroRoomCard extends CharroBase {
 
   connectedCallback() {
     try {
-      if (this._hash) { claimHash(this._hash, this); _syncHash(); }
-      if (this._mediaHash) claimHash(this._mediaHash, this);
+      // Leaving the view disconnects the card, which releases its hash and
+      // clears _hash. Coming back must re-derive it from the room rather than
+      // trust a field the release just nulled — otherwise nothing owns the
+      // hash, the URL changes and no pop-up opens until a reload.
+      if (this._merged) this._claimHash(this._merged);
+      else if (this._hass) this._build();
     } catch (err) { console.error("charro-room-card connect:", err); }
   }
 
