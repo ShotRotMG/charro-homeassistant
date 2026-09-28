@@ -311,13 +311,26 @@ save. Between them a room shows up whether it has been put on a dashboard yet
 or not, and nothing has to be listed by hand.
 
 `_index.json` only exists once you've saved a room through the script. Until
-then the card falls back to what's on your dashboards, which is usually the
-same set.
+then the card falls back to what's on your dashboards — so a room file that is
+on disk but not yet on a card and not yet in the index is invisible. **Open /
+new** covers that case: type the key and the card opens the file if it finds
+one, and only starts a blank room if it doesn't. Writing `_index.json` by hand
+works too — it's a plain array, `["master", "lanai"]`.
 
-**New room** adds a key and starts an empty one. The per-light table is the
-part worth having a UI for: name, icon and a dims toggle for every light in
-the room, with the entity's own name shown as the placeholder so you only
-type the ones you're overriding.
+Three columns: the room's settings, the per-light table, and a live preview.
+**Open / new** takes a room key and opens that file if it exists, otherwise
+starts a blank room — so it can't overwrite one by accident. **Expand all**
+opens every settings section at once; they start collapsed to keep that column
+narrow.
+
+The per-light table is the part worth having a UI for: name, icon and a dims
+toggle for every light in the room, with the entity's own name as the
+placeholder so you only type the ones you're overriding. It shows the total and
+has a **Hide** toggle for when you're working on something else.
+
+The preview switches between **Tile** — the chip card as it appears on the
+rooms view — and **Pop-up**, which renders the full body the room would show
+when opened. Choosing Pop-up widens that column and narrows the other two.
 
 ### Saving
 

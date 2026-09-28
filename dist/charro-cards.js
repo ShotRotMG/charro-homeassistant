@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.8.0";
+const VERSION = "4.9.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1307,7 +1307,8 @@ select,input[type=text],textarea{
   background:var(--card-background-color); border:1px solid var(--divider-color);
   border-radius:8px; padding:7px 9px; box-sizing:border-box; max-width:100%;
 }
-textarea{ width:100%; min-height:110px; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; }
+textarea{ width:100%; min-height:280px; resize:vertical;
+  font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.5; }
 button{
   border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600;
   background:rgba(127,127,127,.16);
@@ -1320,12 +1321,32 @@ h4{
   padding-bottom:6px;
 }
 .grid2{
-  display:grid; gap:24px; align-items:start;
-  grid-template-columns:minmax(320px,1fr) minmax(380px,1.15fr) 300px;
+  display:grid; gap:22px; align-items:start;
+  grid-template-columns:minmax(240px,.72fr) minmax(330px,.95fr) minmax(300px,.5fr);
 }
-@media (max-width:1280px){ .grid2{ grid-template-columns:minmax(0,1fr) 300px; } }
-@media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
+.grid2.pop{ grid-template-columns:minmax(220px,.6fr) minmax(300px,.8fr) minmax(430px,1.4fr); }
+@media (max-width:1280px){
+  .grid2, .grid2.pop{ grid-template-columns:minmax(0,1fr) minmax(300px,.8fr); }
+}
+@media (max-width:820px){ .grid2, .grid2.pop{ grid-template-columns:1fr; } }
 .ttl{ font-size:16px; font-weight:600; letter-spacing:-.01em; margin-right:4px; }
+.seg{ display:inline-flex; border:1px solid var(--divider-color); border-radius:8px; overflow:hidden; }
+.seg button{
+  border:none; border-radius:0; padding:5px 12px; font-size:12.5px; font-weight:600;
+  background:transparent; color:var(--secondary-text-color);
+}
+.seg button[aria-pressed="true"]{ background:var(--primary-color); color:var(--text-primary-color,#fff); }
+.h4row{ display:flex; align-items:center; gap:8px; margin:20px 0 8px;
+  border-bottom:1px solid var(--divider-color); padding-bottom:6px; }
+.h4row h4{ margin:0; border:none; padding:0; }
+.h4row .n{ font-size:11px; color:var(--secondary-text-color); font-variant-numeric:tabular-nums; }
+.h4row button{ margin-left:auto; padding:4px 10px; font-size:12px; font-weight:500; }
+.popbox{
+  background:var(--ha-card-background, var(--card-background-color));
+  border:1px solid var(--divider-color); border-radius:20px; padding:12px;
+  box-shadow:0 6px 24px rgba(0,0,0,.22);
+}
+.popbox > *{ display:block; margin-bottom:8px; }
 table{ width:100%; border-collapse:collapse; }
 th{
   text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
@@ -1365,7 +1386,8 @@ class CharroRoomsEditor extends HTMLElement {
     this._hass = h;
     if (!this._built) this._build();
     if (this._form) this._form.hass = h;
-    if (this._prev) this._prev.hass = h;
+    if (Array.isArray(this._prev)) for (const c of this._prev) c.hass = h;
+    else if (this._prev) this._prev.hass = h;
   }
   getCardSize() { return 12; }
 
@@ -1391,8 +1413,19 @@ class CharroRoomsEditor extends HTMLElement {
     this._sel = document.createElement("select");
     this._sel.addEventListener("change", () => this._load(this._sel.value));
     const add = document.createElement("button");
-    add.textContent = "New room";
+    add.textContent = "Open / new";
+    add.title = "Type a room key — opens its file if there is one, otherwise starts a new room";
     add.addEventListener("click", () => this._newRoom());
+    this._exp = document.createElement("button");
+    this._expanded = false;
+    this._exp.textContent = "Expand all";
+    this._exp.addEventListener("click", () => {
+      this._expanded = !this._expanded;
+      this._exp.textContent = this._expanded ? "Collapse all" : "Expand all";
+      if (this._form) this._form.schema = this._schema();
+    });
+    bar.appendChild(this._exp);
+
     const sp = document.createElement("div"); sp.className = "sp";
     this._revert = document.createElement("button");
     this._revert.textContent = "Revert";
@@ -1406,9 +1439,27 @@ class CharroRoomsEditor extends HTMLElement {
     this._left = document.createElement("div");
     this._mid = document.createElement("div");
     const right = document.createElement("div"); right.className = "preview";
+    const prow = document.createElement("div"); prow.className = "h4row";
     const ph = document.createElement("h4"); ph.textContent = "Preview";
+    const seg = document.createElement("div"); seg.className = "seg";
+    seg.style.marginLeft = "auto";
+    this._pmode = "tile";
+    for (const [k, label] of [["tile", "Tile"], ["popup", "Pop-up"]]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.setAttribute("aria-pressed", String(k === this._pmode));
+      b.addEventListener("click", () => {
+        this._pmode = k;
+        seg.querySelectorAll("button").forEach((x, i) =>
+          x.setAttribute("aria-pressed", String(["tile", "popup"][i] === k)));
+        cols.classList.toggle("pop", k === "popup");
+        this._renderPreview();
+      });
+      seg.appendChild(b);
+    }
+    prow.append(ph, seg);
     this._prevWrap = document.createElement("div");
-    right.append(ph, this._prevWrap);
+    right.append(prow, this._prevWrap);
     cols.append(this._left, this._mid, right);
 
     this._status = document.createElement("div"); this._status.className = "status";
@@ -1429,8 +1480,9 @@ class CharroRoomsEditor extends HTMLElement {
     }
     this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
     if (!this._keys.length) {
-      this._say("No room files found. Use New room to make one, or set " +
-                "`rooms:` on this card.", "err");
+      this._say("No rooms found yet — nothing on a dashboard uses `room:` and there's " +
+                "no _index.json. Use Open / new and type a key: if the file already " +
+                "exists it opens, otherwise you get a blank room.", "err");
       return;
     }
     this._say("");
@@ -1507,20 +1559,31 @@ class CharroRoomsEditor extends HTMLElement {
     }
   }
 
-  _newRoom() {
+  async _newRoom() {
     const key = (prompt("Room key (file name, no .json)") || "").trim()
       .toLowerCase().replace(/[^a-z0-9_-]/g, "");
     if (!key) return;
+
     this._keys = this._keys || [];
     if (!this._keys.includes(key)) {
       this._keys.push(key); this._keys.sort();
       this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
     }
     this._key = key; this._sel.value = key;
+    this._saveLabel();
+
+    // opening beats clobbering: if the file is already there, load it
+    try {
+      const r = await fetch(`${this._dir()}${key}.json?t=${Date.now()}`, { cache: "no-store" });
+      if (r.ok) {
+        this._say(`${key}.json already exists — opened it.`);
+        return this._load(key, true);
+      }
+    } catch (err) { /* not there, fall through to a new one */ }
+
     this._room = { room_name: key.charAt(0).toUpperCase() + key.slice(1),
                    room_icon: "mdi:home", light_entities: [] };
     this._orig = null;
-    this._saveLabel();
     this._say(`New room — Save writes ${this._path(key)}`);
     this._renderForm();
   }
@@ -1533,7 +1596,7 @@ class CharroRoomsEditor extends HTMLElement {
     // ha-form handles everything except per-light overrides
     this._form = document.createElement("ha-form");
     this._form.hass = this._hass;
-    this._form.schema = ROOM_SCHEMA.filter((f) => !["room", "mode"].includes(f.name));
+    this._form.schema = this._schema();
     this._form.computeLabel = (s) => ROOM_LABELS[s.name] || s.name;
     this._form.computeHelper = (s) => ROOM_HELPERS[s.name] || "";
     this._form.data = this._formData();
@@ -1577,6 +1640,12 @@ class CharroRoomsEditor extends HTMLElement {
     this._renderPreview();
   }
 
+  _schema() {
+    return ROOM_SCHEMA
+      .filter((f) => !["room", "mode"].includes(f.name))
+      .map((f) => (f.type === "expandable" ? { ...f, expanded: this._expanded } : f));
+  }
+
   _formData() {
     const d = { ...this._room };
     for (const k of RE_LIGHT_LISTS) if (d[k]) d[k] = lightIds(d[k]);
@@ -1608,9 +1677,21 @@ class CharroRoomsEditor extends HTMLElement {
     this._lightsBox.innerHTML = "";
     if (!rows.length) return;
 
+    const row = document.createElement("div"); row.className = "h4row";
     const h = document.createElement("h4");
     h.textContent = "Per-light name, icon and dimming";
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = `${rows.length} total`;
+    const hide = document.createElement("button");
+    hide.textContent = this._lightsHidden ? "Show" : "Hide";
+    hide.addEventListener("click", () => {
+      this._lightsHidden = !this._lightsHidden;
+      hide.textContent = this._lightsHidden ? "Show" : "Hide";
+      tbl.hidden = this._lightsHidden;
+    });
+    row.append(h, n, hide);
     const tbl = document.createElement("table");
+    tbl.hidden = !!this._lightsHidden;
     tbl.innerHTML =
       "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Dims</th></tr></thead>";
     const tb = document.createElement("tbody");
@@ -1652,17 +1733,48 @@ class CharroRoomsEditor extends HTMLElement {
       tb.appendChild(tr);
     }
     tbl.appendChild(tb);
-    this._lightsBox.append(h, tbl);
+    this._lightsBox.append(row, tbl);
   }
 
   async _renderPreview() {
     if (!this._room) return;
     try {
       const helpers = await window.loadCardHelpers();
+      this._prevWrap.innerHTML = "";
+
+      if (this._pmode === "popup") {
+        const box = document.createElement("div");
+        box.className = "popbox";
+        const hd = document.createElement("div");
+        hd.className = "charro-pop-hd";
+        hd.style.cssText = "display:flex;align-items:center;gap:10px;margin:2px 4px 12px";
+        if (this._room.room_icon) {
+          const i = document.createElement("ha-icon");
+          i.icon = this._room.room_icon;
+          i.style.color = "var(--secondary-text-color)";
+          hd.appendChild(i);
+        }
+        const t = document.createElement("div");
+        t.style.cssText = "font-size:19px;font-weight:600;letter-spacing:-.01em";
+        t.textContent = this._room.room_name || "";
+        hd.appendChild(t);
+        box.appendChild(hd);
+        this._prev = [];
+        for (const cfg of roomBody(this._room)) {
+          try {
+            const el = helpers.createCardElement(cfg);
+            el.hass = this._hass;
+            box.appendChild(el);
+            this._prev.push(el);
+          } catch (err) { /* skip a card the preview can't build */ }
+        }
+        this._prevWrap.appendChild(box);
+        return;
+      }
+
       const el = helpers.createCardElement({
         type: "custom:charro-room-card", popup: false, ...this._room });
       el.hass = this._hass;
-      this._prevWrap.innerHTML = "";
       this._prevWrap.appendChild(el);
       this._prev = el;
     } catch (err) {
