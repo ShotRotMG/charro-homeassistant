@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.10.1";
+const VERSION = "4.11.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -549,11 +549,14 @@ class RoomPopup {
       }
     }
 
-    this.el.append(hd, body);
-    document.body.append(this.backdrop, this.el);
+    const panel = this.el, back = this.backdrop;
+    panel.append(hd, body);
+    document.body.append(back, panel);
     requestAnimationFrame(() => {
-      this.backdrop.classList.add("in");
-      this.el.classList.add("in");
+      // close() may already have run and nulled these
+      if (this.el !== panel) return;
+      back.classList.add("in");
+      panel.classList.add("in");
     });
 
     this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
@@ -565,13 +568,12 @@ class RoomPopup {
     else this.close();
   }
   close() {
-    if (this._key) window.removeEventListener("keydown", this._key);
+    if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
     const el = this.el, bd = this.backdrop;
     this.el = null; this.backdrop = null; this._cards = [];
     if (!el) return;
-    el.classList.remove("in");
-    if (bd) bd.classList.remove("in");
-    setTimeout(() => { el.remove(); if (bd) bd.remove(); }, 260);
+    try { el.classList.remove("in"); if (bd) bd.classList.remove("in"); } catch (e) {}
+    setTimeout(() => { try { el.remove(); if (bd) bd.remove(); } catch (e) {} }, 260);
   }
 }
 
@@ -592,6 +594,31 @@ function wireRoomHash() {
   _syncHash = sync;
   for (const ev of ["hashchange", "location-changed", "popstate"])
     window.addEventListener(ev, sync);
+
+  // A tap on a room tile is history.pushState. That fires no hashchange, and
+  // the location-changed event it should raise doesn't always reach window —
+  // which is why the panel only appeared after a reload. Watch the call.
+  for (const m of ["pushState", "replaceState"]) {
+    const orig = history[m];
+    if (typeof orig === "function" && !orig.__charro) {
+      const wrapped = function (...args) {
+        const out = orig.apply(this, args);
+        setTimeout(sync, 0);
+        return out;
+      };
+      wrapped.__charro = true;
+      history[m] = wrapped;
+    }
+  }
+
+  // last resort: cheap, and it costs one string compare twice a second
+  let seen = location.hash;
+  setInterval(() => {
+    if (location.hash === seen) return;
+    seen = location.hash;
+    sync();
+  }, 400);
+
   setTimeout(sync, 0);
 }
 
@@ -638,14 +665,23 @@ class CharroRoomCard extends CharroBase {
   }
 
   connectedCallback() {
-    // moved back into the document by a view switch — take the hash again
-    if (this._hash) { claimHash(this._hash, this); _syncHash(); }
-    if (this._mediaHash) claimHash(this._mediaHash, this);
+    try {
+      if (this._hash) { claimHash(this._hash, this); _syncHash(); }
+      if (this._mediaHash) claimHash(this._mediaHash, this);
+    } catch (err) { console.error("charro-room-card connect:", err); }
   }
 
   disconnectedCallback() {
-    this._closePopup();
-    this._releaseHash();
+    // Home Assistant re-parents cards while it renders, which fires this even
+    // though the card is coming straight back. Tearing down here killed the
+    // card. Wait a tick and only act if it really has gone.
+    setTimeout(() => {
+      try {
+        if (this.isConnected) return;
+        this._closePopup();
+        this._releaseHash();
+      } catch (err) { console.error("charro-room-card disconnect:", err); }
+    }, 0);
   }
 
   /* anything set on the card wins over the shared file */
@@ -1689,6 +1725,7 @@ class CharroRoomsEditor extends HTMLElement {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       let j = await r.json();
       if (j && !j.room_name && j[key] && typeof j[key] === "object") j = j[key];
+      if ((j.remotes || []).length) j._remotes = await loadRemotes(this._config);
       this._room = j; this._orig = JSON.parse(JSON.stringify(j));
       if (!quiet) this._say("");
       this._renderForm();
@@ -1925,7 +1962,9 @@ class CharroRoomsEditor extends HTMLElement {
   /* -------------------------------------------------------------- save -- */
   async _doSave() {
     if (!this._room || !this._key) return;
-    const json = JSON.stringify(this._room, null, 2);
+    const save = { ...this._room };
+    delete save._remotes;                       // fetched, not part of the file
+    const json = JSON.stringify(save, null, 2);
 
     if (this._canWrite()) {
       try {
