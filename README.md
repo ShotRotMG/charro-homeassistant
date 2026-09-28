@@ -1,15 +1,16 @@
 # Charro Home Assistant
 
-Lovelace cards for the Charro dashboard. One HACS install gives you four cards,
+Lovelace cards for the Charro dashboard. One HACS install gives you six cards,
 each with a visual editor.
 
 | Card | What it is |
 |---|---|
-| `charro-room-card` | Room summary — lights, fans, climate, music, door alert |
+| `charro-room-card` | A room — the chip tile, its pop-up, and its full page |
 | `charro-security-card` | Elk zone or garage door tile, coloured client-side |
 | `charro-zone-card` | RTI AD-8x single-line zone control |
 | `charro-all-off-card` | Turn every RTI zone off on both amps |
 | `charro-lights-card` | One room of lights — equal rows, dim by dragging |
+| `charro-rooms-editor` | Edit the files behind `room:` without leaving Home Assistant |
 
 The first four render `custom:button-card` underneath, with the styling in
 `dist/templates/*.json`. Nothing goes in `button_card_templates:` any more.
@@ -29,6 +30,98 @@ download it. HACS registers the Lovelace resource itself.
 ---
 
 ## `charro-room-card`
+
+One card renders a room three ways, from one definition.
+
+| `mode` | What you get |
+|---|---|
+| *(blank)* | The chip tile — **and it owns the room's pop-up** |
+| `page` | The same room laid out as a full subview body |
+| `popup` | The pop-up only, for a room with no tile on screen |
+
+### Defining a room once
+
+Set the entities on the card and it behaves as it always has. Point it at a
+shared file instead and the tile, the pop-up and the page all read the same
+definition, so they can't drift apart:
+
+```yaml
+type: custom:charro-room-card
+room: master
+```
+
+```yaml
+# the subview page
+type: custom:charro-room-card
+mode: page
+room: master
+```
+
+`room: master` reads `/local/rooms/master.json` — on disk that is
+`/config/www/rooms/master.json`. One file per room. Keep them there and **not**
+in this repo: HACS replaces `dist/` on every update, and your rooms are your
+data. `rooms_dir` moves the folder, `room_url` points at one exact file. They're
+fetched `cache: "no-store"`, so an edit is live on a hard refresh, with no
+restart.
+
+> Home Assistant serves `/config/www` at `/local/` **without authentication**.
+> A room file holds entity ids, names and layout — no tokens, and entity ids
+> alone grant no control, since the APIs still require one. But if your
+> instance is reachable from the internet, treat these files as public and
+> never put a secret or a credentialled URL in one.
+
+Each file is the room object on its own. Keys are the card's own option names,
+so anything set on the card wins over the file:
+
+```json
+{
+  "room_name": "Master",
+  "room_icon": "mdi:chess-king",
+  "climate_entity": "climate.master_bed",
+  "music_powers": ["switch.rti_ad_8x_amp1_master_bath_power"],
+  "alert_sensors": ["sensor.elkm1_master_bedroom"],
+  "light_entities": [
+    "light.master_cans",
+    { "entity": "light.master_bath_shower_fans", "name": "Bathroom Fans", "dim": false }
+  ],
+  "fan_entities": ["light.master_fan"],
+  "sections": ["media", "climate", "lights", "security"],
+  "cards": { "start": [ { "type": "custom:universal-remote-card" } ] }
+}
+```
+
+A file that wraps the object in its own key (`{"master": { ... }}`) is read
+too, so a room lifted out of a combined file works unchanged.
+
+A light is an id, or an object with `name`, `icon` and `dim`. Set `dim: false`
+on a Lutron relay or wall switch — Home Assistant reports brightness support
+for those, which is wrong.
+
+### What the pop-up and page contain
+
+`sections` picks the blocks and their order; each appears only if the room
+defines those entities, so no room needs a hand-built layout.
+
+| Block | Appears when the room has |
+|---|---|
+| `climate` | `climate_entity` |
+| `media` | `music_powers`, `tv_entity`, `projector_entity`, `receiver_entity`, `media_player` |
+| `lights` | `light_entities`, `landscape_entities`, `fan_entities`, `bath_fan_entities`, `fountain_entities` |
+| `cameras` | `cameras` |
+| `security` | `alert_sensors` |
+
+Default order is climate, media, lights, cameras, security.
+
+For the one-offs — a projector remote, a scene picker — `cards` drops raw
+Lovelace into a slot: `start` renders before everything, any block name
+renders after that block, `end` renders last.
+
+The pop-up is drawn by the card itself into `document.body`, keyed on the
+room's hash, so the browser back button closes it and nothing in the grid can
+clip it. It does not need Bubble Card. Only the first card to claim a hash
+owns it, so a room appearing on two views still opens one panel.
+
+### The tile
 
 Room name with a centred row of chips — lights, landscape, ceiling fans,
 bathroom fans, fountain, thermostat, music — each shown only when that room has
@@ -183,6 +276,52 @@ themselves. A card whose rows are all filtered out hides itself, so the grid
 closes up instead of leaving an empty header.
 
 Fountain rows go blue when on; everything else goes amber.
+
+## `charro-rooms-editor`
+
+Drop it on a config view and edit the room files in place — entity pickers,
+icon pickers, per-light overrides, and a live preview of the tile beside the
+form.
+
+```yaml
+type: custom:charro-rooms-editor
+rooms: [master, lanai, saloon, kitchen, hallway]
+```
+
+| Option | Description |
+|---|---|
+| `rooms` | **Required.** The room keys to offer, i.e. the file names without `.json` |
+| `rooms_dir` | Where the files live. Default `/local/rooms/` |
+
+**New room** adds a key and starts an empty one. The per-light table is the
+part worth having a UI for: name, icon and a dims toggle for every light in
+the room, with the entity's own name shown as the placeholder so you only
+type the ones you're overriding.
+
+### Saving
+
+A browser cannot write to `/config`, so Save takes one of two routes.
+
+Without any setup the button reads **Copy JSON** — it puts the finished file
+on your clipboard and names the path to paste it into.
+
+Add the helper below and it becomes a real **Save** that writes the file:
+
+```yaml
+# configuration.yaml
+shell_command:
+  charro_write_room: "sh /config/scripts/charro_write_room.sh {{ name }} {{ payload }}"
+```
+
+with `charro_write_room.sh` at `/config/scripts/` — anywhere under `/config`
+works, as long as the two paths agree. No execute bit needed, since the
+command invokes `sh` directly. The card base64-encodes the body,
+so nothing with a shell metacharacter in it ever reaches the command line; the
+script sanitises the room name again, writes to a temp file, refuses to
+install anything that doesn't parse as JSON, and only then moves it into
+place. The card notices the service by itself — no option to set.
+
+Either way the other cards pick the change up on a hard refresh.
 
 ---
 

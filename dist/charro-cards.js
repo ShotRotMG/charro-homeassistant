@@ -1,11 +1,12 @@
 /*
  * Charro Home Assistant — Lovelace cards
  *
- *   charro-room-card      room summary with chips + door alert
+ *   charro-room-card      a room: chip tile, its pop-up, or its full page
  *   charro-security-card  Elk zone / garage door tile, colours itself client-side
  *   charro-zone-card      RTI AD-8x single-line zone control
  *   charro-all-off-card   all zones off, both amps
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
+ *   charro-rooms-editor   edit the room files from inside Home Assistant
  *
  * Installed through HACS, so the Lovelace resource is registered automatically.
  * The first four render custom:button-card with a template fetched from
@@ -18,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.4.0";
+const VERSION = "4.6.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -162,7 +163,326 @@ function makeEditor(tag, schema, labels, helpers) {
   customElements.define(tag, Editor);
 }
 
+/* ==================================================== ROOM: SHARED CONFIG = */
+/*
+ * A room can be defined once, in a file the cards fetch, instead of three
+ * times across the tile, the pop-up and the subview page:
+ *
+ *   type: custom:charro-room-card      # the tile, and it owns pop-up #master
+ *   room: master                     # -> /local/rooms/master.json
+ *
+ *   type: custom:charro-room-card      # the same room as a full page
+ *   mode: page
+ *   room: master
+ *
+ * One file per room, under /config/www/rooms/ — not in this repo, since HACS
+ * replaces dist/ on every update and your rooms are your data. Keys match the
+ * card's own option names, so anything set on the card overrides the file.
+ *
+ * Note that /local/ is served without authentication. A room file holds entity
+ * ids and layout, never secrets — keep it that way.
+ */
+
+const ROOMS_DIR_DEFAULT = "/local/rooms/";
+const _roomFiles = new Map();
+
+function roomUrl(key, cfg) {
+  if (cfg.room_url) return cfg.room_url;
+  const dir = (cfg.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
+  return dir + key + ".json";
+}
+
+function loadRoom(key, cfg) {
+  const u = roomUrl(key, cfg);
+  if (!_roomFiles.has(u)) {
+    const p = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${u}`);
+        return r.json();
+      })
+      .then((j) => {
+        // tolerate a file that wraps the room in its own key
+        if (j && !j.room_name && j[key] && typeof j[key] === "object") return j[key];
+        return j;
+      })
+      .catch((err) => { _roomFiles.delete(u); throw err; });
+    _roomFiles.set(u, p);
+  }
+  return _roomFiles.get(u);
+}
+
+const roomHash = (c) => {
+  let h = c.popup_hash || (c.room_name ? "#" + slugify(c.room_name) : "");
+  if (h && !h.startsWith("#")) h = "#" + h;
+  return h;
+};
+
+/* A light may be a plain id or {entity, name, icon, dim}. */
+const lightId = (l) => (typeof l === "string" ? l : l && l.entity);
+const lightIds = (list) => (list || []).map(lightId).filter(Boolean);
+
+function lightCard(l, noDim) {
+  const id = lightId(l);
+  const o = typeof l === "object" && l ? l : {};
+  const card = { type: "custom:mushroom-light-card", entity: id };
+  if (o.name) card.name = o.name;
+  if (o.icon) card.icon = o.icon;
+  const dims = o.dim !== undefined ? o.dim : !(noDim || []).includes(id);
+  if (!dims) {
+    card.show_brightness_control = false;
+    card.collapsible_controls = false;
+    card.hold_action = { action: "toggle" };
+    card.double_tap_action = { action: "toggle" };
+  }
+  return card;
+}
+
+/* Body of a room, shared by the pop-up and the page. Each block appears only
+ * if the room actually defines those entities, so no room needs its own
+ * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
+const ROOM_SECTIONS = ["climate", "media", "lights", "cameras", "security"];
+
+function roomBody(r) {
+  const order = r.sections && r.sections.length ? r.sections : ROOM_SECTIONS;
+  const extra = r.cards || {};
+  const out = [];
+  const push = (c) => { if (c) out.push(c); };
+
+  for (const c of extra.start || []) push(c);
+
+  for (const name of order) {
+    if (name === "climate" && r.climate_entity) {
+      push({ type: "custom:mushroom-climate-card", entity: r.climate_entity,
+             show_temperature_control: true,
+             hvac_modes: ["heat_cool", "heat", "cool", "off"] });
+    }
+
+    if (name === "media") {
+      for (const p of r.music_powers || []) {
+        push({ type: "custom:charro-zone-card", entity: p,
+               zone_name: r.room_name || "",
+               source_entity: p.replace("_power", "_source"),
+               volume_entity: p.replace("_power", "_volume") });
+      }
+      const av = [
+        [r.tv_entity, "TV", "mdi:television"],
+        [r.projector_entity, "Projector", "mdi:projector"],
+        [r.receiver_entity, "Receiver", "mdi:audio-video"],
+      ].filter(([e]) => e);
+      if (av.length) {
+        push({ type: "grid", columns: av.length > 2 ? 3 : av.length, square: false,
+               cards: av.map(([e, n, i]) => ({ type: "tile", entity: e, name: n, icon: i })) });
+      }
+      if (r.media_player) push({ type: "media-control", entity: r.media_player });
+    }
+
+    if (name === "lights") {
+      const groups = [
+        ["Lights", r.light_entities],
+        ["Landscape", r.landscape_entities],
+        ["Fans", r.fan_entities],
+        ["Bath fans", r.bath_fan_entities],
+        ["Water", r.fountain_entities],
+      ].filter(([, l]) => (l || []).length);
+      for (const [label, list] of groups) {
+        if (groups.length > 1) push({ type: "heading", heading: label, heading_style: "subtitle" });
+        push({ type: "grid", columns: 2, square: false,
+               cards: list.map((l) => lightCard(l, r.no_dim)) });
+      }
+    }
+
+    if (name === "cameras" && (r.cameras || []).length) {
+      push({ type: "grid", columns: r.cameras.length > 1 ? 2 : 1, square: false,
+             cards: r.cameras.map((e) => ({ type: "picture-entity", entity: e,
+                                            camera_view: "auto", show_state: false })) });
+    }
+
+    if (name === "security" && (r.alert_sensors || []).length) {
+      push({ type: "grid", columns: 2, square: false,
+             cards: r.alert_sensors.map((e) => ({ type: "custom:charro-security-card", entity: e })) });
+    }
+
+    for (const c of extra[name] || []) push(c);
+  }
+  for (const c of extra.end || []) push(c);
+  return out;
+}
+
+/* ------------------------------------------------------- room pop-up ----- */
+/* Rendered into document.body so the grid can't clip it, and keyed on the
+ * hash so the browser back button closes it. One owner per hash, or a room
+ * that appears on two views would open two panels. */
+
+const _popupOwners = new Map();
+
+const POPUP_CSS = `
+.charro-pop-backdrop{
+  position:fixed; inset:0; z-index:8;
+  background:rgba(0,0,0,.45); backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  opacity:0; transition:opacity .22s ease;
+}
+.charro-pop-backdrop.in{ opacity:1; }
+.charro-pop{
+  position:fixed; left:0; right:0; bottom:0; z-index:9;
+  max-height:88vh; overflow:auto; box-sizing:border-box;
+  padding:14px 14px calc(18px + env(safe-area-inset-bottom,0px));
+  background:var(--ha-card-background, var(--card-background-color, #fff));
+  border-radius:24px 24px 0 0;
+  box-shadow:0 -8px 40px rgba(0,0,0,.35);
+  transform:translateY(100%); transition:transform .26s cubic-bezier(.2,.8,.3,1);
+}
+.charro-pop.in{ transform:translateY(0); }
+@media (min-width:870px){
+  .charro-pop{
+    left:50%; right:auto; bottom:auto; top:50%;
+    transform:translate(-50%,-46%) scale(.98); opacity:0;
+    width:min(680px,92vw); max-height:84vh; border-radius:24px;
+    transition:transform .2s ease, opacity .2s ease;
+  }
+  .charro-pop.in{ transform:translate(-50%,-50%) scale(1); opacity:1; }
+}
+.charro-pop-hd{
+  display:flex; align-items:center; gap:10px; margin:2px 4px 12px;
+}
+.charro-pop-hd ha-icon{ --mdc-icon-size:22px; color:var(--secondary-text-color); }
+.charro-pop-hd .t{ font-size:19px; font-weight:600; letter-spacing:-.01em; }
+.charro-pop-hd .sp{ margin-left:auto; }
+.charro-pop-hd button{
+  border:none; background:rgba(127,127,127,.16); color:var(--primary-text-color);
+  width:32px; height:32px; border-radius:50%; cursor:pointer;
+  display:grid; place-items:center; font:inherit;
+}
+.charro-pop-hd button:hover{ background:rgba(127,127,127,.28); }
+.charro-pop-body > *{ margin-bottom:8px; display:block; }
+@media (prefers-reduced-motion:reduce){
+  .charro-pop,.charro-pop-backdrop{ transition:none; }
+}
+`;
+
+function ensurePopupCss() {
+  if (document.getElementById("charro-pop-css")) return;
+  const s = document.createElement("style");
+  s.id = "charro-pop-css";
+  s.textContent = POPUP_CSS;
+  document.head.appendChild(s);
+}
+
+class RoomPopup {
+  constructor(hash, room, hass) {
+    this.hash = hash; this.room = room; this._hass = hass;
+    this.el = null; this.backdrop = null;
+  }
+  set hass(h) {
+    this._hass = h;
+    for (const c of this._cards || []) c.hass = h;
+  }
+  async open() {
+    if (this.el) return;
+    ensurePopupCss();
+    const helpers = await window.loadCardHelpers();
+    if (this.el) return;                      // opened while we awaited
+
+    this.backdrop = document.createElement("div");
+    this.backdrop.className = "charro-pop-backdrop";
+    this.backdrop.addEventListener("click", () => this.dismiss());
+
+    this.el = document.createElement("div");
+    this.el.className = "charro-pop";
+    this.el.setAttribute("role", "dialog");
+    this.el.setAttribute("aria-modal", "true");
+
+    const hd = document.createElement("div");
+    hd.className = "charro-pop-hd";
+    if (this.room.room_icon) {
+      const i = document.createElement("ha-icon");
+      i.icon = this.room.room_icon;
+      hd.appendChild(i);
+    }
+    const t = document.createElement("div");
+    t.className = "t";
+    t.textContent = this.room.room_name || "";
+    hd.appendChild(t);
+    const sp = document.createElement("div");
+    sp.className = "sp";
+    hd.appendChild(sp);
+
+    if (this.room.page_path) {
+      const go = document.createElement("button");
+      go.title = "Open the full page";
+      go.setAttribute("aria-label", "Open the full page");
+      go.innerHTML = `<ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:18px"></ha-icon>`;
+      go.addEventListener("click", () => {
+        this.dismiss();
+        history.pushState(null, "", this.room.page_path);
+        window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, composed: true }));
+      });
+      hd.appendChild(go);
+    }
+    const x = document.createElement("button");
+    x.title = "Close";
+    x.setAttribute("aria-label", "Close");
+    x.innerHTML = `<ha-icon icon="mdi:close" style="--mdc-icon-size:18px"></ha-icon>`;
+    x.addEventListener("click", () => this.dismiss());
+    hd.appendChild(x);
+
+    const body = document.createElement("div");
+    body.className = "charro-pop-body";
+    this._cards = [];
+    for (const cfg of roomBody(this.room)) {
+      try {
+        const el = helpers.createCardElement(cfg);
+        el.hass = this._hass;
+        body.appendChild(el);
+        this._cards.push(el);
+      } catch (err) {
+        console.error("charro-room-card pop-up:", cfg && cfg.type, err);
+      }
+    }
+
+    this.el.append(hd, body);
+    document.body.append(this.backdrop, this.el);
+    requestAnimationFrame(() => {
+      this.backdrop.classList.add("in");
+      this.el.classList.add("in");
+    });
+
+    this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
+    window.addEventListener("keydown", this._key);
+  }
+  dismiss() {
+    // let the hash drive it, so the back button and the close button agree
+    if (location.hash === this.hash) history.back();
+    else this.close();
+  }
+  close() {
+    if (this._key) window.removeEventListener("keydown", this._key);
+    const el = this.el, bd = this.backdrop;
+    this.el = null; this.backdrop = null; this._cards = [];
+    if (!el) return;
+    el.classList.remove("in");
+    if (bd) bd.classList.remove("in");
+    setTimeout(() => { el.remove(); if (bd) bd.remove(); }, 260);
+  }
+}
+
 /* ============================================================ ROOM CARD == */
+
+let _hashWired = false;
+function wireRoomHash() {
+  if (_hashWired) return;
+  _hashWired = true;
+  const sync = () => {
+    for (const [hash, owner] of _popupOwners) {
+      if (location.hash === hash) owner._openPopup();
+      else owner._closePopup();
+    }
+  };
+  window.addEventListener("hashchange", sync);
+  window.addEventListener("location-changed", sync);
+  window.addEventListener("popstate", sync);
+  setTimeout(sync, 0);
+}
 
 const ROOM_LISTS = [
   "light_entities", "landscape_entities", "fan_entities",
@@ -179,14 +499,135 @@ class CharroRoomCard extends CharroBase {
   }
   templateName() { return "room-card.json"; }
 
+  setConfig(config) {
+    if (!config) throw new Error("Invalid configuration");
+    this._config = config;
+    this._card = null;
+    this._building = false;
+    this._merged = null;
+    this._roomP = config.room
+      ? loadRoom(config.room, config).then((r) => {
+          if (!r || typeof r !== "object")
+            throw new Error(`${roomUrl(config.room, config)} is not a room`);
+          return r;
+        })
+      : Promise.resolve({});
+    this.innerHTML = "";
+    if (this._hass) this._build();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._popup) this._popup.hass = hass;
+    if (this._pageCards) for (const c of this._pageCards) c.hass = hass;
+    if (this._card) this._card.hass = hass;
+    else this._build();
+  }
+
+  disconnectedCallback() {
+    this._closePopup();
+    this._releaseHash();
+  }
+
+  /* anything set on the card wins over the shared file */
+  async _resolve() {
+    if (this._merged) return this._merged;
+    const room = await this._roomP;
+    const m = { ...room, ...this._config };
+    for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
+    if (!m.room_name) m.room_name = room.room_name || this._config.room || "";
+    if (!m.room_icon) m.room_icon = room.room_icon || "mdi:home";
+    if (!m.page_path && this._config.room) m.page_path = `/d-charro/${this._config.room}`;
+    this._merged = m;
+    return m;
+  }
+
+  _fail(err) {
+    const msg = err && err.message ? err.message : err;
+    this.innerHTML =
+      `<ha-card style="padding:12px;color:var(--error-color);font-size:13px">` +
+      `charro-room-card: ${msg}</ha-card>`;
+    console.error("charro-room-card:", err);
+  }
+
+  async _build() {
+    if (this._building || !this._hass || !this._config) return;
+    let m;
+    try { m = await this._resolve(); } catch (err) { return this._fail(err); }
+
+    const mode = this._config.mode || "tile";
+    if (mode === "page") return this._buildPage(m);
+    if (mode === "popup") { this._claimHash(m); return; }
+
+    await super._build();          // the chip tile, via button-card
+    this._claimHash(m);
+  }
+
+  async _buildPage(m) {
+    if (this._building) return;
+    this._building = true;
+    try {
+      const helpers = await window.loadCardHelpers();
+      const frag = document.createDocumentFragment();
+      this._pageCards = [];
+      for (const cfg of roomBody(m)) {
+        try {
+          const el = helpers.createCardElement(cfg);
+          el.hass = this._hass;
+          el.style.display = "block";
+          el.style.marginBottom = "8px";
+          frag.appendChild(el);
+          this._pageCards.push(el);
+        } catch (err) {
+          console.error("charro-room-card page:", cfg && cfg.type, err);
+        }
+      }
+      this.innerHTML = "";
+      this.appendChild(frag);
+    } catch (err) {
+      this._fail(err);
+    } finally {
+      this._building = false;
+    }
+  }
+
+  /* ------------------------------------------------------ the pop-up ---- */
+
+  _claimHash(m) {
+    if (this._config.popup === false) return;
+    const h = roomHash(m);
+    if (!h || this._hash === h) return;
+    this._releaseHash();
+    if (_popupOwners.has(h)) return;        // this room is already on screen
+    _popupOwners.set(h, this);
+    this._hash = h;
+    wireRoomHash();
+  }
+  _releaseHash() {
+    if (this._hash && _popupOwners.get(this._hash) === this) _popupOwners.delete(this._hash);
+    this._hash = null;
+  }
+  async _openPopup() {
+    if (this._popup || !this._hass) return;
+    const m = this._merged || (await this._resolve().catch(() => null));
+    if (!m || !this._hash) return;
+    this._popup = new RoomPopup(this._hash, m, this._hass);
+    await this._popup.open();
+  }
+  _closePopup() {
+    if (!this._popup) return;
+    this._popup.close();
+    this._popup = null;
+  }
+
+  /* -------------------------------------------- tile data (button-card) - */
+
   variables() {
-    const c = this._config;
-    let hash = c.popup_hash || (c.room_name ? "#" + slugify(c.room_name) : "");
-    if (hash && !hash.startsWith("#")) hash = "#" + hash;
+    const c = this._merged || this._config;
     const v = {
       room_name: c.room_name || "",
       room_icon: c.room_icon || "mdi:home",
-      popup_hash: hash,
+      popup_hash: roomHash(c),
       pool_switch: c.pool_switch || "",
       pool_heater: c.pool_heater || "",
       spa_switch: c.spa_switch || "",
@@ -198,8 +639,8 @@ class CharroRoomCard extends CharroBase {
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
     };
-    for (const k of ROOM_LISTS) v[k] = c[k] || [];
-    // back-compat: the old single fountain_entity folds into the list
+    // a light may be {entity, name, dim} in rooms.json; the tile wants ids
+    for (const k of ROOM_LISTS) v[k] = lightIds(c[k]);
     if (c.fountain_entity && !v.fountain_entities.includes(c.fountain_entity)) {
       v.fountain_entities = [c.fountain_entity, ...v.fountain_entities];
     }
@@ -207,20 +648,29 @@ class CharroRoomCard extends CharroBase {
   }
 
   triggers() {
-    const c = this._config;
+    const c = this._merged || this._config;
     const out = [];
-    for (const k of ROOM_LISTS) out.push(...(c[k] || []));
+    for (const k of ROOM_LISTS) out.push(...lightIds(c[k]));
     for (const k of ROOM_SINGLES) if (c[k]) out.push(c[k]);
     if (c.fountain_entity) out.push(c.fountain_entity);
     return uniq(out);
   }
 
-  getGridOptions() { return { columns: 6, rows: "auto", min_columns: 3 }; }
+  getGridOptions() {
+    return (this._config.mode || "tile") === "page"
+      ? { columns: 12, rows: "auto" }
+      : { columns: 6, rows: "auto", min_columns: 3 };
+  }
 }
 customElements.define("charro-room-card", CharroRoomCard);
 
-makeEditor("charro-room-card-editor", [
-  { name: "room_name", required: true, selector: { text: {} } },
+const ROOM_SCHEMA = [
+  { name: "room", selector: { text: {} } },
+  { name: "mode", selector: { select: { mode: "dropdown", options: [
+      { value: "tile", label: "Tile (and owns its pop-up)" },
+      { value: "page", label: "Full page" },
+      { value: "popup", label: "Pop-up only" }] } } },
+  { name: "room_name", selector: { text: {} } },
   { name: "room_icon", selector: { icon: {} } },
   { name: "popup_hash", selector: { text: {} } },
   { type: "expandable", name: "", title: "Lights", icon: "mdi:lightbulb", schema: [
@@ -254,9 +704,13 @@ makeEditor("charro-room-card-editor", [
     { name: "alert_sensors", selector: ent(["sensor", "binary_sensor", "cover"], true) },
     { name: "confirm_sensor", selector: ent(["sensor", "binary_sensor"]) },
   ]},
-], {
+];
+const ROOM_LABELS = {
+  room: "Room file name, without .json",
+  mode: "What to render",
   room_name: "Room name",
   room_icon: "Room icon",
+  rooms_dir: "Folder holding the room files",
   popup_hash: "Pop-up hash (blank = from the name)",
   light_entities: "Lights",
   landscape_entities: "Landscape lights (own chip)",
@@ -275,8 +729,9 @@ makeEditor("charro-room-card-editor", [
   receiver_entity: "AV receiver",
   alert_sensors: "Door / window / motion / garage sensors",
   confirm_sensor: "Only alert when this is also open",
-}, {
-  popup_hash: 'Must match the Bubble Card pop-up, e.g. "#garage-east".',
+};
+const ROOM_HELPERS = {
+  popup_hash: 'The card\'s own pop-up, e.g. "#garage-east". Blank derives it from the name.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   music_powers: "The chip shows how many of these are on.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
@@ -285,7 +740,9 @@ makeEditor("charro-room-card-editor", [
   fountain_entities: "Fountain, spill, water wall. One chip with a count; tapping turns them all off.",
   tv_entity: "Chip appears only while the TV is on.",
   receiver_entity: "Chip shows the current source while the receiver is on.",
-});
+};
+makeEditor("charro-room-card-editor", ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS);
+
 
 /* ======================================================== SECURITY CARD == */
 
@@ -822,6 +1279,354 @@ class CharroLightsCardEditor extends HTMLElement {
 }
 customElements.define("charro-lights-card-editor", CharroLightsCardEditor);
 
+/* ========================================================= ROOMS EDITOR == */
+/*
+ * charro-rooms-editor — edit the files behind `room:` from inside Home
+ * Assistant instead of from a text editor.
+ *
+ *   type: custom:charro-rooms-editor
+ *   rooms: [master, lanai, saloon]
+ *
+ * A browser cannot write to /config, so Save goes one of two ways: it calls
+ * shell_command.charro_write_room when that exists, and otherwise copies the
+ * JSON and tells you where to paste it. The README has the four lines of
+ * config for the first route.
+ */
+
+const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
+                        "bath_fan_entities", "fountain_entities"];
+const SAVE_SERVICE = ["shell_command", "charro_write_room"];
+
+const RE_CSS = `
+:host{ display:block; }
+ha-card{ padding:14px; }
+.bar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+.bar .sp{ margin-left:auto; }
+select,input,textarea,button{ font:inherit; color:var(--primary-text-color); }
+select,input[type=text],textarea{
+  background:var(--card-background-color); border:1px solid var(--divider-color);
+  border-radius:8px; padding:7px 9px; box-sizing:border-box; max-width:100%;
+}
+textarea{ width:100%; min-height:110px; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; }
+button{
+  border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600;
+  background:rgba(127,127,127,.16);
+}
+button.primary{ background:var(--primary-color); color:var(--text-primary-color,#fff); }
+button:disabled{ opacity:.5; cursor:default; }
+h4{
+  margin:20px 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--secondary-text-color); border-bottom:1px solid var(--divider-color);
+  padding-bottom:6px;
+}
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }
+@media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
+table{ width:100%; border-collapse:collapse; }
+th{
+  text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--secondary-text-color); font-weight:600; padding:4px 6px;
+}
+td{ padding:3px 6px; vertical-align:middle; }
+td.e{ font-family:ui-monospace,monospace; font-size:12px; color:var(--secondary-text-color);
+      max-width:230px; overflow-wrap:anywhere; }
+td input[type=text]{ width:100%; padding:5px 7px; font-size:13px; }
+.status{ font-size:13px; color:var(--secondary-text-color); min-height:18px; margin-top:10px; }
+.status.err{ color:var(--error-color); }
+.status.ok{ color:var(--success-color, #2d6a4f); }
+.path{ font-family:ui-monospace,monospace; font-size:12px; }
+.preview{ position:sticky; top:8px; }
+`;
+
+class CharroRoomsEditor extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-rooms-editor", rooms: [] }; }
+
+  setConfig(config) {
+    this._config = config || {};
+    this._keys = (config && config.rooms) || [];
+    this._key = null; this._room = null; this._orig = null;
+    if (this.shadowRoot) this.shadowRoot.innerHTML = "";
+    this._built = false;
+    if (this._hass) this._build();
+  }
+  set hass(h) {
+    this._hass = h;
+    if (!this._built) this._build();
+    if (this._form) this._form.hass = h;
+    if (this._prev) this._prev.hass = h;
+  }
+  getCardSize() { return 12; }
+
+  _dir() { return (this._config.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/"); }
+  _path(k) { return `/config/www/${this._dir().replace(/^\/local\//, "")}${k}.json`; }
+  _canWrite() {
+    const s = this._hass && this._hass.services;
+    return !!(s && s[SAVE_SERVICE[0]] && s[SAVE_SERVICE[0]][SAVE_SERVICE[1]]);
+  }
+
+  /* ------------------------------------------------------------ chrome -- */
+  _build() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style"); style.textContent = RE_CSS;
+    const card = document.createElement("ha-card");
+
+    const bar = document.createElement("div"); bar.className = "bar";
+    this._sel = document.createElement("select");
+    this._sel.addEventListener("change", () => this._load(this._sel.value));
+    const add = document.createElement("button");
+    add.textContent = "New room";
+    add.addEventListener("click", () => this._newRoom());
+    const sp = document.createElement("div"); sp.className = "sp";
+    this._revert = document.createElement("button");
+    this._revert.textContent = "Revert";
+    this._revert.addEventListener("click", () => this._load(this._key, true));
+    this._save = document.createElement("button");
+    this._save.className = "primary";
+    this._save.addEventListener("click", () => this._doSave());
+    bar.append(this._sel, add, sp, this._revert, this._save);
+
+    const cols = document.createElement("div"); cols.className = "grid2";
+    this._left = document.createElement("div");
+    const right = document.createElement("div"); right.className = "preview";
+    const ph = document.createElement("h4"); ph.textContent = "Preview";
+    this._prevWrap = document.createElement("div");
+    right.append(ph, this._prevWrap);
+    cols.append(this._left, right);
+
+    this._status = document.createElement("div"); this._status.className = "status";
+
+    card.append(bar, cols, this._status);
+    root.innerHTML = ""; root.append(style, card);
+    this._built = true;
+
+    this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+    this._saveLabel();
+    if (this._keys.length) this._load(this._keys[0]);
+    else this._say("No rooms listed. Add `rooms: [master, lanai, ...]` to this card.", "err");
+  }
+
+  _saveLabel() {
+    this._save.textContent = this._canWrite() ? "Save" : "Copy JSON";
+    this._save.title = this._canWrite()
+      ? `Writes ${this._key ? this._path(this._key) : "the room file"}`
+      : "shell_command.charro_write_room isn't configured — this copies instead";
+  }
+  _say(msg, cls) { this._status.textContent = msg; this._status.className = "status " + (cls || ""); }
+
+  /* -------------------------------------------------------------- load -- */
+  async _load(key, quiet) {
+    if (!key) return;
+    this._key = key; this._sel.value = key;
+    this._saveLabel();
+    try {
+      const url = `${this._dir()}${key}.json?t=${Date.now()}`;
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      let j = await r.json();
+      if (j && !j.room_name && j[key] && typeof j[key] === "object") j = j[key];
+      this._room = j; this._orig = JSON.parse(JSON.stringify(j));
+      if (!quiet) this._say("");
+      this._renderForm();
+    } catch (err) {
+      this._room = null;
+      this._say(`Could not read ${this._dir()}${key}.json — ${err.message}`, "err");
+      this._left.innerHTML = ""; this._prevWrap.innerHTML = "";
+    }
+  }
+
+  _newRoom() {
+    const key = (prompt("Room key (file name, no .json)") || "").trim()
+      .toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!key) return;
+    if (!this._keys.includes(key)) {
+      this._keys.push(key);
+      this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+    }
+    this._key = key; this._sel.value = key;
+    this._room = { room_name: key.charAt(0).toUpperCase() + key.slice(1),
+                   room_icon: "mdi:home", light_entities: [] };
+    this._orig = null;
+    this._saveLabel();
+    this._say(`New room — Save writes ${this._path(key)}`);
+    this._renderForm();
+  }
+
+  /* -------------------------------------------------------------- form -- */
+  _renderForm() {
+    if (!this._room) return;
+    this._left.innerHTML = "";
+
+    // ha-form handles everything except per-light overrides
+    this._form = document.createElement("ha-form");
+    this._form.hass = this._hass;
+    this._form.schema = ROOM_SCHEMA.filter((f) => !["room", "mode"].includes(f.name));
+    this._form.computeLabel = (s) => ROOM_LABELS[s.name] || s.name;
+    this._form.computeHelper = (s) => ROOM_HELPERS[s.name] || "";
+    this._form.data = this._formData();
+    this._form.addEventListener("value-changed", (ev) => {
+      ev.stopPropagation();
+      this._applyForm(ev.detail.value);
+      this._renderLights();
+      this._renderPreview();
+    });
+    this._left.appendChild(this._form);
+
+    this._lightsBox = document.createElement("div");
+    this._left.appendChild(this._lightsBox);
+
+    const h2 = document.createElement("h4"); h2.textContent = "Sections";
+    const secs = document.createElement("input");
+    secs.type = "text"; secs.style.width = "100%";
+    secs.placeholder = ROOM_SECTIONS.join(", ");
+    secs.value = (this._room.sections || []).join(", ");
+    secs.addEventListener("change", () => {
+      const v = secs.value.split(",").map((x) => x.trim()).filter(Boolean);
+      if (v.length) this._room.sections = v; else delete this._room.sections;
+      this._renderPreview();
+    });
+
+    const h3 = document.createElement("h4"); h3.textContent = "Extra cards (JSON)";
+    const ta = document.createElement("textarea");
+    ta.spellcheck = false;
+    ta.value = this._room.cards ? JSON.stringify(this._room.cards, null, 2) : "";
+    ta.placeholder = '{ "start": [ { "type": "custom:universal-remote-card" } ] }';
+    ta.addEventListener("change", () => {
+      const t = ta.value.trim();
+      if (!t) { delete this._room.cards; this._say(""); this._renderPreview(); return; }
+      try { this._room.cards = JSON.parse(t); this._say(""); this._renderPreview(); }
+      catch (err) { this._say(`Extra cards: ${err.message}`, "err"); }
+    });
+
+    this._left.append(h2, secs, h3, ta);
+    this._renderLights();
+    this._renderPreview();
+  }
+
+  _formData() {
+    const d = { ...this._room };
+    for (const k of RE_LIGHT_LISTS) if (d[k]) d[k] = lightIds(d[k]);
+    delete d.cards; delete d.sections;
+    return d;
+  }
+
+  /* ha-form hands back plain ids — keep the name/icon/dim overrides */
+  _applyForm(value) {
+    const keep = {};
+    for (const k of RE_LIGHT_LISTS)
+      for (const l of this._room[k] || [])
+        if (l && typeof l === "object" && l.entity) keep[l.entity] = l;
+    const next = { ...this._room, ...value };
+    for (const k of RE_LIGHT_LISTS) {
+      if (!Array.isArray(next[k])) continue;
+      next[k] = next[k].map((e) => (typeof e === "string" ? keep[e] || e : e));
+      if (!next[k].length) delete next[k];
+    }
+    for (const k of Object.keys(next))
+      if (next[k] === "" || next[k] === undefined) delete next[k];
+    this._room = next;
+  }
+
+  _renderLights() {
+    const rows = [];
+    for (const k of RE_LIGHT_LISTS)
+      for (const l of this._room[k] || []) rows.push([k, l]);
+    this._lightsBox.innerHTML = "";
+    if (!rows.length) return;
+
+    const h = document.createElement("h4");
+    h.textContent = "Per-light name, icon and dimming";
+    const tbl = document.createElement("table");
+    tbl.innerHTML =
+      "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Dims</th></tr></thead>";
+    const tb = document.createElement("tbody");
+
+    for (const [list, l] of rows) {
+      const id = lightId(l);
+      const obj = typeof l === "object" ? l : { entity: id };
+      const st = this._hass.states[id];
+      const tr = document.createElement("tr");
+
+      const te = document.createElement("td"); te.className = "e"; te.textContent = id;
+      const tn = document.createElement("td");
+      const nm = document.createElement("input"); nm.type = "text";
+      nm.value = obj.name || "";
+      nm.placeholder = (st && st.attributes.friendly_name) || id;
+      const ti = document.createElement("td");
+      const ic = document.createElement("input"); ic.type = "text";
+      ic.value = obj.icon || ""; ic.placeholder = "mdi:…";
+      const td = document.createElement("td");
+      const sw = document.createElement("ha-switch");
+      sw.checked = obj.dim !== false;
+
+      const write = () => {
+        const next = { entity: id };
+        if (nm.value.trim()) next.name = nm.value.trim();
+        if (ic.value.trim()) next.icon = ic.value.trim();
+        if (!sw.checked) next.dim = false;
+        const arr = this._room[list];
+        const i = arr.findIndex((x) => lightId(x) === id);
+        arr[i] = Object.keys(next).length > 1 ? next : id;
+        this._renderPreview();
+      };
+      nm.addEventListener("change", write);
+      ic.addEventListener("change", write);
+      sw.addEventListener("change", write);
+
+      tn.appendChild(nm); ti.appendChild(ic); td.appendChild(sw);
+      tr.append(te, tn, ti, td);
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    this._lightsBox.append(h, tbl);
+  }
+
+  async _renderPreview() {
+    if (!this._room) return;
+    try {
+      const helpers = await window.loadCardHelpers();
+      const el = helpers.createCardElement({
+        type: "custom:charro-room-card", popup: false, ...this._room });
+      el.hass = this._hass;
+      this._prevWrap.innerHTML = "";
+      this._prevWrap.appendChild(el);
+      this._prev = el;
+    } catch (err) {
+      this._prevWrap.textContent = String(err && err.message ? err.message : err);
+    }
+  }
+
+  /* -------------------------------------------------------------- save -- */
+  async _doSave() {
+    if (!this._room || !this._key) return;
+    const json = JSON.stringify(this._room, null, 2);
+
+    if (this._canWrite()) {
+      try {
+        const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+        await this._hass.callService(SAVE_SERVICE[0], SAVE_SERVICE[1],
+                                     { name: this._key, payload: b64 });
+        this._orig = JSON.parse(json);
+        _roomFiles.clear();               // next card read picks up the new file
+        this._say(`Saved to ${this._path(this._key)} — hard-refresh to see it elsewhere.`, "ok");
+      } catch (err) {
+        this._say(`Save failed: ${err.message}`, "err");
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(json);
+      this._say(`Copied. Paste into ${this._path(this._key)}`, "ok");
+    } catch (err) {
+      const ta = document.createElement("textarea");
+      ta.value = json; ta.style.width = "100%"; ta.style.minHeight = "220px";
+      this._say(`Copy this into ${this._path(this._key)}`);
+      this._status.appendChild(ta);
+      ta.select();
+    }
+  }
+}
+customElements.define("charro-rooms-editor", CharroRoomsEditor);
+
 /* ------------------------------------------------------------ registry -- */
 
 window.customCards = window.customCards || [];
@@ -835,5 +1640,7 @@ window.customCards.push(
   { type: "charro-all-off-card", name: "Charro All Zones Off",
     description: "Turn every RTI zone off on both amps.", preview: false },
   { type: "charro-lights-card", name: "Charro Lights Card",
-    description: "One room of lights — equal rows, dim by dragging the row.", preview: false }
+    description: "One room of lights — equal rows, dim by dragging the row.", preview: false },
+  { type: "charro-rooms-editor", name: "Charro Rooms Editor",
+    description: "Edit the files behind `room:` without leaving Home Assistant.", preview: false }
 );

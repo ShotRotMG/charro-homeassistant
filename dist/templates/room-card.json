@@ -123,13 +123,28 @@
     "custom_fields": {
       "chips": [
         {
-          "justify-self": "stretch"
+          "display": "flex"
+        },
+        {
+          "justify-content": "center"
+        },
+        {
+          "align-items": "center"
         },
         {
           "align-self": "center"
         },
         {
+          "justify-self": "stretch"
+        },
+        {
           "width": "100%"
+        },
+        {
+          "height": "100%"
+        },
+        {
+          "min-width": "0"
         }
       ],
       "alert": [
@@ -188,9 +203,6 @@
               "gap": "4px"
             },
             {
-              "width": "100%"
-            },
-            {
               "padding": 0
             },
             {
@@ -211,7 +223,10 @@
               "background": "none"
             },
             {
-              "width": "100%"
+              "width": "max-content"
+            },
+            {
+              "max-width": "100%"
             }
           ],
           "custom_fields": {
@@ -350,7 +365,7 @@
           }
         },
         "card_mod": {
-          "style": "#container {\n  display: flex !important;\n  flex-direction: row !important;\n  flex-wrap: nowrap !important;\n  justify-content: center !important;\n  align-items: center !important;\n  gap: 4px !important;\n  width: 100% !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  grid-template-areas: none !important;\n  grid-template-columns: none !important;\n}\n#container > * { grid-area: auto !important; }\nha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+          "style": "#container {\n  display: flex !important;\n  flex-direction: row !important;\n  flex-wrap: nowrap !important;\n  justify-content: center !important;\n  align-items: center !important;\n  gap: 4px !important;\n  width: auto !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  grid-template-areas: none !important;\n  grid-template-columns: none !important;\n}\n#container > * { grid-area: auto !important; }\nha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: max-content !important;\n  max-width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
         },
         "custom_fields": {
           "lights": {
@@ -737,7 +752,7 @@
               "show_icon": true,
               "show_name": true,
               "icon": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'cool') return 'mdi:snowflake';\n  if (s === 'heat') return 'mdi:fire';\n  if (s === 'heat_cool') return 'mdi:sun-snowflake-variant';\n  return 'mdi:thermostat';\n]]]\n",
-              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}°` : '';\n]]]\n",
+              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}\u00b0` : '';\n]]]\n",
               "tap_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.climate_entity ]]]"
