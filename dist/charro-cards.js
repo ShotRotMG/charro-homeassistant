@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.12.1";
+const VERSION = "4.13.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -185,30 +185,65 @@ function makeEditor(tag, schema, labels, helpers) {
 
 const ROOMS_DIR_DEFAULT = "/local/rooms/";
 const _roomFiles = new Map();
+let _indexP = null;
+
+function roomsDir(cfg) {
+  return ((cfg && cfg.rooms_dir) || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
+}
+
+/* _index.json is the only file fetched uncached. It is tiny, and it carries
+ * the revision every other room fetch is stamped with — which is what lets
+ * those be cached hard (Home Assistant serves /local with a 31-day max-age)
+ * while an edit still shows up on the next load. Saving bumps the revision,
+ * the URLs change, and the browser refetches exactly what changed.
+ * An older plain-array index has no revision, so those fall back to
+ * always-fresh fetches. */
+function loadIndex(cfg) {
+  if (!_indexP) {
+    const u = roomsDir(cfg) + "_index.json";
+    _indexP = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => (Array.isArray(j) ? { rooms: j, rev: null }
+                                     : { rooms: (j && j.rooms) || [], rev: (j && j.rev) || null }))
+      .catch(() => ({ rooms: [], rev: null }));
+  }
+  return _indexP;
+}
 
 function roomUrl(key, cfg) {
-  if (cfg.room_url) return cfg.room_url;
-  const dir = (cfg.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
-  return dir + key + ".json";
+  if (cfg && cfg.room_url) return cfg.room_url;
+  return roomsDir(cfg) + key + ".json";
+}
+
+function stamped(url, rev) {
+  const sep = url.includes("?") ? "&" : "?";
+  return rev ? `${url}${sep}v=${encodeURIComponent(rev)}`
+             : `${url}${sep}t=${Date.now()}`;
+}
+
+function fetchStamped(base, cfg, transform) {
+  return loadIndex(cfg).then(({ rev }) => {
+    const url = stamped(base, rev);
+    if (!_roomFiles.has(url)) {
+      const p = fetch(url, rev ? {} : { cache: "no-store" })
+        .then((r) => {
+          if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${base}`);
+          return r.json();
+        })
+        .then((j) => (transform ? transform(j) : j))
+        .catch((err) => { _roomFiles.delete(url); throw err; });
+      _roomFiles.set(url, p);
+    }
+    return _roomFiles.get(url);
+  });
 }
 
 function loadRoom(key, cfg) {
-  const u = roomUrl(key, cfg);
-  if (!_roomFiles.has(u)) {
-    const p = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
-      .then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${u}`);
-        return r.json();
-      })
-      .then((j) => {
-        // tolerate a file that wraps the room in its own key
-        if (j && !j.room_name && j[key] && typeof j[key] === "object") return j[key];
-        return j;
-      })
-      .catch((err) => { _roomFiles.delete(u); throw err; });
-    _roomFiles.set(u, p);
-  }
-  return _roomFiles.get(u);
+  return fetchStamped(roomUrl(key, cfg), cfg, (j) => {
+    // tolerate a file that wraps the room in its own key
+    if (j && !j.room_name && j[key] && typeof j[key] === "object") return j[key];
+    return j;
+  });
 }
 
 const roomHash = (c) => {
@@ -264,18 +299,9 @@ function isMassPlayer(hass, id) {
  * is replaced from the room's entry; a string that is exactly {{key}} takes
  * the value's own type, so numbers and lists survive.
  */
-const _remoteFiles = new Map();
-
 function loadRemotes(cfg) {
-  const dir = (cfg.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
-  const u = cfg.remotes_url || dir + "_remotes.json";
-  if (!_remoteFiles.has(u)) {
-    const p = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : {}))
-      .catch(() => ({}));
-    _remoteFiles.set(u, p);
-  }
-  return _remoteFiles.get(u);
+  const u = (cfg && cfg.remotes_url) || roomsDir(cfg) + "_remotes.json";
+  return fetchStamped(u, cfg).catch(() => ({}));
 }
 
 function fillTemplate(node, vars) {
@@ -2079,7 +2105,11 @@ class CharroRoomsEditor extends HTMLElement {
 
     try {
       const r = await fetch(`${this._dir()}_index.json?t=${Date.now()}`, { cache: "no-store" });
-      if (r.ok) for (const k of await r.json()) if (k && !k.startsWith("_")) keys.add(k);
+      if (r.ok) {
+        const j = await r.json();
+        for (const k of (Array.isArray(j) ? j : (j && j.rooms) || []))
+          if (k && !k.startsWith("_")) keys.add(k);
+      }
     } catch (err) { /* no index yet */ }
 
     return [...keys].sort();
@@ -2382,7 +2412,8 @@ class CharroRoomsEditor extends HTMLElement {
         await this._hass.callService(SAVE_SERVICE[0], SAVE_SERVICE[1],
                                      { name: this._key, payload: b64 });
         this._orig = JSON.parse(json);
-        _roomFiles.clear();               // next card read picks up the new file
+        _roomFiles.clear();               // the revision moved; drop the old URLs
+        _indexP = null;                   // and re-read it
         this._say(`Saved to ${this._path(this._key)} — hard-refresh to see it elsewhere.`, "ok");
       } catch (err) {
         this._say(`Save failed: ${err.message}`, "err");

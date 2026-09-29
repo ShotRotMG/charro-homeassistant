@@ -60,9 +60,27 @@ room: master
 `room: master` reads `/local/rooms/master.json` — on disk that is
 `/config/www/rooms/master.json`. One file per room. Keep them there and **not**
 in this repo: HACS replaces `dist/` on every update, and your rooms are your
-data. `rooms_dir` moves the folder, `room_url` points at one exact file. They're
-fetched `cache: "no-store"`, so an edit is live on a hard refresh, with no
-restart.
+data. `rooms_dir` moves the folder, `room_url` points at one exact file.
+
+### Caching
+
+Home Assistant serves `/local` with a 31-day `max-age`, so room files are
+fetched with a revision on the URL — `master.json?v=1790664723` — and read
+from cache between edits. `_index.json` is the one file fetched uncached; it
+carries that revision alongside the room list:
+
+```json
+{ "rev": "1790664723", "rooms": ["master", "javon"] }
+```
+
+Saving through the editor bumps the revision, every room URL changes, and the
+browser refetches on the next load. No hard refresh, no restart, and twenty
+rooms cost one real request instead of twenty.
+
+Editing a room file by hand doesn't bump anything, so either save once through
+the editor afterwards or bump `rev` yourself — any different string will do.
+A plain-array `_index.json` (no revision) still works: those rooms fall back
+to always-fresh fetches, exactly as before.
 
 > Home Assistant serves `/config/www` at `/local/` **without authentication**.
 > A room file holds entity ids, names and layout — no tokens, and entity ids
