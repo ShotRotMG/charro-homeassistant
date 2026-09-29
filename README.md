@@ -179,8 +179,10 @@ beside the lights beside the player, rather than all three down the page.
 the column's label; use `"group": ""` for an unlabelled one, and `items` holds
 anything a layout holds, groups aside.
 
-Editing groups is YAML for now — the drag builder handles flat layouts, and
-nesting is the next piece. `hidden` is parked, not deleted — it keeps a light's
+**+ Column** in the builder adds one. A column is a container you drag items
+into and out of; its header carries the label and the span, and removing a
+column keeps what was inside by dropping those items back into the layout
+where it sat. Columns can't nest, so dragging one onto another is refused. `hidden` is parked, not deleted — it keeps a light's
 name, icon and `dim` so putting it back costs nothing.
 
 The rooms editor does all of this by dragging, and **Customise layout** writes

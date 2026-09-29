@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.15.0";
+const VERSION = "4.16.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1685,6 +1685,17 @@ const LB_CSS = `
 }
 .hidzone.over{ border-color:var(--primary-color); background:rgba(127,127,127,.08); }
 .hidempty{ font-size:12px; color:var(--secondary-text-color); padding:6px 2px; }
+.grp{
+  border:1px solid var(--divider-color); border-left:3px solid var(--primary-color);
+  border-radius:10px; padding:6px; display:flex; flex-direction:column; gap:5px;
+  background:rgba(127,127,127,.06);
+}
+.grp > .it{ background:rgba(127,127,127,.15); border-style:solid; }
+.lb.inner{ padding-left:16px; min-height:30px; }
+.lb.inner.over{ outline:2px dashed var(--primary-color); outline-offset:2px; border-radius:8px; }
+.spn{ width:54px; }
+.it .cap{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--secondary-text-color); flex:none; }
 `;
 
 const BLOCK_LABEL = {
@@ -1700,12 +1711,34 @@ const LayoutUI = {
     if (!Array.isArray(r.hidden)) r.hidden = [];
   },
 
-  _lbList(name) {
-    // _lbChanged() drops an empty layout/hidden to keep the saved JSON tidy,
-    // so always go back through here rather than caching the array.
+  /* Containers are addressed by key: "layout", "hidden", or "g:<index>" for a
+   * group's items. _lbChanged() drops an empty layout/hidden to keep the saved
+   * JSON tidy, so always come back through here instead of holding a ref. */
+  _lbList(key) {
     const r = this._room;
-    if (!Array.isArray(r[name])) r[name] = [];
-    return r[name];
+    if (key === "hidden") {
+      if (!Array.isArray(r.hidden)) r.hidden = [];
+      return r.hidden;
+    }
+    if (String(key).startsWith("g:")) {
+      const g = (r.layout || [])[Number(String(key).slice(2))];
+      if (!g) return [];
+      if (!Array.isArray(g.items)) g.items = [];
+      return g.items;
+    }
+    if (!Array.isArray(r.layout)) r.layout = [];
+    return r.layout;
+  },
+
+  /* every item anywhere, for the form-to-layout sync */
+  _lbAll() {
+    const out = [];
+    for (const it of this._room.layout || []) {
+      out.push(it);
+      if (it && it.group !== undefined) out.push(...(it.items || []));
+    }
+    out.push(...(this._room.hidden || []));
+    return out;
   },
 
   _lbLabel(it) {
@@ -1721,8 +1754,6 @@ const LayoutUI = {
     const row = document.createElement("div");
     row.className = "it" + (it.heading !== undefined ? " head" : "")
                   + (it.block ? " blk" : "") + (list === "hidden" ? " hid" : "");
-    row.draggable = true;
-    row.dataset.list = list; row.dataset.i = String(i);
 
     const grip = document.createElement("ha-icon");
     grip.className = "grip"; grip.icon = "mdi:drag";
@@ -1791,7 +1822,7 @@ const LayoutUI = {
     move.title = list === "hidden" ? "Put back in the layout" : "Hide";
     move.innerHTML = `<ha-icon icon="${list === "hidden" ? "mdi:eye-outline" : "mdi:eye-off-outline"}"></ha-icon>`;
     move.addEventListener("click", () => {
-      const from = this._lbList(list === "hidden" ? "hidden" : "layout");
+      const from = this._lbList(list);
       const to   = this._lbList(list === "hidden" ? "layout" : "hidden");
       const [moved] = from.splice(i, 1);
       if (moved) to.push(moved);
@@ -1807,15 +1838,23 @@ const LayoutUI = {
         : "Remove";
       del.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
       del.addEventListener("click", () => {
-        this._lbList(list === "hidden" ? "hidden" : "layout").splice(i, 1);
+        this._lbList(list).splice(i, 1);
         this._lbRender(); this._lbChanged();
       });
       row.appendChild(del);
     }
 
+    this._lbWireDrag(row, list, i);
+    return row;
+  },
+
+  _lbWireDrag(row, list, i) {
+    row.draggable = true;
+    row.dataset.list = list; row.dataset.i = String(i);
     row.addEventListener("dragstart", (ev) => {
       this._drag = { list, i };
       row.classList.add("drag");
+      ev.stopPropagation();
       ev.dataTransfer.effectAllowed = "move";
       try { ev.dataTransfer.setData("text/plain", `${list}:${i}`); } catch (e) {}
     });
@@ -1824,16 +1863,85 @@ const LayoutUI = {
     });
     row.addEventListener("dragover", (ev) => {
       if (!this._drag) return;
-      ev.preventDefault(); ev.dataTransfer.dropEffect = "move";
+      // a group can't be dropped inside a group
+      if (this._dragIsGroup && String(list).startsWith("g:")) return;
+      ev.preventDefault(); ev.stopPropagation();
+      ev.dataTransfer.dropEffect = "move";
       const r = row.getBoundingClientRect();
       const after = ev.clientY > r.top + r.height / 2;
       this._lbClearMarks();
       row.classList.add(after ? "dropafter" : "dropbefore");
       this._dropAt = { list, i: after ? i + 1 : i };
     });
-    row.addEventListener("drop", (ev) => { ev.preventDefault(); this._lbDrop(); });
+    row.addEventListener("drop", (ev) => {
+      ev.preventDefault(); ev.stopPropagation(); this._lbDrop();
+    });
+  },
 
-    return row;
+  get _dragIsGroup() {
+    const d = this._drag;
+    if (!d) return false;
+    const it = this._lbList(d.list)[d.i];
+    return !!(it && it.group !== undefined);
+  },
+
+  /* a group row: its own header, plus a droppable list of what's inside */
+  _lbGroup(g, idx) {
+    const box = document.createElement("div");
+    box.className = "grp";
+
+    const head = document.createElement("div");
+    head.className = "it";
+    const grip = document.createElement("ha-icon");
+    grip.className = "grip"; grip.icon = "mdi:drag";
+    const cap = document.createElement("span");
+    cap.className = "cap"; cap.textContent = "Column";
+    const title = document.createElement("input");
+    title.type = "text"; title.className = "lbl"; title.value = g.group || "";
+    title.placeholder = "Column label (blank for none)";
+    title.addEventListener("change", () => { g.group = title.value; this._lbChanged(); });
+    const spanCap = document.createElement("span");
+    spanCap.className = "cap"; spanCap.textContent = "span";
+    const span = document.createElement("input");
+    span.type = "text"; span.className = "spn"; span.value = String(g.span || 1);
+    span.addEventListener("change", () => {
+      const v = Number(span.value);
+      if (v > 0) g.span = v; else delete g.span;
+      this._lbChanged();
+    });
+    const del = document.createElement("button");
+    del.className = "btn"; del.title = "Remove the column — its items move out";
+    del.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
+    del.addEventListener("click", () => {
+      const L = this._lbList("layout");
+      L.splice(idx, 1, ...(g.items || []));     // keep what was inside
+      this._lbRender(); this._lbChanged();
+    });
+    head.append(grip, cap, title, spanCap, span, del);
+    this._lbWireDrag(head, "layout", idx);
+
+    const inner = document.createElement("div");
+    inner.className = "lb inner";
+    (g.items || []).forEach((it, i) => inner.appendChild(this._lbRow(it, "g:" + idx, i)));
+    if (!(g.items || []).length) {
+      const e = document.createElement("div");
+      e.className = "hidempty"; e.textContent = "Empty column — drag items in.";
+      inner.appendChild(e);
+    }
+    inner.addEventListener("dragover", (ev) => {
+      if (!this._drag || this._dragIsGroup) return;
+      ev.preventDefault(); this._lbClearMarks();
+      inner.classList.add("over");
+      this._dropAt = { list: "g:" + idx, i: (g.items || []).length };
+    });
+    inner.addEventListener("dragleave", () => inner.classList.remove("over"));
+    inner.addEventListener("drop", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      inner.classList.remove("over"); this._lbDrop();
+    });
+
+    box.append(head, inner);
+    return box;
   },
 
   _lbClearMarks() {
@@ -1845,8 +1953,8 @@ const LayoutUI = {
     const d = this._drag, t = this._dropAt;
     this._lbClearMarks();
     if (!d || !t) return;
-    const from = this._lbList(d.list === "hidden" ? "hidden" : "layout");
-    const to   = this._lbList(t.list === "hidden" ? "hidden" : "layout");
+    const from = this._lbList(d.list);
+    const to   = this._lbList(t.list);
     const [item] = from.splice(d.i, 1);
     if (!item) { this._lbRender(); return; }
     let at = t.i;
@@ -1876,7 +1984,9 @@ const LayoutUI = {
     h.textContent = custom ? "Layout" : "Layout (automatic)";
     const n = document.createElement("span");
     n.className = "n";
-    n.textContent = custom ? `${r.layout.length} items` : "";
+    n.textContent = custom
+      ? `${this._lbAll().length - (r.hidden || []).length} items`
+      : "";
     head.append(h, n);
     this._layoutBox.appendChild(head);
 
@@ -1901,7 +2011,8 @@ const LayoutUI = {
 
     const wrap = document.createElement("div"); wrap.className = "lbwrap";
     const list = document.createElement("div"); list.className = "lb";
-    r.layout.forEach((it, i) => list.appendChild(this._lbRow(it, "layout", i)));
+    r.layout.forEach((it, i) => list.appendChild(
+      it && it.group !== undefined ? this._lbGroup(it, i) : this._lbRow(it, "layout", i)));
     if (!r.layout.length) {
       const e = document.createElement("div");
       e.className = "hidempty"; e.textContent = "Empty — drag something here.";
@@ -1935,12 +2046,19 @@ const LayoutUI = {
       this._lbList("layout").push({ block: free[0] });
       this._lbRender(); this._lbChanged();
     });
+    const addGroup = document.createElement("button");
+    addGroup.textContent = "+ Column";
+    addGroup.title = "Neighbouring columns share a row and stack when narrow";
+    addGroup.addEventListener("click", () => {
+      this._lbList("layout").push({ group: "New column", span: 1, items: [] });
+      this._lbRender(); this._lbChanged();
+    });
     const reset = document.createElement("button");
     reset.textContent = "Back to automatic";
     reset.addEventListener("click", () => {
       delete r.layout; delete r.hidden; this._lbRender(); this._lbChanged();
     });
-    bar.append(addHead, addBlock, reset);
+    bar.append(addHead, addBlock, addGroup, reset);
 
     const hh = document.createElement("div");
     hh.className = "h4row";
@@ -2367,13 +2485,15 @@ class CharroRoomsEditor extends HTMLElement {
     const r = this._room;
     if (!Array.isArray(r.layout) || !r.layout.length) return;
     r.hidden = r.hidden || [];
-    const placed = new Set(r.layout.concat(r.hidden).map(x => x.entity).filter(Boolean));
+    const placed = new Set(this._lbAll().map(x => x && x.entity).filter(Boolean));
     const all = [];
     for (const [, key] of LIGHT_GROUPS) for (const l of r[key] || []) all.push(lightId(l));
     for (const e of all) if (e && !placed.has(e)) r.layout.push({ entity: e });
     const live = new Set(all);
-    r.layout = r.layout.filter(x => !x.entity || live.has(x.entity));
-    r.hidden = r.hidden.filter(x => !x.entity || live.has(x.entity));
+    const keep = (arr) => arr.filter(x => !x || !x.entity || live.has(x.entity));
+    r.layout = keep(r.layout);
+    for (const g of r.layout) if (g && g.group !== undefined) g.items = keep(g.items || []);
+    r.hidden = keep(r.hidden);
   }
 
   _renderLights() {
