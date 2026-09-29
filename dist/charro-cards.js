@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.26.0";
+const VERSION = "4.26.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -465,14 +465,26 @@ function zoneCard(p, r, hass) {
 
 /* A room can drive more than one zone — the Lanai owns both Lanai and
  * Barbeque — so naming every one after the room labels them identically.
- * Take the zone's own name, minus the "Power" the switch is called after,
- * and only fall back to the room when there's nothing to take. */
+ * friendly_name is no good on its own either: HA prefixes it with the device,
+ * giving "RTI AD-8x (amp1) Lanai Power". The entity registry keeps the
+ * unprefixed name, so prefer that, then strip the device name off
+ * friendly_name by hand, then fall back to the id. */
 function zoneName(power, stem, r, hass) {
-  const st = hass && hass.states && hass.states[power];
-  const friendly = st && st.attributes && st.attributes.friendly_name;
-  const from = friendly
-    || stem.replace(/^rti[_ ]?ad[_ ]?8x[_ ]?amp\d+[_ ]?/i, "").replace(/_/g, " ");
-  const name = String(from).replace(/\s*power\s*$/i, "").trim();
+  const reg = hass && hass.entities && hass.entities[power];
+  let name = (reg && (reg.name || reg.original_name)) || "";
+
+  if (!name) {
+    const st = hass && hass.states && hass.states[power];
+    name = (st && st.attributes && st.attributes.friendly_name) || "";
+    const dev = reg && hass.devices && hass.devices[reg.device_id];
+    const devName = dev && (dev.name_by_user || dev.name);
+    if (devName && name.startsWith(devName)) name = name.slice(devName.length);
+  }
+  if (!name) {
+    name = stem.replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  name = name.replace(/\s*power\s*$/i, "").trim();
   return name || r.room_name || "";
 }
 
