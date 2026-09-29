@@ -305,17 +305,26 @@ silence.
 
 ### Pop-up width
 
-The panel steps up with the viewport rather than holding one narrow column on a
-wide monitor: 760px from 870px of viewport, 1040px from 1400px, 1320px from
-1900px, each capped so it never fills the screen edge to edge. Below 870px it's
-a bottom sheet at full width, unchanged.
+Width follows the content rather than the monitor. The panel measures the
+widest run of side-by-side groups in the body and sizes to that:
 
-`popup_width` on a room overrides the ceiling — a number is treated as pixels,
-a string is used as given (`"64rem"`, `"min(1500px, 80vw)"`). The viewport cap
-still applies, so an over-large value just means "as wide as allowed".
+| columns | width |
+|---|---|
+| 1 (no groups) | 680px |
+| 2 | 1040px |
+| 3 or more | 1320px |
 
-Width is what makes columns pay off: groups only sit side by side when there's
-room for them, so a room with a remote beside a light grid wants the wider end.
+A group's `span` counts toward the total, so one `span: 2` next to a plain
+group is three columns' worth. Each width is capped against the viewport
+(92 / 88 / 82vw as the screen grows) so the widest never reaches the edges,
+and below 870px it's a full-width bottom sheet as before.
+
+The point is that a single column of tiles stretched across 1300px reads worse
+than the same column at 680px — extra width is only worth taking when there are
+columns to put in it. So to get a wider panel, give the room groups.
+
+`popup_width` overrides all of it — a number is pixels, a string is used as
+given (`"64rem"`, `"min(1500px, 80vw)"`). The viewport cap still applies.
 
 The pop-up is drawn by the card itself into the `home-assistant` shadow root —
 inside HA's own gesture layer, so lights and sliders in it respond to taps —

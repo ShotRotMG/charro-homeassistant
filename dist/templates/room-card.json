@@ -88,7 +88,7 @@
         "justify-self": "start"
       },
       {
-        "color": "[[[\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? 'var(--green-color, #4caf50)' : 'var(--primary-text-color)';\n]]]\n"
+        "color": "[[[\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--primary-text-color)';\n]]]\n"
       }
     ],
     "name": [
@@ -482,7 +482,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(76,175,80,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(255,193,7,0.22)' : 'transparent';\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -507,7 +507,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--green-color, #4caf50)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--disabled-text-color)';\n]]]\n"
                   }
                 ],
                 "name": [

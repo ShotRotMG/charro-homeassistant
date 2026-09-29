@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.23.0";
+const VERSION = "4.25.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -517,7 +517,7 @@ const LIGHT_GROUPS = [
   ["Lights", "light_entities"],
   ["Landscape", "landscape_entities"],
   ["Fans", "fan_entities"],
-  ["Bath fans", "bath_fan_entities"],
+  ["Other fans", "bath_fan_entities"],
   ["Water", "fountain_entities"],
 ];
 
@@ -601,6 +601,19 @@ function layoutBody(r, hass) {
  * Lovelace helpers; a group becomes a column, and neighbouring columns get
  * wrapped in a flex row. Styles are inline so this works the same in the
  * pop-up's shadow root and in the page's light DOM. */
+/* How many columns the widest row of this body actually wants. Groups only
+ * sit side by side in a run, and a group's span is how many columns' worth it
+ * asks for, so the widest run is what decides whether extra width would be
+ * used or just stretch a single column across the screen. */
+function widestRun(nodes) {
+  let best = 1, run = 0;
+  for (const n of nodes || []) {
+    if (n && n._group) run += Math.max(1, Number(n.span) || 1);
+    else { if (run > best) best = run; run = 0; }
+  }
+  return run > best ? run : best;
+}
+
 async function renderBody(nodes, hass, target) {
   const helpers = await window.loadCardHelpers();
   const made = [];
@@ -755,23 +768,24 @@ const POPUP_CSS = `
   transform:translateY(100%); transition:transform .26s cubic-bezier(.2,.8,.3,1);
 }
 .charro-pop.in{ transform:translateY(0); }
-/* --charro-pop-w is the ceiling, stepped up with the viewport so a wide
- * monitor actually gets to use its groups side by side instead of running a
- * 680px column down the middle of a 2560px screen. A room can override it. */
+/* --charro-pop-w is set per room by _sizeTo() from how many columns the body
+ * actually has: one column stays at 680px however big the screen is, and only
+ * a room with groups side by side asks for more. The vw caps keep even the
+ * widest off the screen edges. */
 @media (min-width:870px){
   .charro-pop{
     left:50%; right:auto; bottom:auto; top:50%;
     transform:translate(-50%,-46%) scale(.98); opacity:0;
-    width:min(var(--charro-pop-w,760px),92vw); max-height:84vh; border-radius:24px;
+    width:min(var(--charro-pop-w,680px),92vw); max-height:84vh; border-radius:24px;
     transition:transform .2s ease, opacity .2s ease;
   }
   .charro-pop.in{ transform:translate(-50%,-50%) scale(1); opacity:1; }
 }
 @media (min-width:1400px){
-  .charro-pop{ width:min(var(--charro-pop-w,1040px),88vw); max-height:86vh; padding:18px 18px 22px; }
+  .charro-pop{ width:min(var(--charro-pop-w,680px),88vw); max-height:86vh; }
 }
 @media (min-width:1900px){
-  .charro-pop{ width:min(var(--charro-pop-w,1320px),82vw); }
+  .charro-pop{ width:min(var(--charro-pop-w,680px),82vw); }
 }
 .charro-pop-hd{
   display:flex; align-items:center; gap:10px; margin:2px 4px 12px;
@@ -835,10 +849,6 @@ class RoomPopup {
 
     this.el = document.createElement("div");
     this.el.className = "charro-pop";
-    if (this.room.popup_width) {
-      const w = this.room.popup_width;
-      this.el.style.setProperty("--charro-pop-w", typeof w === "number" ? `${w}px` : String(w));
-    }
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-modal", "true");
 
@@ -878,9 +888,10 @@ class RoomPopup {
 
     const body = document.createElement("div");
     body.className = "charro-pop-body";
-    this._cards = await renderBody(
-      this.bodyFn ? this.bodyFn(this.room, this._hass) : roomBody(this.room, this._hass),
-      this._hass, body);
+    const nodes = this.bodyFn ? this.bodyFn(this.room, this._hass)
+                              : roomBody(this.room, this._hass);
+    this._sizeTo(widestRun(nodes));
+    this._cards = await renderBody(nodes, this._hass, body);
 
     const panel = this.el, back = this.backdrop;
     panel.append(hd, body);
@@ -895,6 +906,19 @@ class RoomPopup {
     this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
     window.addEventListener("keydown", this._key);
   }
+  /* Width follows the content. A single-column room stays narrow however big
+   * the monitor is — stretching one column of tiles across 1300px reads worse,
+   * not better. Extra width is only worth taking when there are columns to put
+   * in it. `popup_width` on the room overrides the lot. */
+  _sizeTo(cols) {
+    const w = this.room.popup_width;
+    const px = w ? (typeof w === "number" ? `${w}px` : String(w))
+              : cols >= 3 ? "1320px"
+              : cols === 2 ? "1040px"
+              : "680px";
+    this.el.style.setProperty("--charro-pop-w", px);
+  }
+
   dismiss() {
     // let the hash drive it, so the back button and the close button agree
     if (location.hash === this.hash) history.back();
@@ -1224,7 +1248,7 @@ const ROOM_LABELS = {
   light_entities: "Lights",
   landscape_entities: "Landscape lights (own chip)",
   fan_entities: "Ceiling fans",
-  bath_fan_entities: "Bathroom fans",
+  bath_fan_entities: "Other fans",
   climate_entity: "Thermostat",
   pool_switch: "Pool pump",
   pool_heater: "Pool heater",
@@ -1243,6 +1267,8 @@ const ROOM_HELPERS = {
   tile_size: 'Ignored if the card in the view sets its own grid_options.',
   popup_hash: 'The card\'s own pop-up, e.g. "#garage-east". Blank derives it from the name.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
+  fan_entities: "The Lutron fan dimmers. Gets the ceiling-fan chip.",
+  bath_fan_entities: "Everything else that moves air \u2014 exhaust fans, air purifiers, tower fans. Gets its own chip. A fan. entity gets fan controls, a light-domain dimmer gets a speed slider.",
   music_powers: "The chip shows how many of these are on.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
   pool_switch: "The pool chip appears only while this is on.",
@@ -1831,6 +1857,9 @@ const LB_CSS = `
 .it input[type=text]{ padding:4px 6px; font-size:12.5px; min-width:0; }
 .it .nm{ flex:1 1 110px; width:auto; min-width:84px; }
 .it .ic{ flex:0 1 92px; width:auto; min-width:66px; }
+/* the real picker is a combobox, so it needs more room than the text box did */
+.it .ic.pick{ flex:1 1 160px; min-width:130px; --mdc-icon-size:18px; }
+.it .ic.pick::part(base){ --text-field-padding:0 8px; }
 .it select{ flex:0 1 auto; min-width:0; }
 .it .btn{
   border:none; background:none; cursor:pointer; padding:3px; border-radius:6px;
@@ -1955,6 +1984,35 @@ const LayoutUI = {
              text: (st && st.attributes.friendly_name) || it.entity, sub: it.entity };
   },
 
+  /* HA's own icon picker is registered on a plain dashboard load, so use it
+   * rather than asking you to remember mdi names — it searches, previews and
+   * completes. If a future frontend stops defining it, fall back to the text
+   * box rather than losing the field. */
+  _iconField(it) {
+    const commit = (v) => {
+      const s = (v || "").trim();
+      if (s) it.icon = s; else delete it.icon;
+      this._lbChanged();
+    };
+    if (customElements.get("ha-icon-picker")) {
+      const p = document.createElement("ha-icon-picker");
+      p.className = "ic pick";
+      p.hass = this._hass;
+      p.value = it.icon || "";
+      p.placeholder = "Icon";
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        commit(ev.detail && ev.detail.value);
+      });
+      return p;
+    }
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.className = "ic"; inp.value = it.icon || "";
+    inp.placeholder = "mdi:…";
+    inp.addEventListener("change", () => commit(inp.value));
+    return inp;
+  },
+
   _lbRow(it, list, i) {
     const row = document.createElement("div");
     row.className = "it" + (it.heading !== undefined ? " head" : "")
@@ -1994,13 +2052,7 @@ const LayoutUI = {
           if (nm.value.trim()) it.name = nm.value.trim(); else delete it.name;
           this._lbChanged();
         });
-        const icf = document.createElement("input");
-        icf.type = "text"; icf.className = "ic"; icf.value = it.icon || "";
-        icf.placeholder = "mdi:…";
-        icf.addEventListener("change", () => {
-          if (icf.value.trim()) it.icon = icf.value.trim(); else delete it.icon;
-          this._lbChanged();
-        });
+        const icf = this._iconField(it);
         const dim = document.createElement("button");
         dim.className = "btn";
         dim.title = it.dim === false ? "Doesn't dim — click to allow" : "Dims — click if it can't";
