@@ -155,4 +155,429 @@ whole blocks, in any order:
   { "heading": "Everything else" },
   { "block": "climate" },
   { "entity": "light.master_cans" },
-  
+  { "card": { "type": "custom:universal-remote-card" } }
+],
+"hidden": [
+  { "entity": "light.outside_xmas_master_outlet" }
+]
+```
+
+Consecutive lights collapse into one two-column grid, so headings are what
+break them into groups — and `"width": "full"` on an item gives it the whole
+row instead, breaking the run around it.
+
+### Columns
+
+A `group` is a column. Neighbouring groups share a row on a wide panel and
+stack once there isn't room, which is what a wide pop-up wants — a remote
+beside the lights beside the player, rather than all three down the page.
+
+```json
+"layout": [
+  { "group": "Remote", "span": 4,
+    "items": [ { "card": { "type": "custom:universal-remote-card" } } ] },
+  { "group": "Lights", "span": 5,
+    "items": [ { "entity": "light.javon_cans" }, { "entity": "light.javon_lamp_left" } ] },
+  { "group": "Playing", "span": 3,
+    "items": [ { "block": "media" } ] },
+  { "heading": "Everything else" },
+  { "entity": "light.javon_br_shower" }
+]
+```
+
+`span` weights the widths against each other — 4/5/3 above. Each column has a
+260px floor, so on a phone they wrap into a single stack. `group` doubles as
+the column's label; use `"group": ""` for an unlabelled one, and `items` holds
+anything a layout holds, groups aside.
+
+**+ Column** in the builder adds one. A column is a container you drag items
+into and out of; its header carries the label and the span, and removing a
+column keeps what was inside by dropping those items back into the layout
+where it sat. Columns can't nest, so dragging one onto another is refused. `hidden` is parked, not deleted — it keeps a light's
+name, icon and `dim` so putting it back costs nothing.
+
+The rooms editor does all of this by dragging, and **Customise layout** writes
+the room's current automatic arrangement out as a `layout` to start from.
+**Back to automatic** drops it again.
+
+For the one-offs — a scene picker, an air-purifier card — `cards` drops raw
+Lovelace into a slot: `start` renders before everything, any block name
+renders after that block, `end` renders last.
+
+### Media players
+
+`media_player` renders a card in the `media` block. If the entity comes from
+the Music Assistant integration it gets `custom:mediocre-media-player-card`,
+otherwise the built-in `media-control`. Set `media_card` to a full card config
+to override. The room tile grows a now-playing chip while that player is
+playing; tapping it opens the media card on its own `#<room>-media` hash.
+
+### Remotes
+
+Every Samsung TV wants the same remote with different entity ids, so the
+layouts live once in `_remotes.json` beside the rooms, and a room names one
+and fills the blanks:
+
+```json
+"remotes": [
+  { "use": "samsung_tv", "title": "Javon TV",
+    "media_player": "media_player.javon_samsung_70",
+    "remote": "remote.javon_samsung_70" }
+]
+```
+
+```json
+// _remotes.json
+{
+  "samsung_tv": {
+    "type": "custom:universal-remote-card",
+    "platform": "Samsung TV",
+    "remote_id": "{{remote}}",
+    "media_player_id": "{{media_player}}",
+    "title": "{{title}}",
+    "rows": [["back", "custom_power", "menu", "home", "source"], ["circlepad"]]
+  }
+}
+```
+
+`{{key}}` anywhere in a template is filled from the room's entry. A string
+that is *exactly* `{{key}}` takes the value's own type, so a number or a list
+survives instead of being stringified.
+
+A remote is wrapped in a `conditional` card watching `media_player`, then
+`remote`, then `entity` — whichever it finds first — so it only appears while
+the device is on rather than off, unavailable, unknown or standby. `when`
+picks a different entity to watch; `always: true` skips the check. Because it
+is a conditional card it follows state live, not just at the moment the panel
+opened.
+
+Rather than leaving a hole while the TV is off, a remote can name what sits in
+its place:
+
+```json
+"remotes": [
+  { "use": "samsung_tv", "title": "Javon TV",
+    "media_player": "media_player.javon_samsung_70",
+    "remote": "remote.javon_samsung_70",
+    "wake": "script.javontv_wake",
+    "off_name": "Javon TV" }
+]
+```
+
+| key | what it does |
+| --- | --- |
+| `wake` | service the off tile calls to turn the TV on — `script.x`, `scene.y`, anything `perform-action` takes. Without it the tile just toggles the watched entity. |
+| `off_name` | label on the off tile. Falls back to `title`. |
+| `off_icon` | icon on the off tile. Defaults to `mdi:television-off`. |
+| `off_card` | a full card config, used verbatim instead of the generated tile. |
+
+Set any one of those four and the room gets a matched pair in the same slot:
+the remote while the device is on, the off tile while it isn't. Set none and
+the slot is simply empty while the TV is off, as before. Both halves are
+`conditional` cards, so the swap happens live — no reload, no reopening the
+pop-up.
+
+A device a remote watches is dropped from the `tv_entity` / `projector_entity`
+/ `receiver_entity` tile grid above it — the pair already covers both states,
+so the plain tile would only ever duplicate whichever half is showing. Those
+keys still draw their own tile in rooms with no remote configured, and
+`tv_entity` still drives the now-playing chip on the room tile either way.
+
+Name a template that doesn't exist and you get a card saying so, rather than
+silence.
+
+The pop-up is drawn by the card itself into the `home-assistant` shadow root —
+inside HA's own gesture layer, so lights and sliders in it respond to taps —
+keyed on the
+room's hash, so the browser back button closes it and nothing in the grid can
+clip it. It does not need Bubble Card. Only the first card to claim a hash
+owns it, so a room appearing on two views still opens one panel.
+
+### The tile
+
+Room name with a centred row of chips — lights, landscape, ceiling fans,
+bathroom fans, fountain, thermostat, music — each shown only when that room has
+one. Red door/garage indicator top right. Tap opens the Bubble Card pop-up.
+
+```yaml
+type: custom:charro-room-card
+room_name: Master
+room_icon: mdi:chess-king
+climate_entity: climate.master_bed
+light_entities: [light.master_cans, light.master_rope_light]
+fan_entities: [light.master_fan]
+bath_fan_entities: [light.master_bath_shower_fans]
+music_powers:
+  - switch.rti_ad_8x_amp1_master_bath_power
+  - switch.rti_ad_8x_amp1_master_patio_power
+alert_sensors: [sensor.elkm1_master_bedroom]
+```
+
+| Option | Description |
+|---|---|
+| `room_name` | **Required.** The title |
+| `room_icon` | Icon left of the name. Green when any light is on |
+| `tile_size` | `half` (default) or `full` — how wide the tile sits on the rooms view. A `grid_options` on the card in the view overrides it |
+| `popup_hash` | Bubble Card hash. Blank derives it (`Garage East` → `#garage-east`) |
+| `light_entities` | Lightbulb chip with an on-count |
+| `landscape_entities` | Palm-tree chip, kept out of the lights count |
+| `fan_entities` | Ceiling-fan chip with an on-count |
+| `bath_fan_entities` | Plain fan chip with an on-count |
+| `fountain_entity` | Fountain chip, taps to toggle |
+| `climate_entity` | Always shown — grey off, red heat, blue cool, purple heat/cool |
+| `music_powers` | Music chip showing how many zones are on. Hidden when all off |
+| `music_player` | Opened by holding the music chip |
+| `alert_sensors` | Sensors/covers that light the red indicator |
+| `confirm_sensor` | Only alert when this is also open |
+
+## `charro-security-card`
+
+Red when the zone is Violated (or a cover isn't closed), green when a vehicle is
+detected, white otherwise — all evaluated in the browser, so no white-to-red
+flash on load. Subtitle shows state and how long it's been that way.
+
+```yaml
+type: custom:charro-security-card
+entity: cover.ratgdo32disco_2c5a00_door
+label: Garage West 3
+icon: mdi:garage
+toggle_button: button.ratgdo32disco_2c5a00_toggle_door
+vehicle_entity: binary_sensor.ratgdo32disco_2c5a00_vehicle_detected
+```
+
+| Option | Description |
+|---|---|
+| `entity` | **Required.** Elk sensor, binary sensor or cover |
+| `label` | Blank uses the friendly name |
+| `icon` | Defaults to `mdi:garage` for covers, `mdi:shield-check` otherwise |
+| `toggle_button` | Set for garage doors — tapping the round icon fires it |
+| `vehicle_entity` | Green when a car is in the bay |
+| `alert_mode` | `violated` or `open`. Blank picks from the entity domain |
+
+## `charro-zone-card`
+
+One line per RTI zone: power, source toggle, name, volume down / level / up.
+Hold the volume buttons to repeat.
+
+```yaml
+type: custom:charro-zone-card
+entity: switch.rti_ad_8x_amp2_saloon_bar_power
+zone_name: Saloon Bar
+source_entity: select.rti_ad_8x_amp2_saloon_bar_source
+volume_entity: number.rti_ad_8x_amp2_saloon_bar_volume
+```
+
+| Option | Description |
+|---|---|
+| `entity` | **Required.** Zone power switch |
+| `zone_name` | **Required.** Label |
+| `source_entity` | Source select — tapping flips between 1 and 2 |
+| `volume_entity` | Volume number |
+| `volume_step` | How far one tap moves it. Default 1 |
+
+## `charro-all-off-card`
+
+Border goes green when any listed zone is on, red when all are off. Subtitle
+counts what's on.
+
+```yaml
+type: custom:charro-all-off-card
+label: All Zones Off — Both Amps
+service: script.all_zones_off
+entities:
+  - switch.rti_ad_8x_amp1_lanai_power
+  - switch.rti_ad_8x_amp2_kitchen_power
+```
+
+| Option | Description |
+|---|---|
+| `entities` | **Required.** Zone power switches to count |
+| `label` | Title |
+| `service` | Default `script.all_zones_off` |
+| `confirm` | `false` to fire without asking |
+| `confirm_text` | Custom confirmation wording |
+
+## `charro-lights-card`
+
+One room per card. Every row is the same height whether the light is on, off,
+dimmable or a relay, because the brightness control is a fill bar inside the
+row rather than a slider underneath it. Drag across a lit dimmable row to set
+brightness, tap anywhere to toggle, hold for more-info.
+
+```yaml
+type: custom:charro-lights-card
+title: Kitchen
+icon: mdi:chef-hat
+filter_entity: input_select.light_filter
+entities:
+  - light.kitchen_island
+  - entity: light.kitchen_area
+    name: Cans
+    icon: mdi:light-recessed
+    dim: false
+```
+
+| Option | Description |
+|---|---|
+| `entities` | **Required.** Entity ids, or objects with `entity` plus any of `name`, `icon`, `dim`, `fountain` |
+| `title` | Room name in the header. Blank hides the header |
+| `icon` | Icon beside the title |
+| `filter_entity` | An `input_select` driving which rows show — see below |
+| `row_height` | Row height in px. Default 46 |
+| `keep_empty` | `true` to keep the card visible when the filter hides every row |
+
+Per-light keys:
+
+| Key | Description |
+|---|---|
+| `dim` | `false` for a Lutron relay or wall switch. Home Assistant reports brightness support for those, which is wrong, so it has to be stated |
+| `fountain` | Forces in or out of the Fountains filter. Blank guesses from the name |
+| `name` / `icon` | Override the entity's own |
+| `render` | `mushroom` (default), `tile`, or `hue` — which card draws this light |
+
+The filter entity's state selects the rows:
+
+| Option | Shows |
+|---|---|
+| `All` | everything |
+| `On` | only what's currently on |
+| `Lutron` | entities with a `homeworks_address` attribute |
+| `Other` | everything else — Hue, Pentair, ratgdo |
+| `Fountains` | water features |
+
+Lutron and Other are read live from the entity, so new Lutron loads sort
+themselves. A card whose rows are all filtered out hides itself, so the grid
+closes up instead of leaving an empty header.
+
+Fountain rows go blue when on; everything else goes amber.
+
+## `charro-rooms-editor`
+
+Drop it on a config view and edit the room files in place — entity pickers,
+icon pickers, per-light overrides, and a live preview of the tile beside the
+form.
+
+Give it a `type: panel` view of its own — it lays out in three columns
+(settings, the per-light table, a live preview) and wants the width.
+
+```yaml
+type: panel
+title: Config
+path: config
+cards:
+  - type: custom:charro-rooms-editor
+    title: Rooms
+```
+
+| Option | Description |
+|---|---|
+| `rooms` | Pin the list to these keys. Leave it out and the card finds them |
+| `title` | Shown beside the room picker |
+| `rooms_dir` | Where the files live. Default `/local/rooms/` |
+
+### Finding the rooms
+
+A browser cannot list a folder, so the card works it out two ways and merges
+the results: it reads every dashboard's config over the websocket and collects
+each `room:` already placed on a `charro-room-card`, and it reads
+`_index.json` from the rooms folder, which the save script rewrites on every
+save. Between them a room shows up whether it has been put on a dashboard yet
+or not, and nothing has to be listed by hand.
+
+`_index.json` only exists once you've saved a room through the script. Until
+then the card falls back to what's on your dashboards — so a room file that is
+on disk but not yet on a card and not yet in the index is invisible. **Open /
+new** covers that case: type the key and the card opens the file if it finds
+one, and only starts a blank room if it doesn't. Writing `_index.json` by hand
+works too — it's a plain array, `["master", "lanai"]`.
+
+Three columns: the room's settings, the per-light table, and a live preview.
+**Open / new** takes a room key and opens that file if it exists, otherwise
+starts a blank room — so it can't overwrite one by accident. **Expand all**
+opens every settings section at once; they start collapsed to keep that column
+narrow.
+
+The middle column is the layout builder. While a room is automatic it shows
+what that means and offers to take it over; once it has a `layout` every item
+becomes a draggable row — reorder them, drag one under a different heading,
+drag into **Hidden** to park it. Entity rows carry their name, icon, how they're drawn, the dims toggle and
+half/full width inline, so the old flat table is only there for automatic
+rooms.
+
+Adding or removing a light in the form keeps a custom layout in step: a new
+light appears in **Available** rather than landing silently at the end, and a
+removed one disappears from everywhere.
+
+**Available** is everything the room owns but hasn't placed — loose lights
+grouped by which list they came from, plus any block not in use. It's derived
+rather than stored, so dragging one out (or clicking +) creates the item; the
+tray just stops showing it. Place everything and the tray says so.
+
+Headings, blocks and raw cards carry an × to remove them outright; a removed
+block is offered again by **+ Block**. Lights only hide, since the entity
+lists decide which exist — the eye parks one in **Hidden**, and the
+arrows button gives an item the full row instead of sharing it.
+
+The preview switches between **Tile** — the chip card as it appears on the
+rooms view — and **Pop-up**, which renders the full body the room would show
+when opened. Choosing Pop-up widens that column and narrows the other two.
+
+### Saving
+
+A browser cannot write to `/config`, so Save takes one of two routes.
+
+Without any setup the button reads **Copy JSON** — it puts the finished file
+on your clipboard and names the path to paste it into.
+
+Add the helper below and it becomes a real **Save** that writes the file:
+
+```yaml
+# configuration.yaml
+shell_command:
+  charro_write_room: "sh /config/scripts/charro_write_room.sh {{ name }} {{ payload }}"
+```
+
+with `charro_write_room.sh` at `/config/scripts/` — anywhere under `/config`
+works, as long as the two paths agree. No execute bit needed, since the
+command invokes `sh` directly. The card base64-encodes the body,
+so nothing with a shell metacharacter in it ever reaches the command line; the
+script sanitises the room name again, writes to a temp file, refuses to
+install anything that doesn't parse as JSON, and only then moves it into
+place. The card notices the service by itself — no option to set.
+
+Either way the other cards pick the change up on a hard refresh.
+
+---
+
+## Changing how the cards look
+
+`dist/templates/*.json` hold the full button-card templates — padding, grids,
+chip sizes, colours. They're fetched with `cache: "no-store"`, so a hard refresh
+picks up edits. No restart.
+
+HACS replaces them on update. To keep your own version, copy one to
+`/config/www/cards/` and point the card at it:
+
+```yaml
+type: custom:charro-room-card
+template_url: /local/cards/room-card.json
+```
+
+Landmarks in `room-card.json`:
+
+- `styles.card` — padding, radius, `min-height`
+- `styles.grid` — the `"i n alert" / "chips chips chips"` layout and row heights
+- `styles.name` — font size by name length
+- `custom_fields.chips.card.styles.grid` — the flex chip row (`gap`, centring)
+- `custom_fields.chips.card.styles.custom_fields.<chip>` — chip visibility
+- `custom_fields.chips.card.custom_fields.<chip>` — a chip's icon, count, colours
+- `custom_fields.alert` — the red door indicator
+
+Break the JSON and the card shows a red error instead of failing silently.
+
+## Notes
+
+- `triggers_update` is computed from the entities you set, so a card only
+  redraws for its own state changes.
+- `security-card.json` and `garage-card.json` are the same tile; the garage one
+  swaps the icon's tap action for `button.press`.
