@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.25.1";
+const VERSION = "4.26.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -450,17 +450,30 @@ function climateCard(r) {
  * doesn't exist, which is why the source read back as "S?" — so rebuild the
  * id from the stem instead. A music_powers entry may also be an object that
  * names any of them outright. */
-function zoneCard(p, r) {
+function zoneCard(p, r, hass) {
   const o = typeof p === "object" && p ? p : {};
   const power = o.entity || o.power || (typeof p === "string" ? p : "");
   const stem = String(power).replace(/^[^.]*\./, "").replace(/_power$/, "");
   return {
     type: "custom:charro-zone-card",
     entity: power,
-    zone_name: o.zone_name || o.name || r.room_name || "",
+    zone_name: o.zone_name || o.name || zoneName(power, stem, r, hass),
     source_entity: o.source_entity || o.source || `select.${stem}_source`,
     volume_entity: o.volume_entity || o.volume || `number.${stem}_volume`,
   };
+}
+
+/* A room can drive more than one zone — the Lanai owns both Lanai and
+ * Barbeque — so naming every one after the room labels them identically.
+ * Take the zone's own name, minus the "Power" the switch is called after,
+ * and only fall back to the room when there's nothing to take. */
+function zoneName(power, stem, r, hass) {
+  const st = hass && hass.states && hass.states[power];
+  const friendly = st && st.attributes && st.attributes.friendly_name;
+  const from = friendly
+    || stem.replace(/^rti[_ ]?ad[_ ]?8x[_ ]?amp\d+[_ ]?/i, "").replace(/_/g, " ");
+  const name = String(from).replace(/\s*power\s*$/i, "").trim();
+  return name || r.room_name || "";
 }
 
 /* One block's worth of cards. Shared by the automatic body and the custom
@@ -474,7 +487,7 @@ function blockCards(name, r, hass) {
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
   if (name === "music") {
-    for (const p of r.music_powers || []) push(zoneCard(p, r));
+    for (const p of r.music_powers || []) push(zoneCard(p, r, hass));
     push(mediaCard(r, hass));
   }
 
@@ -1868,6 +1881,23 @@ const LB_CSS = `
 .it .btn:hover{ background:rgba(127,127,127,.18); color:var(--primary-text-color); }
 .lbbar{ display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 2px; }
 .lbbar button{ padding:6px 11px; font-size:12.5px; font-weight:500; }
+.cardpanel{
+  border:1px solid var(--primary-color); border-radius:10px; padding:10px;
+  margin:8px 0; display:flex; flex-direction:column; gap:8px;
+  background:rgba(127,127,127,.06);
+}
+.cardpanel .top{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.cardpanel .top select{ flex:1 1 220px; min-width:0; padding:6px 8px;
+  border-radius:8px; border:1px solid var(--divider-color);
+  background:var(--card-background-color); }
+.cardpanel .note{ font-size:12px; color:var(--secondary-text-color); }
+.cardpanel .note.bad{ color:var(--error-color,#f44336); }
+.cardpanel ha-yaml-editor{ display:block; }
+.cardpanel textarea{ width:100%; min-height:200px; box-sizing:border-box;
+  font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.5;
+  border-radius:8px; border:1px solid var(--divider-color); padding:8px;
+  background:var(--card-background-color); }
+.cardpanel .acts{ display:flex; gap:6px; }
 .hid{ opacity:.62; }
 .hidzone{
   border:1px dashed var(--divider-color); border-radius:8px; padding:6px;
@@ -1899,8 +1929,173 @@ const BLOCK_LABEL = {
   security: "Door / motion alert", lights: "All lights",
 };
 
+/* The core cards worth offering, with a starting config each so picking one
+ * lands something that renders rather than a bare type that errors. */
+const CORE_CARDS = [
+  ["tile", "Tile", { type: "tile", entity: "" }],
+  ["entities", "Entities", { type: "entities", entities: [] }],
+  ["button", "Button", { type: "button", entity: "" }],
+  ["gauge", "Gauge", { type: "gauge", entity: "" }],
+  ["light", "Light", { type: "light", entity: "" }],
+  ["thermostat", "Thermostat", { type: "thermostat", entity: "" }],
+  ["media-control", "Media control", { type: "media-control", entity: "" }],
+  ["picture-entity", "Picture entity", { type: "picture-entity", entity: "" }],
+  ["markdown", "Markdown", { type: "markdown", content: "" }],
+  ["history-graph", "History graph", { type: "history-graph", entities: [] }],
+  ["statistic", "Statistic", { type: "statistic", entity: "" }],
+  ["weather-forecast", "Weather", { type: "weather-forecast", entity: "" }],
+  ["todo-list", "To-do list", { type: "todo-list", entity: "" }],
+  ["map", "Map", { type: "map", entities: [] }],
+  ["calendar", "Calendar", { type: "calendar", entities: [] }],
+  ["conditional", "Conditional", { type: "conditional", conditions: [], card: {} }],
+  ["grid", "Grid", { type: "grid", columns: 2, square: false, cards: [] }],
+  ["vertical-stack", "Vertical stack", { type: "vertical-stack", cards: [] }],
+  ["horizontal-stack", "Horizontal stack", { type: "horizontal-stack", cards: [] }],
+];
+
+/* Installed cards register themselves on window.customCards, so the library
+ * is whatever this install actually has rather than a list that goes stale.
+ * Group by the vendor prefix, which is how they read on screen anyway. */
+const CARD_VENDORS = {
+  mushroom: "Mushroom", mediocre: "Mediocre", charro: "Charro",
+  bubble: "Bubble", "button-card": "Button Card",
+};
+function cardLibrary() {
+  const cats = [{ label: "Home Assistant", items: CORE_CARDS.map(([t, n, seed]) =>
+    ({ type: t, name: n, seed })) }];
+  const buckets = new Map();
+  for (const c of window.customCards || []) {
+    if (!c || !c.type) continue;
+    if (c.type.startsWith("charro-")) continue;          // our own, not room content
+    const key = Object.keys(CARD_VENDORS).find((k) => c.type.startsWith(k)) || "";
+    const label = CARD_VENDORS[key] || "Other custom cards";
+    if (!buckets.has(label)) buckets.set(label, []);
+    buckets.get(label).push({ type: `custom:${c.type}`,
+                              name: c.name || c.type,
+                              seed: { type: `custom:${c.type}` } });
+  }
+  for (const [label, items] of [...buckets].sort((a, b) => a[0].localeCompare(b[0]))) {
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    cats.push({ label, items });
+  }
+  return cats;
+}
+
 /* Mixed into CharroRoomsEditor. Kept apart because it is all one feature. */
 const LayoutUI = {
+  /* Paste or build a card and it becomes an ordinary layout row: draggable,
+   * hideable, droppable into a column. HA's own YAML editor does the parsing
+   * when it's available — it is, on a plain dashboard load — so this takes
+   * YAML or JSON and says where the syntax error is. */
+  _openCard(ctx) {
+    this._cardCtx = ctx;
+    this._lbRender();
+  },
+  _closeCard() { this._cardCtx = null; this._lbRender(); },
+
+  _cardPanel() {
+    const ctx = this._cardCtx;
+    const list = ctx.index === null ? null : this._lbList(ctx.key);
+    const existing = list && list[ctx.index] ? list[ctx.index].card : null;
+    let cfg = existing ? clone(existing) : { type: "tile", entity: "" };
+    let valid = true;
+
+    const panel = document.createElement("div");
+    panel.className = "cardpanel";
+
+    const top = document.createElement("div");
+    top.className = "top";
+    const sel = document.createElement("select");
+    const keep = document.createElement("option");
+    keep.value = ""; keep.textContent = existing ? "— keep this card —" : "— pick a card —";
+    sel.appendChild(keep);
+    for (const cat of cardLibrary()) {
+      const g = document.createElement("optgroup");
+      g.label = cat.label;
+      for (const it of cat.items) {
+        const o = document.createElement("option");
+        o.value = it.type; o.textContent = it.name;
+        o._seed = it.seed;
+        g.appendChild(o);
+      }
+      sel.appendChild(g);
+    }
+    top.appendChild(sel);
+
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = existing ? "Editing this card." : "Pick a type, or paste a card below.";
+
+    const acts = document.createElement("div");
+    acts.className = "acts";
+    const ok = document.createElement("button");
+    ok.className = "primary";
+    ok.textContent = existing ? "Save card" : "Add card";
+    const cancel = document.createElement("button");
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => this._closeCard());
+    acts.append(ok, cancel);
+
+    let setCfg;
+    if (customElements.get("ha-yaml-editor")) {
+      const y = document.createElement("ha-yaml-editor");
+      y.hass = this._hass;
+      y.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        valid = ev.detail.isValid !== false;
+        if (valid && ev.detail.value && typeof ev.detail.value === "object") {
+          cfg = ev.detail.value;
+        }
+        note.classList.toggle("bad", !valid);
+        note.textContent = valid ? "Looks like valid YAML." : "That YAML doesn't parse yet.";
+        ok.disabled = !valid;
+      });
+      panel.append(top, y, note, acts);
+      // setValue only lands once the element has rendered its editor
+      Promise.resolve(y.updateComplete).then(() => y.setValue(cfg));
+      setCfg = (v) => { cfg = v; y.setValue(v); };
+    } else {
+      const ta = document.createElement("textarea");
+      ta.spellcheck = false;
+      ta.value = JSON.stringify(cfg, null, 2);
+      ta.addEventListener("input", () => {
+        try { cfg = JSON.parse(ta.value); valid = true; }
+        catch (err) { valid = false; }
+        note.classList.toggle("bad", !valid);
+        note.textContent = valid ? "Valid JSON." : "That JSON doesn't parse yet.";
+        ok.disabled = !valid;
+      });
+      note.textContent = "HA's YAML editor isn't loaded — paste JSON here.";
+      panel.append(top, ta, note, acts);
+      setCfg = (v) => { cfg = v; ta.value = JSON.stringify(v, null, 2); };
+    }
+
+    sel.addEventListener("change", () => {
+      const o = sel.selectedOptions[0];
+      if (!o || !o._seed) return;
+      setCfg(clone(o._seed));
+      valid = true; ok.disabled = false;
+      note.classList.remove("bad");
+      note.textContent = "Fill in the entity and anything else it needs.";
+    });
+
+    ok.addEventListener("click", () => {
+      if (!valid) return;
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg) || !cfg.type) {
+        note.classList.add("bad");
+        note.textContent = "A card needs to be an object with a `type`.";
+        return;
+      }
+      const target = this._lbList(ctx.key);
+      if (ctx.index === null) target.push({ card: cfg });
+      else target[ctx.index] = { ...target[ctx.index], card: cfg };
+      this._cardCtx = null;
+      this._lbRender(); this._lbChanged();
+    });
+
+    return panel;
+  },
+
   _lbEnsure() {
     const r = this._room;
     if (!Array.isArray(r.layout)) r.layout = [];
@@ -2100,6 +2295,14 @@ const LayoutUI = {
       row.appendChild(add);
       this._lbWireDrag(row, list, i);
       return row;
+    }
+
+    if (it.card) {
+      const edit = document.createElement("button");
+      edit.className = "btn"; edit.title = "Edit this card";
+      edit.innerHTML = `<ha-icon icon="mdi:pencil-outline"></ha-icon>`;
+      edit.addEventListener("click", () => this._openCard({ key: list, index: i }));
+      row.appendChild(edit);
     }
 
     const move = document.createElement("button");
@@ -2340,6 +2543,10 @@ const LayoutUI = {
       this._lbList("layout").push({ block: free[0] });
       this._lbRender(); this._lbChanged();
     });
+    const addCard = document.createElement("button");
+    addCard.textContent = "+ Card";
+    addCard.title = "Paste or build any Lovelace card";
+    addCard.addEventListener("click", () => this._openCard({ key: "layout", index: null }));
     const addGroup = document.createElement("button");
     addGroup.textContent = "+ Column";
     addGroup.title = "Neighbouring columns share a row and stack when narrow";
@@ -2352,7 +2559,7 @@ const LayoutUI = {
     reset.addEventListener("click", () => {
       delete r.layout; delete r.hidden; this._lbRender(); this._lbChanged();
     });
-    bar.append(addHead, addBlock, addGroup, reset);
+    bar.append(addHead, addBlock, addCard, addGroup, reset);
 
     // ---- Available: owned but not placed ----
     const cats = this._lbAvail();
@@ -2410,7 +2617,9 @@ const LayoutUI = {
       ev.preventDefault(); hz.classList.remove("over"); this._lbDrop();
     });
 
-    wrap.append(list, bar, ah, tray, hh, hz);
+    wrap.append(list, bar);
+    if (this._cardCtx) wrap.appendChild(this._cardPanel());
+    wrap.append(ah, tray, hh, hz);
     this._layoutBox.appendChild(wrap);
   },
 };

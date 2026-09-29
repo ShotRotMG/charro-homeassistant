@@ -303,6 +303,26 @@ keys still draw their own tile in rooms with no remote configured, and
 Name a template that doesn't exist and you get a card saying so, rather than
 silence.
 
+### Adding a card
+
+**+ Card** in the layout builder opens a panel with two ways in: a dropdown of
+every card this install actually has — the core Home Assistant ones, then your
+installed cards grouped by vendor, read from `window.customCards` so it can't
+go stale — and an editor underneath. Pick a type to seed a starting config, or
+paste one you already have.
+
+The editor is HA's own `ha-yaml-editor`, so it takes YAML or JSON and tells you
+when the syntax is wrong rather than failing on save. If a future frontend stops
+registering it, the panel falls back to a JSON textarea.
+
+What lands is an ordinary `{ "card": … }` layout row: draggable, hideable, and
+droppable into a column like anything else. The pencil on an existing card row
+reopens the same panel.
+
+This replaces `cards.<slot>` as the place to put one-offs. The old slots still
+work and still render — switching a room to a custom layout materializes them
+into rows — but there's no longer a reason to hand-edit that blob.
+
 ### Pop-up width
 
 Width follows the content rather than the monitor. The panel measures the
