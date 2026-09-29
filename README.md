@@ -303,6 +303,20 @@ keys still draw their own tile in rooms with no remote configured, and
 Name a template that doesn't exist and you get a card saying so, rather than
 silence.
 
+### Pop-up width
+
+The panel steps up with the viewport rather than holding one narrow column on a
+wide monitor: 760px from 870px of viewport, 1040px from 1400px, 1320px from
+1900px, each capped so it never fills the screen edge to edge. Below 870px it's
+a bottom sheet at full width, unchanged.
+
+`popup_width` on a room overrides the ceiling — a number is treated as pixels,
+a string is used as given (`"64rem"`, `"min(1500px, 80vw)"`). The viewport cap
+still applies, so an over-large value just means "as wide as allowed".
+
+Width is what makes columns pay off: groups only sit side by side when there's
+room for them, so a room with a remote beside a light grid wants the wider end.
+
 The pop-up is drawn by the card itself into the `home-assistant` shadow root —
 inside HA's own gesture layer, so lights and sliders in it respond to taps —
 keyed on the

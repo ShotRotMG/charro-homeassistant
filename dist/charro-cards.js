@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.21.1";
+const VERSION = "4.22.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -741,14 +741,23 @@ const POPUP_CSS = `
   transform:translateY(100%); transition:transform .26s cubic-bezier(.2,.8,.3,1);
 }
 .charro-pop.in{ transform:translateY(0); }
+/* --charro-pop-w is the ceiling, stepped up with the viewport so a wide
+ * monitor actually gets to use its groups side by side instead of running a
+ * 680px column down the middle of a 2560px screen. A room can override it. */
 @media (min-width:870px){
   .charro-pop{
     left:50%; right:auto; bottom:auto; top:50%;
     transform:translate(-50%,-46%) scale(.98); opacity:0;
-    width:min(680px,92vw); max-height:84vh; border-radius:24px;
+    width:min(var(--charro-pop-w,760px),92vw); max-height:84vh; border-radius:24px;
     transition:transform .2s ease, opacity .2s ease;
   }
   .charro-pop.in{ transform:translate(-50%,-50%) scale(1); opacity:1; }
+}
+@media (min-width:1400px){
+  .charro-pop{ width:min(var(--charro-pop-w,1040px),88vw); max-height:86vh; padding:18px 18px 22px; }
+}
+@media (min-width:1900px){
+  .charro-pop{ width:min(var(--charro-pop-w,1320px),82vw); }
 }
 .charro-pop-hd{
   display:flex; align-items:center; gap:10px; margin:2px 4px 12px;
@@ -812,6 +821,10 @@ class RoomPopup {
 
     this.el = document.createElement("div");
     this.el.className = "charro-pop";
+    if (this.room.popup_width) {
+      const w = this.room.popup_width;
+      this.el.style.setProperty("--charro-pop-w", typeof w === "number" ? `${w}px` : String(w));
+    }
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-modal", "true");
 
