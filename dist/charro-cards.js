@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.16.0";
+const VERSION = "4.17.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -256,13 +256,30 @@ const roomHash = (c) => {
 const lightId = (l) => (typeof l === "string" ? l : l && l.entity);
 const lightIds = (list) => (list || []).map(lightId).filter(Boolean);
 
+const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style" };
+
 function lightCard(l, noDim) {
   const id = lightId(l);
   const o = typeof l === "object" && l ? l : {};
+  const dims = o.dim !== undefined ? o.dim : !(noDim || []).includes(id);
+
+  if (o.render === "tile") {
+    const card = { type: "tile", entity: id, vertical: false };
+    if (o.name) card.name = o.name;
+    if (o.icon) card.icon = o.icon;
+    if (dims) { card.features_position = "bottom"; card.features = [{ type: "light-brightness" }]; }
+    return card;
+  }
+  if (o.render === "hue") {
+    const card = { type: "custom:hue-like-light-card", entities: [id] };
+    if (o.name) card.title = o.name;
+    if (o.icon) card.icon = o.icon;
+    return card;
+  }
+
   const card = { type: "custom:mushroom-light-card", entity: id };
   if (o.name) card.name = o.name;
   if (o.icon) card.icon = o.icon;
-  const dims = o.dim !== undefined ? o.dim : !(noDim || []).includes(id);
   if (!dims) {
     card.show_brightness_control = false;
     card.collapsible_controls = false;
@@ -1696,7 +1713,13 @@ const LB_CSS = `
 .spn{ width:54px; }
 .it .cap{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
   color:var(--secondary-text-color); flex:none; }
+.it select{ font-size:12px; padding:3px 4px; border-radius:6px;
+  border:1px solid var(--divider-color); background:var(--card-background-color); }
+.tray{ display:flex; flex-direction:column; gap:8px; }
+.traycat .cap{ display:block; margin:2px 2px 4px; }
 `;
+
+const o_render = (it) => it.render || "mushroom";
 
 const BLOCK_LABEL = {
   climate: "Climate", media: "Media", cameras: "Cameras",
@@ -1728,6 +1751,38 @@ const LayoutUI = {
     }
     if (!Array.isArray(r.layout)) r.layout = [];
     return r.layout;
+  },
+
+  /* Everything the room owns but hasn't placed: lights still loose, and any
+   * block not in use. Derived, never stored — dragging one out creates the
+   * item, it doesn't move it. */
+  _lbAvail() {
+    const r = this._room;
+    const placed = new Set(this._lbAll().map((x) => x && x.entity).filter(Boolean));
+    const usedBlocks = new Set(this._lbAll().map((x) => x && x.block).filter(Boolean));
+    const cats = [];
+    for (const [label, key] of LIGHT_GROUPS) {
+      const items = (r[key] || [])
+        .map((l) => lightId(l))
+        .filter((e) => e && !placed.has(e))
+        .map((e) => ({ entity: e }));
+      if (items.length) cats.push({ label, items });
+    }
+    const blocks = Object.keys(BLOCK_LABEL)
+      .filter((b) => b !== "lights" && !usedBlocks.has(b))
+      .filter((b) => {
+        if (b === "climate") return !!r.climate_entity;
+        if (b === "security") return (r.alert_sensors || []).length;
+        if (b === "cameras") return (r.cameras || []).length;
+        if (b === "media") return !!(r.music_powers || r.tv_entity || r.media_player
+                                     || r.projector_entity || r.receiver_entity || r.remotes);
+        return true;
+      })
+      .map((b) => ({ block: b }));
+    if (blocks.length) cats.push({ label: "Blocks", items: blocks });
+    // one flat list backs the drag indices
+    this._avail = cats.flatMap((c) => c.items);
+    return cats;
   },
 
   /* every item anywhere, for the form-to-layout sync */
@@ -1778,7 +1833,7 @@ const LayoutUI = {
       }
       row.append(ic, lbl);
 
-      if (it.entity) {
+      if (it.entity && list !== "avail") {
         const st = this._hass.states[it.entity];
         const nm = document.createElement("input");
         nm.type = "text"; nm.className = "nm"; nm.value = it.name || "";
@@ -1813,8 +1868,34 @@ const LayoutUI = {
           this._lbRender(); this._lbChanged();
         });
 
-        row.append(nm, icf, dim, wide);
+        const rend = document.createElement("select");
+        for (const [v, label] of Object.entries(RENDER_KINDS)) {
+          const op = document.createElement("option");
+          op.value = v; op.textContent = label;
+          op.selected = (o_render(it) === v);
+          rend.appendChild(op);
+        }
+        rend.title = "How this light is drawn";
+        rend.addEventListener("change", () => {
+          if (rend.value === "mushroom") delete it.render; else it.render = rend.value;
+          this._lbChanged();
+        });
+
+        row.append(nm, icf, rend, dim, wide);
       }
+    }
+
+    if (list === "avail") {
+      const add = document.createElement("button");
+      add.className = "btn"; add.title = "Add to the layout";
+      add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>`;
+      add.addEventListener("click", () => {
+        this._lbList("layout").push({ ...it });
+        this._lbRender(); this._lbChanged();
+      });
+      row.appendChild(add);
+      this._lbWireDrag(row, list, i);
+      return row;
     }
 
     const move = document.createElement("button");
@@ -1881,7 +1962,8 @@ const LayoutUI = {
   get _dragIsGroup() {
     const d = this._drag;
     if (!d) return false;
-    const it = this._lbList(d.list)[d.i];
+    const src = d.list === "avail" ? (this._avail || []) : this._lbList(d.list);
+    const it = src[d.i];
     return !!(it && it.group !== undefined);
   },
 
@@ -1953,8 +2035,16 @@ const LayoutUI = {
     const d = this._drag, t = this._dropAt;
     this._lbClearMarks();
     if (!d || !t) return;
+    const to = this._lbList(t.list);
+    if (d.list === "avail") {
+      const src = (this._avail || [])[d.i];
+      if (!src) { this._lbRender(); return; }
+      to.splice(Math.max(0, Math.min(t.i, to.length)), 0, { ...src });
+      this._drag = null; this._dropAt = null;
+      this._lbRender(); this._lbChanged();
+      return;
+    }
     const from = this._lbList(d.list);
-    const to   = this._lbList(t.list);
     const [item] = from.splice(d.i, 1);
     if (!item) { this._lbRender(); return; }
     let at = t.i;
@@ -2060,6 +2150,36 @@ const LayoutUI = {
     });
     bar.append(addHead, addBlock, addGroup, reset);
 
+    // ---- Available: owned but not placed ----
+    const cats = this._lbAvail();
+    const availTotal = (this._avail || []).length;
+    const ah = document.createElement("div"); ah.className = "h4row";
+    const ahh = document.createElement("h4"); ahh.textContent = "Available";
+    const an = document.createElement("span"); an.className = "n";
+    an.textContent = String(availTotal);
+    ah.append(ahh, an);
+
+    const tray = document.createElement("div"); tray.className = "hidzone tray";
+    if (!availTotal) {
+      const e = document.createElement("div");
+      e.className = "hidempty";
+      e.textContent = "Everything this room has is placed.";
+      tray.appendChild(e);
+    } else {
+      let n0 = 0;
+      for (const c of cats) {
+        const cat = document.createElement("div"); cat.className = "traycat";
+        const cap = document.createElement("span");
+        cap.className = "cap"; cap.textContent = c.label;
+        cat.appendChild(cap);
+        for (const it of c.items) {
+          cat.appendChild(this._lbRow(it, "avail", n0));
+          n0++;
+        }
+        tray.appendChild(cat);
+      }
+    }
+
     const hh = document.createElement("div");
     hh.className = "h4row";
     const hhh = document.createElement("h4"); hhh.textContent = "Hidden";
@@ -2086,7 +2206,7 @@ const LayoutUI = {
       ev.preventDefault(); hz.classList.remove("over"); this._lbDrop();
     });
 
-    wrap.append(list, bar, hh, hz);
+    wrap.append(list, bar, ah, tray, hh, hz);
     this._layoutBox.appendChild(wrap);
   },
 };
@@ -2488,7 +2608,7 @@ class CharroRoomsEditor extends HTMLElement {
     const placed = new Set(this._lbAll().map(x => x && x.entity).filter(Boolean));
     const all = [];
     for (const [, key] of LIGHT_GROUPS) for (const l of r[key] || []) all.push(lightId(l));
-    for (const e of all) if (e && !placed.has(e)) r.layout.push({ entity: e });
+    // anything new shows up in Available rather than silently landing at the end
     const live = new Set(all);
     const keep = (arr) => arr.filter(x => !x || !x.entity || live.has(x.entity));
     r.layout = keep(r.layout);

@@ -388,6 +388,7 @@ Per-light keys:
 | `dim` | `false` for a Lutron relay or wall switch. Home Assistant reports brightness support for those, which is wrong, so it has to be stated |
 | `fountain` | Forces in or out of the Fountains filter. Blank guesses from the name |
 | `name` / `icon` | Override the entity's own |
+| `render` | `mushroom` (default), `tile`, or `hue` — which card draws this light |
 
 The filter entity's state selects the rows:
 
@@ -454,11 +455,18 @@ narrow.
 The middle column is the layout builder. While a room is automatic it shows
 what that means and offers to take it over; once it has a `layout` every item
 becomes a draggable row — reorder them, drag one under a different heading,
-drag into **Hidden** to park it. Entity rows carry their name, icon and dims
-toggle inline, so the old flat table is only there for automatic rooms.
+drag into **Hidden** to park it. Entity rows carry their name, icon, how they're drawn, the dims toggle and
+half/full width inline, so the old flat table is only there for automatic
+rooms.
 
-Adding or removing a light in the form keeps a custom layout in step: new
-lights land at the end, removed ones disappear from both lists.
+Adding or removing a light in the form keeps a custom layout in step: a new
+light appears in **Available** rather than landing silently at the end, and a
+removed one disappears from everywhere.
+
+**Available** is everything the room owns but hasn't placed — loose lights
+grouped by which list they came from, plus any block not in use. It's derived
+rather than stored, so dragging one out (or clicking +) creates the item; the
+tray just stops showing it. Place everything and the tray says so.
 
 Headings, blocks and raw cards carry an × to remove them outright; a removed
 block is offered again by **+ Block**. Lights only hide, since the entity
