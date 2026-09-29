@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.13.0";
+const VERSION = "4.14.2";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -454,7 +454,13 @@ function layoutBody(r, hass) {
       flush();
       out.push({ type: "heading", heading: it.heading, heading_style: "subtitle" });
     } else if (it.entity) {
-      run.push(lightCard(it, r.no_dim));
+      // a full-width item breaks the two-up run and takes the row to itself
+      if (it.width === "full") {
+        flush();
+        out.push({ type: "grid", columns: 1, square: false, cards: [lightCard(it, r.no_dim)] });
+      } else {
+        run.push(lightCard(it, r.no_dim));
+      }
     } else if (it.card) {
       flush(); out.push(it.card);
     } else if (it.block) {
@@ -836,6 +842,10 @@ class CharroRoomCard extends CharroBase {
 
     await super._build();          // the chip tile, via button-card
     this._claimHash(m);
+    if (m.tile_size && !this._sized) {
+      this._sized = true;
+      fireEvent(this, "card-visibility-changed");   // re-ask for grid options
+    }
   }
 
   async _buildPage(m) {
@@ -951,9 +961,10 @@ class CharroRoomCard extends CharroBase {
   }
 
   getGridOptions() {
-    return (this._config.mode || "tile") === "page"
-      ? { columns: 12, rows: "auto" }
-      : { columns: 6, rows: "auto", min_columns: 3 };
+    if ((this._config.mode || "tile") === "page") return { columns: 12, rows: "auto" };
+    // the room decides; a grid_options on the card in the view still wins
+    const size = (this._merged && this._merged.tile_size) || this._config.tile_size || "half";
+    return { columns: size === "full" ? 12 : 6, rows: "auto", min_columns: 3 };
   }
 }
 customElements.define("charro-room-card", CharroRoomCard);
@@ -966,6 +977,9 @@ const ROOM_SCHEMA = [
       { value: "popup", label: "Pop-up only" }] } } },
   { name: "room_name", selector: { text: {} } },
   { name: "room_icon", selector: { icon: {} } },
+  { name: "tile_size", selector: { select: { mode: "dropdown", options: [
+      { value: "half", label: "Half width" },
+      { value: "full", label: "Full width" }] } } },
   { name: "popup_hash", selector: { text: {} } },
   { type: "expandable", name: "", title: "Lights", icon: "mdi:lightbulb", schema: [
     { name: "light_entities", selector: ent(["light", "switch"], true) },
@@ -1004,6 +1018,7 @@ const ROOM_LABELS = {
   mode: "What to render",
   room_name: "Room name",
   room_icon: "Room icon",
+  tile_size: "Tile width on the rooms view",
   rooms_dir: "Folder holding the room files",
   popup_hash: "Pop-up hash (blank = from the name)",
   light_entities: "Lights",
@@ -1025,6 +1040,7 @@ const ROOM_LABELS = {
   confirm_sensor: "Only alert when this is also open",
 };
 const ROOM_HELPERS = {
+  tile_size: 'Ignored if the card in the view sets its own grid_options.',
   popup_hash: 'The card\'s own pop-up, e.g. "#garage-east". Blank derives it from the name.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   music_powers: "The chip shows how many of these are on.",
@@ -1639,6 +1655,14 @@ const LayoutUI = {
     if (!Array.isArray(r.hidden)) r.hidden = [];
   },
 
+  _lbList(name) {
+    // _lbChanged() drops an empty layout/hidden to keep the saved JSON tidy,
+    // so always go back through here rather than caching the array.
+    const r = this._room;
+    if (!Array.isArray(r[name])) r[name] = [];
+    return r[name];
+  },
+
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
@@ -1702,7 +1726,18 @@ const LayoutUI = {
           if (it.dim === false) delete it.dim; else it.dim = false;
           this._lbRender(); this._lbChanged();
         });
-        row.append(nm, icf, dim);
+
+        const wide = document.createElement("button");
+        wide.className = "btn";
+        wide.title = it.width === "full" ? "Full row — click for half" : "Half row — click for full";
+        wide.innerHTML = `<ha-icon icon="${it.width === "full"
+          ? "mdi:arrow-expand-horizontal" : "mdi:arrow-collapse-horizontal"}"></ha-icon>`;
+        wide.addEventListener("click", () => {
+          if (it.width === "full") delete it.width; else it.width = "full";
+          this._lbRender(); this._lbChanged();
+        });
+
+        row.append(nm, icf, dim, wide);
       }
     }
 
@@ -1711,19 +1746,23 @@ const LayoutUI = {
     move.title = list === "hidden" ? "Put back in the layout" : "Hide";
     move.innerHTML = `<ha-icon icon="${list === "hidden" ? "mdi:eye-outline" : "mdi:eye-off-outline"}"></ha-icon>`;
     move.addEventListener("click", () => {
-      const from = list === "hidden" ? this._room.hidden : this._room.layout;
-      const to   = list === "hidden" ? this._room.layout : this._room.hidden;
-      to.push(from.splice(i, 1)[0]);
+      const from = this._lbList(list === "hidden" ? "hidden" : "layout");
+      const to   = this._lbList(list === "hidden" ? "layout" : "hidden");
+      const [moved] = from.splice(i, 1);
+      if (moved) to.push(moved);
       this._lbRender(); this._lbChanged();
     });
     row.appendChild(move);
 
-    if (it.heading !== undefined || it.card) {
+    if (it.heading !== undefined || it.card || it.block) {
       const del = document.createElement("button");
-      del.className = "btn"; del.title = "Remove";
+      del.className = "btn";
+      del.title = it.block
+        ? "Remove — + Block can add it back"
+        : "Remove";
       del.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
       del.addEventListener("click", () => {
-        (list === "hidden" ? this._room.hidden : this._room.layout).splice(i, 1);
+        this._lbList(list === "hidden" ? "hidden" : "layout").splice(i, 1);
         this._lbRender(); this._lbChanged();
       });
       row.appendChild(del);
@@ -1761,9 +1800,10 @@ const LayoutUI = {
     const d = this._drag, t = this._dropAt;
     this._lbClearMarks();
     if (!d || !t) return;
-    const from = d.list === "hidden" ? this._room.hidden : this._room.layout;
-    const to   = t.list === "hidden" ? this._room.hidden : this._room.layout;
+    const from = this._lbList(d.list === "hidden" ? "hidden" : "layout");
+    const to   = this._lbList(t.list === "hidden" ? "hidden" : "layout");
     const [item] = from.splice(d.i, 1);
+    if (!item) { this._lbRender(); return; }
     let at = t.i;
     if (from === to && d.i < at) at--;                 // the splice shifted it
     to.splice(Math.max(0, Math.min(at, to.length)), 0, item);
@@ -1772,8 +1812,10 @@ const LayoutUI = {
   },
 
   _lbChanged() {
-    if (!this._room.layout.length) delete this._room.layout;
-    if (this._room.hidden && !this._room.hidden.length) delete this._room.hidden;
+    if (Array.isArray(this._room.layout) && !this._room.layout.length)
+      delete this._room.layout;
+    if (Array.isArray(this._room.hidden) && !this._room.hidden.length)
+      delete this._room.hidden;
     this._renderPreview();
   },
 
@@ -1835,15 +1877,18 @@ const LayoutUI = {
     const addHead = document.createElement("button");
     addHead.textContent = "+ Heading";
     addHead.addEventListener("click", () => {
-      r.layout.push({ heading: "New heading" }); this._lbRender(); this._lbChanged();
+      this._lbList("layout").push({ heading: "New heading" });
+      this._lbRender(); this._lbChanged();
     });
     const addBlock = document.createElement("button");
     addBlock.textContent = "+ Block";
     addBlock.addEventListener("click", () => {
-      const used = new Set(r.layout.concat(r.hidden || []).map(x => x.block).filter(Boolean));
+      const used = new Set(this._lbList("layout").concat(this._lbList("hidden"))
+        .map(x => x.block).filter(Boolean));
       const free = Object.keys(BLOCK_LABEL).filter(b => b !== "lights" && !used.has(b));
       if (!free.length) { this._say("Every block is already placed.", "err"); return; }
-      r.layout.push({ block: free[0] }); this._lbRender(); this._lbChanged();
+      this._lbList("layout").push({ block: free[0] });
+      this._lbRender(); this._lbChanged();
     });
     const reset = document.createElement("button");
     reset.textContent = "Back to automatic";

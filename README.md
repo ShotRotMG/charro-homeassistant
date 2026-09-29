@@ -152,7 +152,8 @@ whole blocks, in any order:
 ```
 
 Consecutive lights collapse into one two-column grid, so headings are what
-break them into groups. `hidden` is parked, not deleted — it keeps a light's
+break them into groups — and `"width": "full"` on an item gives it the whole
+row instead, breaking the run around it. `hidden` is parked, not deleted — it keeps a light's
 name, icon and `dim` so putting it back costs nothing.
 
 The rooms editor does all of this by dragging, and **Customise layout** writes
@@ -242,6 +243,7 @@ alert_sensors: [sensor.elkm1_master_bedroom]
 |---|---|
 | `room_name` | **Required.** The title |
 | `room_icon` | Icon left of the name. Green when any light is on |
+| `tile_size` | `half` (default) or `full` — how wide the tile sits on the rooms view. A `grid_options` on the card in the view overrides it |
 | `popup_hash` | Bubble Card hash. Blank derives it (`Garage East` → `#garage-east`) |
 | `light_entities` | Lightbulb chip with an on-count |
 | `landscape_entities` | Palm-tree chip, kept out of the lights count |
@@ -428,6 +430,11 @@ toggle inline, so the old flat table is only there for automatic rooms.
 
 Adding or removing a light in the form keeps a custom layout in step: new
 lights land at the end, removed ones disappear from both lists.
+
+Headings, blocks and raw cards carry an × to remove them outright; a removed
+block is offered again by **+ Block**. Lights only hide, since the entity
+lists decide which exist — the eye parks one in **Hidden**, and the
+arrows button gives an item the full row instead of sharing it.
 
 The preview switches between **Tile** — the chip card as it appears on the
 rooms view — and **Pop-up**, which renders the full body the room would show
