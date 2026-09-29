@@ -408,7 +408,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(76,175,80,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(255,193,7,0.22)' : 'transparent';\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -433,7 +433,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--green-color, #4caf50)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--disabled-text-color)';\n]]]\n"
                   }
                 ],
                 "name": [
@@ -864,7 +864,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "rgba(76,175,80,0.22)"
+                    "background": "'rgba(156,39,176,0.22)'"
                   }
                 ],
                 "grid": [
@@ -889,7 +889,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "var(--green-color,"
+                    "color": "'#ce93d8'"
                   }
                 ],
                 "name": [
@@ -901,6 +901,9 @@
                   },
                   {
                     "white-space": "nowrap"
+                  },
+                  {
+                    "color": "'#ce93d8'"
                   }
                 ]
               },
@@ -935,7 +938,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(3,169,244,0.20)'"
+                    "background": "'rgba(255,152,0,0.22)'"
                   }
                 ],
                 "icon": [
@@ -946,7 +949,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#03a9f4'"
+                    "color": "'#ffb74d'"
                   }
                 ]
               },

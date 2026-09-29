@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.22.0";
+const VERSION = "4.23.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -444,6 +444,25 @@ function climateCard(r) {
   return card;
 }
 
+/* An RTI zone is three entities in three different domains that share one
+ * name: switch.<zone>_power, select.<zone>_source, number.<zone>_volume.
+ * Swapping only the suffix leaves the domain wrong — switch.<zone>_source
+ * doesn't exist, which is why the source read back as "S?" — so rebuild the
+ * id from the stem instead. A music_powers entry may also be an object that
+ * names any of them outright. */
+function zoneCard(p, r) {
+  const o = typeof p === "object" && p ? p : {};
+  const power = o.entity || o.power || (typeof p === "string" ? p : "");
+  const stem = String(power).replace(/^[^.]*\./, "").replace(/_power$/, "");
+  return {
+    type: "custom:charro-zone-card",
+    entity: power,
+    zone_name: o.zone_name || o.name || r.room_name || "",
+    source_entity: o.source_entity || o.source || `select.${stem}_source`,
+    volume_entity: o.volume_entity || o.volume || `number.${stem}_volume`,
+  };
+}
+
 /* One block's worth of cards. Shared by the automatic body and the custom
  * layout, so both render a room the same way. */
 function blockCards(name, r, hass) {
@@ -455,12 +474,7 @@ function blockCards(name, r, hass) {
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
   if (name === "music") {
-    for (const p of r.music_powers || []) {
-      push({ type: "custom:charro-zone-card", entity: p,
-             zone_name: r.room_name || "",
-             source_entity: p.replace("_power", "_source"),
-             volume_entity: p.replace("_power", "_volume") });
-    }
+    for (const p of r.music_powers || []) push(zoneCard(p, r));
     push(mediaCard(r, hass));
   }
 
