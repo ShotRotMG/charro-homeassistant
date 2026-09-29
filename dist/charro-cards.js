@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.11.1";
+const VERSION = "4.12.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -329,70 +329,144 @@ function mediaCard(r, hass) {
   return { type: "media-control", entity: id };
 }
 
-function roomBody(r, hass) {
+/* One block's worth of cards. Shared by the automatic body and the custom
+ * layout, so both render a room the same way. */
+function blockCards(name, r, hass) {
+  const out = [];
+  const push = (c) => { if (c) out.push(c); };
+
+  if (name === "climate" && r.climate_entity) {
+    push({ type: "custom:mushroom-climate-card", entity: r.climate_entity,
+           show_temperature_control: true,
+           hvac_modes: ["heat_cool", "heat", "cool", "off"] });
+  }
+
+  if (name === "media") {
+    for (const p of r.music_powers || []) {
+      push({ type: "custom:charro-zone-card", entity: p,
+             zone_name: r.room_name || "",
+             source_entity: p.replace("_power", "_source"),
+             volume_entity: p.replace("_power", "_volume") });
+    }
+    const av = [
+      [r.tv_entity, "TV", "mdi:television"],
+      [r.projector_entity, "Projector", "mdi:projector"],
+      [r.receiver_entity, "Receiver", "mdi:audio-video"],
+    ].filter(([e]) => e);
+    if (av.length) {
+      push({ type: "grid", columns: av.length > 2 ? 3 : av.length, square: false,
+             cards: av.map(([e, n, i]) => ({ type: "tile", entity: e, name: n, icon: i })) });
+    }
+    for (const c of remoteCards(r, r._remotes || {})) push(c);
+    push(mediaCard(r, hass));
+  }
+
+  if (name === "cameras" && (r.cameras || []).length) {
+    push({ type: "grid", columns: r.cameras.length > 1 ? 2 : 1, square: false,
+           cards: r.cameras.map((e) => ({ type: "picture-entity", entity: e,
+                                          camera_view: "auto", show_state: false })) });
+  }
+
+  if (name === "security" && (r.alert_sensors || []).length) {
+    push({ type: "grid", columns: 2, square: false,
+           cards: r.alert_sensors.map((e) => ({ type: "custom:charro-security-card", entity: e })) });
+  }
+
+  return out;
+}
+
+const LIGHT_GROUPS = [
+  ["Lights", "light_entities"],
+  ["Landscape", "landscape_entities"],
+  ["Fans", "fan_entities"],
+  ["Bath fans", "bath_fan_entities"],
+  ["Water", "fountain_entities"],
+];
+
+/* The default: blocks in order, lights grouped by the list they came from. */
+function autoBody(r, hass) {
   const order = r.sections && r.sections.length ? r.sections : ROOM_SECTIONS;
   const extra = r.cards || {};
   const out = [];
   const push = (c) => { if (c) out.push(c); };
 
   for (const c of extra.start || []) push(c);
-
   for (const name of order) {
-    if (name === "climate" && r.climate_entity) {
-      push({ type: "custom:mushroom-climate-card", entity: r.climate_entity,
-             show_temperature_control: true,
-             hvac_modes: ["heat_cool", "heat", "cool", "off"] });
-    }
-
-    if (name === "media") {
-      for (const p of r.music_powers || []) {
-        push({ type: "custom:charro-zone-card", entity: p,
-               zone_name: r.room_name || "",
-               source_entity: p.replace("_power", "_source"),
-               volume_entity: p.replace("_power", "_volume") });
-      }
-      const av = [
-        [r.tv_entity, "TV", "mdi:television"],
-        [r.projector_entity, "Projector", "mdi:projector"],
-        [r.receiver_entity, "Receiver", "mdi:audio-video"],
-      ].filter(([e]) => e);
-      if (av.length) {
-        push({ type: "grid", columns: av.length > 2 ? 3 : av.length, square: false,
-               cards: av.map(([e, n, i]) => ({ type: "tile", entity: e, name: n, icon: i })) });
-      }
-      for (const c of remoteCards(r, r._remotes || {})) push(c);
-      push(mediaCard(r, hass));
-    }
-
     if (name === "lights") {
-      const groups = [
-        ["Lights", r.light_entities],
-        ["Landscape", r.landscape_entities],
-        ["Fans", r.fan_entities],
-        ["Bath fans", r.bath_fan_entities],
-        ["Water", r.fountain_entities],
-      ].filter(([, l]) => (l || []).length);
+      const groups = LIGHT_GROUPS
+        .map(([label, key]) => [label, r[key]])
+        .filter(([, l]) => (l || []).length);
       for (const [label, list] of groups) {
-        if (groups.length > 1) push({ type: "heading", heading: label, heading_style: "subtitle" });
+        if (groups.length > 1)
+          push({ type: "heading", heading: label, heading_style: "subtitle" });
         push({ type: "grid", columns: 2, square: false,
                cards: list.map((l) => lightCard(l, r.no_dim)) });
       }
+    } else {
+      for (const c of blockCards(name, r, hass)) push(c);
     }
-
-    if (name === "cameras" && (r.cameras || []).length) {
-      push({ type: "grid", columns: r.cameras.length > 1 ? 2 : 1, square: false,
-             cards: r.cameras.map((e) => ({ type: "picture-entity", entity: e,
-                                            camera_view: "auto", show_state: false })) });
-    }
-
-    if (name === "security" && (r.alert_sensors || []).length) {
-      push({ type: "grid", columns: 2, square: false,
-             cards: r.alert_sensors.map((e) => ({ type: "custom:charro-security-card", entity: e })) });
-    }
-
     for (const c of extra[name] || []) push(c);
   }
   for (const c of extra.end || []) push(c);
+  return out;
+}
+
+/* A room can instead spell out its own order: headings, individual lights and
+ * whole blocks, arranged however you like. Anything parked in `hidden` simply
+ * isn't rendered. Consecutive lights collapse into one two-column grid. */
+function layoutBody(r, hass) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    out.push({ type: "grid", columns: 2, square: false, cards: run });
+    run = [];
+  };
+  for (const it of r.layout || []) {
+    if (!it || it.hidden) continue;
+    if (it.heading !== undefined) {
+      flush();
+      out.push({ type: "heading", heading: it.heading, heading_style: "subtitle" });
+    } else if (it.entity) {
+      run.push(lightCard(it, r.no_dim));
+    } else if (it.card) {
+      flush(); out.push(it.card);
+    } else if (it.block) {
+      flush();
+      for (const c of blockCards(it.block, r, hass)) out.push(c);
+    }
+  }
+  flush();
+  return out;
+}
+
+function roomBody(r, hass) {
+  return (r.layout && r.layout.length) ? layoutBody(r, hass) : autoBody(r, hass);
+}
+
+/* Turn a room's automatic arrangement into an explicit layout it can then be
+ * rearranged from, so switching to a custom layout starts where you left off. */
+function materializeLayout(r) {
+  const order = r.sections && r.sections.length ? r.sections : ROOM_SECTIONS;
+  const extra = r.cards || {};
+  const out = [];
+  for (const c of extra.start || []) out.push({ card: c });
+  for (const name of order) {
+    if (name === "lights") {
+      const groups = LIGHT_GROUPS
+        .map(([label, key]) => [label, r[key]])
+        .filter(([, l]) => (l || []).length);
+      for (const [label, list] of groups) {
+        if (groups.length > 1) out.push({ heading: label });
+        for (const l of list)
+          out.push(typeof l === "string" ? { entity: l } : { ...l });
+      }
+    } else {
+      out.push({ block: name });
+    }
+    for (const c of extra[name] || []) out.push({ card: c });
+  }
+  for (const c of extra.end || []) out.push({ card: c });
   return out;
 }
 
@@ -467,12 +541,25 @@ const POPUP_CSS = `
 }
 `;
 
-function ensurePopupCss() {
-  if (document.getElementById("charro-pop-css")) return;
+/* The panel has to live inside <home-assistant>, not in document.body.
+ * Home Assistant's gesture layer doesn't reach elements outside its own tree:
+ * a mushroom or tile card rendered in document.body draws correctly, shows
+ * the right state, and quietly ignores every tap. Verified both ways. */
+function popupHost() {
+  const ha = document.querySelector("home-assistant");
+  return (ha && ha.shadowRoot) || document.body;
+}
+
+function ensurePopupCss(root) {
+  // a shadow root doesn't inherit document styles, so the sheet goes with it
+  const has = root.getElementById
+    ? root.getElementById("charro-pop-css")
+    : root.querySelector("#charro-pop-css");
+  if (has) return;
   const s = document.createElement("style");
   s.id = "charro-pop-css";
   s.textContent = POPUP_CSS;
-  document.head.appendChild(s);
+  root.appendChild(s);
 }
 
 class RoomPopup {
@@ -487,7 +574,8 @@ class RoomPopup {
   }
   async open() {
     if (this.el) return;
-    ensurePopupCss();
+    const host = popupHost();
+    ensurePopupCss(host);
     const helpers = await window.loadCardHelpers();
     if (this.el) return;                      // opened while we awaited
 
@@ -551,7 +639,7 @@ class RoomPopup {
 
     const panel = this.el, back = this.backdrop;
     panel.append(hd, body);
-    document.body.append(back, panel);
+    host.append(back, panel);
     requestAnimationFrame(() => {
       // close() may already have run and nulled these
       if (this.el !== panel) return;
@@ -1473,6 +1561,303 @@ customElements.define("charro-lights-card-editor", CharroLightsCardEditor);
  * config for the first route.
  */
 
+/* ------------------------------------------------- layout builder UI ---- */
+
+const LB_CSS = `
+.lbwrap{ display:flex; flex-direction:column; gap:6px; }
+.lbhint{ font-size:12px; color:var(--secondary-text-color); margin:-2px 0 4px; }
+.lb{ display:flex; flex-direction:column; gap:4px; min-height:24px; }
+.lb.over{ outline:2px dashed var(--primary-color); outline-offset:3px; border-radius:8px; }
+.it{
+  display:flex; align-items:center; gap:8px; padding:6px 8px;
+  border:1px solid var(--divider-color); border-radius:8px;
+  background:var(--card-background-color);
+}
+.it.drag{ opacity:.4; }
+.it.head{ background:rgba(127,127,127,.14); border-style:dashed; }
+.it.blk{ border-left:3px solid var(--primary-color); }
+.it.dropbefore{ box-shadow:0 -3px 0 -1px var(--primary-color); }
+.it.dropafter{ box-shadow:0 3px 0 -1px var(--primary-color); }
+.grip{ cursor:grab; color:var(--secondary-text-color); --mdc-icon-size:18px; flex:none; }
+.grip:active{ cursor:grabbing; }
+.it .lbl{ flex:1; min-width:0; font-size:13px; overflow-wrap:anywhere; }
+.it .sub{ font-family:ui-monospace,monospace; font-size:11px; color:var(--secondary-text-color); }
+.it input[type=text]{ padding:4px 6px; font-size:12.5px; }
+.it .nm{ width:110px; } .it .ic{ width:92px; }
+.it .btn{
+  border:none; background:none; cursor:pointer; padding:3px; border-radius:6px;
+  color:var(--secondary-text-color); --mdc-icon-size:17px; flex:none;
+}
+.it .btn:hover{ background:rgba(127,127,127,.18); color:var(--primary-text-color); }
+.lbbar{ display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 2px; }
+.lbbar button{ padding:6px 11px; font-size:12.5px; font-weight:500; }
+.hid{ opacity:.62; }
+.hidzone{
+  border:1px dashed var(--divider-color); border-radius:8px; padding:6px;
+  min-height:44px; display:flex; flex-direction:column; gap:4px;
+}
+.hidzone.over{ border-color:var(--primary-color); background:rgba(127,127,127,.08); }
+.hidempty{ font-size:12px; color:var(--secondary-text-color); padding:6px 2px; }
+`;
+
+const BLOCK_LABEL = {
+  climate: "Climate", media: "Media", cameras: "Cameras",
+  security: "Door / motion alert", lights: "All lights",
+};
+
+/* Mixed into CharroRoomsEditor. Kept apart because it is all one feature. */
+const LayoutUI = {
+  _lbEnsure() {
+    const r = this._room;
+    if (!Array.isArray(r.layout)) r.layout = [];
+    if (!Array.isArray(r.hidden)) r.hidden = [];
+  },
+
+  _lbLabel(it) {
+    if (it.heading !== undefined) return null;
+    if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.card) return { icon: "mdi:code-braces", text: it.card.type || "card" };
+    const st = this._hass.states[it.entity];
+    return { icon: it.icon || (st && st.attributes.icon) || "mdi:lightbulb",
+             text: (st && st.attributes.friendly_name) || it.entity, sub: it.entity };
+  },
+
+  _lbRow(it, list, i) {
+    const row = document.createElement("div");
+    row.className = "it" + (it.heading !== undefined ? " head" : "")
+                  + (it.block ? " blk" : "") + (list === "hidden" ? " hid" : "");
+    row.draggable = true;
+    row.dataset.list = list; row.dataset.i = String(i);
+
+    const grip = document.createElement("ha-icon");
+    grip.className = "grip"; grip.icon = "mdi:drag";
+    row.appendChild(grip);
+
+    if (it.heading !== undefined) {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.className = "lbl"; inp.value = it.heading;
+      inp.placeholder = "Heading";
+      inp.addEventListener("change", () => { it.heading = inp.value; this._lbChanged(); });
+      row.appendChild(inp);
+    } else {
+      const meta = this._lbLabel(it);
+      const ic = document.createElement("ha-icon");
+      ic.icon = meta.icon; ic.style.cssText = "--mdc-icon-size:18px;flex:none;color:var(--secondary-text-color)";
+      const lbl = document.createElement("div");
+      lbl.className = "lbl";
+      lbl.textContent = meta.text;
+      if (meta.sub) {
+        const s = document.createElement("div"); s.className = "sub"; s.textContent = meta.sub;
+        lbl.appendChild(s);
+      }
+      row.append(ic, lbl);
+
+      if (it.entity) {
+        const st = this._hass.states[it.entity];
+        const nm = document.createElement("input");
+        nm.type = "text"; nm.className = "nm"; nm.value = it.name || "";
+        nm.placeholder = (st && st.attributes.friendly_name) || "Name";
+        nm.addEventListener("change", () => {
+          if (nm.value.trim()) it.name = nm.value.trim(); else delete it.name;
+          this._lbChanged();
+        });
+        const icf = document.createElement("input");
+        icf.type = "text"; icf.className = "ic"; icf.value = it.icon || "";
+        icf.placeholder = "mdi:…";
+        icf.addEventListener("change", () => {
+          if (icf.value.trim()) it.icon = icf.value.trim(); else delete it.icon;
+          this._lbChanged();
+        });
+        const dim = document.createElement("button");
+        dim.className = "btn";
+        dim.title = it.dim === false ? "Doesn't dim — click to allow" : "Dims — click if it can't";
+        dim.innerHTML = `<ha-icon icon="${it.dim === false ? "mdi:lightbulb-on-outline" : "mdi:brightness-percent"}"></ha-icon>`;
+        dim.addEventListener("click", () => {
+          if (it.dim === false) delete it.dim; else it.dim = false;
+          this._lbRender(); this._lbChanged();
+        });
+        row.append(nm, icf, dim);
+      }
+    }
+
+    const move = document.createElement("button");
+    move.className = "btn";
+    move.title = list === "hidden" ? "Put back in the layout" : "Hide";
+    move.innerHTML = `<ha-icon icon="${list === "hidden" ? "mdi:eye-outline" : "mdi:eye-off-outline"}"></ha-icon>`;
+    move.addEventListener("click", () => {
+      const from = list === "hidden" ? this._room.hidden : this._room.layout;
+      const to   = list === "hidden" ? this._room.layout : this._room.hidden;
+      to.push(from.splice(i, 1)[0]);
+      this._lbRender(); this._lbChanged();
+    });
+    row.appendChild(move);
+
+    if (it.heading !== undefined || it.card) {
+      const del = document.createElement("button");
+      del.className = "btn"; del.title = "Remove";
+      del.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
+      del.addEventListener("click", () => {
+        (list === "hidden" ? this._room.hidden : this._room.layout).splice(i, 1);
+        this._lbRender(); this._lbChanged();
+      });
+      row.appendChild(del);
+    }
+
+    row.addEventListener("dragstart", (ev) => {
+      this._drag = { list, i };
+      row.classList.add("drag");
+      ev.dataTransfer.effectAllowed = "move";
+      try { ev.dataTransfer.setData("text/plain", `${list}:${i}`); } catch (e) {}
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("drag"); this._drag = null; this._lbClearMarks();
+    });
+    row.addEventListener("dragover", (ev) => {
+      if (!this._drag) return;
+      ev.preventDefault(); ev.dataTransfer.dropEffect = "move";
+      const r = row.getBoundingClientRect();
+      const after = ev.clientY > r.top + r.height / 2;
+      this._lbClearMarks();
+      row.classList.add(after ? "dropafter" : "dropbefore");
+      this._dropAt = { list, i: after ? i + 1 : i };
+    });
+    row.addEventListener("drop", (ev) => { ev.preventDefault(); this._lbDrop(); });
+
+    return row;
+  },
+
+  _lbClearMarks() {
+    for (const el of this.shadowRoot.querySelectorAll(".dropbefore,.dropafter"))
+      el.classList.remove("dropbefore", "dropafter");
+  },
+
+  _lbDrop() {
+    const d = this._drag, t = this._dropAt;
+    this._lbClearMarks();
+    if (!d || !t) return;
+    const from = d.list === "hidden" ? this._room.hidden : this._room.layout;
+    const to   = t.list === "hidden" ? this._room.hidden : this._room.layout;
+    const [item] = from.splice(d.i, 1);
+    let at = t.i;
+    if (from === to && d.i < at) at--;                 // the splice shifted it
+    to.splice(Math.max(0, Math.min(at, to.length)), 0, item);
+    this._drag = null; this._dropAt = null;
+    this._lbRender(); this._lbChanged();
+  },
+
+  _lbChanged() {
+    if (!this._room.layout.length) delete this._room.layout;
+    if (this._room.hidden && !this._room.hidden.length) delete this._room.hidden;
+    this._renderPreview();
+  },
+
+  _lbRender() {
+    if (!this._layoutBox) return;
+    const r = this._room;
+    this._layoutBox.innerHTML = "";
+    const custom = Array.isArray(r.layout) && r.layout.length;
+
+    const head = document.createElement("div");
+    head.className = "h4row";
+    const h = document.createElement("h4");
+    h.textContent = custom ? "Layout" : "Layout (automatic)";
+    const n = document.createElement("span");
+    n.className = "n";
+    n.textContent = custom ? `${r.layout.length} items` : "";
+    head.append(h, n);
+    this._layoutBox.appendChild(head);
+
+    if (!custom) {
+      const hint = document.createElement("div");
+      hint.className = "lbhint";
+      hint.textContent =
+        "This room arranges itself from its entity lists. Take it over to " +
+        "reorder things, group them under your own headings, or hide them.";
+      const go = document.createElement("button");
+      go.className = "primary";
+      go.textContent = "Customise layout";
+      go.addEventListener("click", () => {
+        this._room.layout = materializeLayout(this._room);
+        this._room.hidden = this._room.hidden || [];
+        this._lbRender(); this._lbChanged();
+      });
+      const bar = document.createElement("div"); bar.className = "lbbar"; bar.appendChild(go);
+      this._layoutBox.append(hint, bar);
+      return;
+    }
+
+    const wrap = document.createElement("div"); wrap.className = "lbwrap";
+    const list = document.createElement("div"); list.className = "lb";
+    r.layout.forEach((it, i) => list.appendChild(this._lbRow(it, "layout", i)));
+    if (!r.layout.length) {
+      const e = document.createElement("div");
+      e.className = "hidempty"; e.textContent = "Empty — drag something here.";
+      list.appendChild(e);
+    }
+    // dropping onto the gap at the end
+    list.addEventListener("dragover", (ev) => {
+      if (!this._drag || ev.target !== list) return;
+      ev.preventDefault(); this._lbClearMarks();
+      list.classList.add("over"); this._dropAt = { list: "layout", i: r.layout.length };
+    });
+    list.addEventListener("dragleave", () => list.classList.remove("over"));
+    list.addEventListener("drop", (ev) => {
+      ev.preventDefault(); list.classList.remove("over"); this._lbDrop();
+    });
+
+    const bar = document.createElement("div"); bar.className = "lbbar";
+    const addHead = document.createElement("button");
+    addHead.textContent = "+ Heading";
+    addHead.addEventListener("click", () => {
+      r.layout.push({ heading: "New heading" }); this._lbRender(); this._lbChanged();
+    });
+    const addBlock = document.createElement("button");
+    addBlock.textContent = "+ Block";
+    addBlock.addEventListener("click", () => {
+      const used = new Set(r.layout.concat(r.hidden || []).map(x => x.block).filter(Boolean));
+      const free = Object.keys(BLOCK_LABEL).filter(b => b !== "lights" && !used.has(b));
+      if (!free.length) { this._say("Every block is already placed.", "err"); return; }
+      r.layout.push({ block: free[0] }); this._lbRender(); this._lbChanged();
+    });
+    const reset = document.createElement("button");
+    reset.textContent = "Back to automatic";
+    reset.addEventListener("click", () => {
+      delete r.layout; delete r.hidden; this._lbRender(); this._lbChanged();
+    });
+    bar.append(addHead, addBlock, reset);
+
+    const hh = document.createElement("div");
+    hh.className = "h4row";
+    const hhh = document.createElement("h4"); hhh.textContent = "Hidden";
+    const hn = document.createElement("span"); hn.className = "n";
+    hn.textContent = `${(r.hidden || []).length}`;
+    hh.append(hhh, hn);
+
+    const hz = document.createElement("div"); hz.className = "hidzone";
+    (r.hidden || []).forEach((it, i) => hz.appendChild(this._lbRow(it, "hidden", i)));
+    if (!(r.hidden || []).length) {
+      const e = document.createElement("div");
+      e.className = "hidempty";
+      e.textContent = "Nothing hidden. Drag here, or use the eye, to park something.";
+      hz.appendChild(e);
+    }
+    hz.addEventListener("dragover", (ev) => {
+      if (!this._drag) return;
+      ev.preventDefault(); this._lbClearMarks();
+      hz.classList.add("over");
+      this._dropAt = { list: "hidden", i: (r.hidden || []).length };
+    });
+    hz.addEventListener("dragleave", () => hz.classList.remove("over"));
+    hz.addEventListener("drop", (ev) => {
+      ev.preventDefault(); hz.classList.remove("over"); this._lbDrop();
+    });
+
+    wrap.append(list, bar, hh, hz);
+    this._layoutBox.appendChild(wrap);
+  },
+};
+
+
 const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
                         "bath_fan_entities", "fountain_entities"];
 const SAVE_SERVICE = ["shell_command", "charro_write_room"];
@@ -1549,7 +1934,7 @@ td input[type=text]{ width:100%; padding:5px 7px; font-size:13px; }
 .status.ok{ color:var(--success-color, #2d6a4f); }
 .path{ font-family:ui-monospace,monospace; font-size:12px; }
 .preview{ position:sticky; top:8px; }
-`;
+` + LB_CSS;
 
 class CharroRoomsEditor extends HTMLElement {
   static getStubConfig() { return { type: "custom:charro-rooms-editor", rooms: [] }; }
@@ -1784,14 +2169,16 @@ class CharroRoomsEditor extends HTMLElement {
     this._form.addEventListener("value-changed", (ev) => {
       ev.stopPropagation();
       this._applyForm(ev.detail.value);
+      this._lbRender();
       this._renderLights();
       this._renderPreview();
     });
     this._left.appendChild(this._form);
 
     this._mid.innerHTML = "";
+    this._layoutBox = document.createElement("div");
     this._lightsBox = document.createElement("div");
-    this._mid.appendChild(this._lightsBox);
+    this._mid.append(this._layoutBox, this._lightsBox);
 
     const h2 = document.createElement("h4"); h2.textContent = "Sections";
     const secs = document.createElement("input");
@@ -1817,6 +2204,8 @@ class CharroRoomsEditor extends HTMLElement {
     });
 
     this._left.append(h2, secs, h3, ta);
+    this._lbEnsure();
+    this._lbRender();
     this._renderLights();
     this._renderPreview();
   }
@@ -1849,13 +2238,30 @@ class CharroRoomsEditor extends HTMLElement {
     for (const k of Object.keys(next))
       if (next[k] === "" || next[k] === undefined) delete next[k];
     this._room = next;
+    this._lbSync();
+  }
+
+  /* A light added or removed in the form has to show up in a custom layout,
+   * or the form and the layout quietly disagree about what the room holds. */
+  _lbSync() {
+    const r = this._room;
+    if (!Array.isArray(r.layout) || !r.layout.length) return;
+    r.hidden = r.hidden || [];
+    const placed = new Set(r.layout.concat(r.hidden).map(x => x.entity).filter(Boolean));
+    const all = [];
+    for (const [, key] of LIGHT_GROUPS) for (const l of r[key] || []) all.push(lightId(l));
+    for (const e of all) if (e && !placed.has(e)) r.layout.push({ entity: e });
+    const live = new Set(all);
+    r.layout = r.layout.filter(x => !x.entity || live.has(x.entity));
+    r.hidden = r.hidden.filter(x => !x.entity || live.has(x.entity));
   }
 
   _renderLights() {
+    this._lightsBox.innerHTML = "";
+    if (this._room && Array.isArray(this._room.layout) && this._room.layout.length) return;
     const rows = [];
     for (const k of RE_LIGHT_LISTS)
       for (const l of this._room[k] || []) rows.push([k, l]);
-    this._lightsBox.innerHTML = "";
     if (!rows.length) return;
 
     const row = document.createElement("div"); row.className = "h4row";
@@ -1996,6 +2402,7 @@ class CharroRoomsEditor extends HTMLElement {
     }
   }
 }
+Object.assign(CharroRoomsEditor.prototype, LayoutUI);
 customElements.define("charro-rooms-editor", CharroRoomsEditor);
 
 /* ------------------------------------------------------------ registry -- */

@@ -99,8 +99,8 @@ for those, which is wrong.
 
 ### What the pop-up and page contain
 
-`sections` picks the blocks and their order; each appears only if the room
-defines those entities, so no room needs a hand-built layout.
+By default `sections` picks the blocks and their order; each appears only if
+the room defines those entities, so no room needs a hand-built layout.
 
 | Block | Appears when the room has |
 |---|---|
@@ -111,6 +111,35 @@ defines those entities, so no room needs a hand-built layout.
 | `security` | `alert_sensors` |
 
 Default order is climate, media, lights, cameras, security.
+
+### Taking over the layout
+
+Set `layout` and the room stops arranging itself — you spell out the order
+instead, and `sections` is ignored. Items are headings, single lights, or
+whole blocks, in any order:
+
+```json
+"layout": [
+  { "heading": "Bedside" },
+  { "entity": "light.master_reading_left",  "name": "His" },
+  { "entity": "light.master_reading_right", "name": "Hers" },
+  { "heading": "Everything else" },
+  { "block": "climate" },
+  { "entity": "light.master_cans" },
+  { "card": { "type": "custom:universal-remote-card" } }
+],
+"hidden": [
+  { "entity": "light.outside_xmas_master_outlet" }
+]
+```
+
+Consecutive lights collapse into one two-column grid, so headings are what
+break them into groups. `hidden` is parked, not deleted — it keeps a light's
+name, icon and `dim` so putting it back costs nothing.
+
+The rooms editor does all of this by dragging, and **Customise layout** writes
+the room's current automatic arrangement out as a `layout` to start from.
+**Back to automatic** drops it again.
 
 For the one-offs — a scene picker, an air-purifier card — `cards` drops raw
 Lovelace into a slot: `start` renders before everything, any block name
@@ -373,10 +402,14 @@ starts a blank room — so it can't overwrite one by accident. **Expand all**
 opens every settings section at once; they start collapsed to keep that column
 narrow.
 
-The per-light table is the part worth having a UI for: name, icon and a dims
-toggle for every light in the room, with the entity's own name as the
-placeholder so you only type the ones you're overriding. It shows the total and
-has a **Hide** toggle for when you're working on something else.
+The middle column is the layout builder. While a room is automatic it shows
+what that means and offers to take it over; once it has a `layout` every item
+becomes a draggable row — reorder them, drag one under a different heading,
+drag into **Hidden** to park it. Entity rows carry their name, icon and dims
+toggle inline, so the old flat table is only there for automatic rooms.
+
+Adding or removing a light in the form keeps a custom layout in step: new
+lights land at the end, removed ones disappear from both lists.
 
 The preview switches between **Tile** — the chip card as it appears on the
 rooms view — and **Pop-up**, which renders the full body the room would show
