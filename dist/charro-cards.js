@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.14.2";
+const VERSION = "4.15.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -440,6 +440,16 @@ function autoBody(r, hass) {
 /* A room can instead spell out its own order: headings, individual lights and
  * whole blocks, arranged however you like. Anything parked in `hidden` simply
  * isn't rendered. Consecutive lights collapse into one two-column grid. */
+/* A group is a column. Consecutive groups sit side by side on a wide panel
+ * and stack once there isn't room, so a remote, a light grid and a player can
+ * share a row instead of running down the page. */
+function groupNode(g, r, hass) {
+  const title = g.title !== undefined ? g.title
+              : (typeof g.group === "string" ? g.group : "");
+  return { _group: true, span: Number(g.span) || 1, title,
+           cards: layoutBody({ ...r, layout: g.items || [] }, hass) };
+}
+
 function layoutBody(r, hass) {
   const out = [];
   let run = [];
@@ -450,7 +460,10 @@ function layoutBody(r, hass) {
   };
   for (const it of r.layout || []) {
     if (!it || it.hidden) continue;
-    if (it.heading !== undefined) {
+    if (it.group !== undefined) {
+      flush();
+      out.push(groupNode(it, r, hass));
+    } else if (it.heading !== undefined) {
       flush();
       out.push({ type: "heading", heading: it.heading, heading_style: "subtitle" });
     } else if (it.entity) {
@@ -470,6 +483,60 @@ function layoutBody(r, hass) {
   }
   flush();
   return out;
+}
+
+/* Turns what roomBody returns into elements. Card configs go through the
+ * Lovelace helpers; a group becomes a column, and neighbouring columns get
+ * wrapped in a flex row. Styles are inline so this works the same in the
+ * pop-up's shadow root and in the page's light DOM. */
+async function renderBody(nodes, hass, target) {
+  const helpers = await window.loadCardHelpers();
+  const made = [];
+  const card = (cfg, into) => {
+    try {
+      const el = helpers.createCardElement(cfg);
+      el.hass = hass;
+      el.style.display = "block";
+      into.appendChild(el);
+      made.push(el);
+    } catch (err) { console.error("charro-room-card:", cfg && cfg.type, err); }
+  };
+
+  let i = 0;
+  while (i < nodes.length) {
+    const n = nodes[i];
+    if (!n || !n._group) {
+      const holder = document.createElement("div");
+      holder.style.cssText = "display:block;margin-bottom:8px";
+      card(n, holder);
+      target.appendChild(holder);
+      i++;
+      continue;
+    }
+    // a run of groups shares one row
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;margin-bottom:8px";
+    while (i < nodes.length && nodes[i] && nodes[i]._group) {
+      const g = nodes[i];
+      const col = document.createElement("div");
+      col.style.cssText =
+        `flex:${g.span} 1 260px;min-width:0;display:flex;flex-direction:column;gap:8px`;
+      if (g.title) {
+        const h = document.createElement("div");
+        h.style.cssText =
+          "font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;" +
+          "color:var(--secondary-text-color);padding:2px 2px 0";
+        h.textContent = g.title;
+        col.appendChild(h);
+      }
+      for (const c of g.cards) card(c, col);
+      row.appendChild(col);
+      i++;
+    }
+    target.appendChild(row);
+  }
+  return made;
 }
 
 function roomBody(r, hass) {
@@ -656,18 +723,9 @@ class RoomPopup {
 
     const body = document.createElement("div");
     body.className = "charro-pop-body";
-    this._cards = [];
-    for (const cfg of (this.bodyFn ? this.bodyFn(this.room, this._hass)
-                                   : roomBody(this.room, this._hass))) {
-      try {
-        const el = helpers.createCardElement(cfg);
-        el.hass = this._hass;
-        body.appendChild(el);
-        this._cards.push(el);
-      } catch (err) {
-        console.error("charro-room-card pop-up:", cfg && cfg.type, err);
-      }
-    }
+    this._cards = await renderBody(
+      this.bodyFn ? this.bodyFn(this.room, this._hass) : roomBody(this.room, this._hass),
+      this._hass, body);
 
     const panel = this.el, back = this.backdrop;
     panel.append(hd, body);
@@ -852,21 +910,8 @@ class CharroRoomCard extends CharroBase {
     if (this._building) return;
     this._building = true;
     try {
-      const helpers = await window.loadCardHelpers();
       const frag = document.createDocumentFragment();
-      this._pageCards = [];
-      for (const cfg of roomBody(m, this._hass)) {
-        try {
-          const el = helpers.createCardElement(cfg);
-          el.hass = this._hass;
-          el.style.display = "block";
-          el.style.marginBottom = "8px";
-          frag.appendChild(el);
-          this._pageCards.push(el);
-        } catch (err) {
-          console.error("charro-room-card page:", cfg && cfg.type, err);
-        }
-      }
+      this._pageCards = await renderBody(roomBody(m, this._hass), this._hass, frag);
       this.innerHTML = "";
       this.appendChild(frag);
     } catch (err) {
@@ -2408,28 +2453,19 @@ class CharroRoomsEditor extends HTMLElement {
         const box = document.createElement("div");
         box.className = "popbox";
         const hd = document.createElement("div");
-        hd.className = "charro-pop-hd";
         hd.style.cssText = "display:flex;align-items:center;gap:10px;margin:2px 4px 12px";
         if (this._room.room_icon) {
-          const i = document.createElement("ha-icon");
-          i.icon = this._room.room_icon;
-          i.style.color = "var(--secondary-text-color)";
-          hd.appendChild(i);
+          const ic = document.createElement("ha-icon");
+          ic.icon = this._room.room_icon;
+          ic.style.color = "var(--secondary-text-color)";
+          hd.appendChild(ic);
         }
         const t = document.createElement("div");
         t.style.cssText = "font-size:19px;font-weight:600;letter-spacing:-.01em";
         t.textContent = this._room.room_name || "";
         hd.appendChild(t);
         box.appendChild(hd);
-        this._prev = [];
-        for (const cfg of roomBody(this._room, this._hass)) {
-          try {
-            const el = helpers.createCardElement(cfg);
-            el.hass = this._hass;
-            box.appendChild(el);
-            this._prev.push(el);
-          } catch (err) { /* skip a card the preview can't build */ }
-        }
+        this._prev = await renderBody(roomBody(this._room, this._hass), this._hass, box);
         this._prevWrap.appendChild(box);
         return;
       }

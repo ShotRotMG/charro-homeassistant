@@ -153,7 +153,34 @@ whole blocks, in any order:
 
 Consecutive lights collapse into one two-column grid, so headings are what
 break them into groups — and `"width": "full"` on an item gives it the whole
-row instead, breaking the run around it. `hidden` is parked, not deleted — it keeps a light's
+row instead, breaking the run around it.
+
+### Columns
+
+A `group` is a column. Neighbouring groups share a row on a wide panel and
+stack once there isn't room, which is what a wide pop-up wants — a remote
+beside the lights beside the player, rather than all three down the page.
+
+```json
+"layout": [
+  { "group": "Remote", "span": 4,
+    "items": [ { "card": { "type": "custom:universal-remote-card" } } ] },
+  { "group": "Lights", "span": 5,
+    "items": [ { "entity": "light.javon_cans" }, { "entity": "light.javon_lamp_left" } ] },
+  { "group": "Playing", "span": 3,
+    "items": [ { "block": "media" } ] },
+  { "heading": "Everything else" },
+  { "entity": "light.javon_br_shower" }
+]
+```
+
+`span` weights the widths against each other — 4/5/3 above. Each column has a
+260px floor, so on a phone they wrap into a single stack. `group` doubles as
+the column's label; use `"group": ""` for an unlabelled one, and `items` holds
+anything a layout holds, groups aside.
+
+Editing groups is YAML for now — the drag builder handles flat layouts, and
+nesting is the next piece. `hidden` is parked, not deleted — it keeps a light's
 name, icon and `dim` so putting it back costs nothing.
 
 The rooms editor does all of this by dragging, and **Customise layout** writes
