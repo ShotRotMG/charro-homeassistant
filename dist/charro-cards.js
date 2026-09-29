@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.21.0";
+const VERSION = "4.21.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1787,6 +1787,9 @@ const LB_CSS = `
   display:flex; align-items:center; gap:8px; padding:6px 8px;
   border:1px solid var(--divider-color); border-radius:8px;
   background:var(--card-background-color);
+  /* a narrow panel wraps the controls onto a second line rather than
+     squeezing the name to one character per row and pushing the rest off */
+  flex-wrap:wrap; row-gap:6px;
 }
 .it.drag{ opacity:.4; }
 .it.head{ background:rgba(127,127,127,.14); border-style:dashed; }
@@ -1795,10 +1798,13 @@ const LB_CSS = `
 .it.dropafter{ box-shadow:0 3px 0 -1px var(--primary-color); }
 .grip{ cursor:grab; color:var(--secondary-text-color); --mdc-icon-size:18px; flex:none; }
 .grip:active{ cursor:grabbing; }
-.it .lbl{ flex:1; min-width:0; font-size:13px; overflow-wrap:anywhere; }
+.it .lbl{ flex:1 1 130px; min-width:110px; font-size:13px; overflow:hidden; }
+.it .lbl, .it .sub{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .it .sub{ font-family:ui-monospace,monospace; font-size:11px; color:var(--secondary-text-color); }
-.it input[type=text]{ padding:4px 6px; font-size:12.5px; }
-.it .nm{ width:110px; } .it .ic{ width:92px; }
+.it input[type=text]{ padding:4px 6px; font-size:12.5px; min-width:0; }
+.it .nm{ flex:1 1 110px; width:auto; min-width:84px; }
+.it .ic{ flex:0 1 92px; width:auto; min-width:66px; }
+.it select{ flex:0 1 auto; min-width:0; }
 .it .btn{
   border:none; background:none; cursor:pointer; padding:3px; border-radius:6px;
   color:var(--secondary-text-color); --mdc-icon-size:17px; flex:none;
@@ -1944,6 +1950,8 @@ const LayoutUI = {
       const lbl = document.createElement("div");
       lbl.className = "lbl";
       lbl.textContent = meta.text;
+      // the row clips rather than wraps now, so keep the full text on hover
+      lbl.title = meta.sub ? `${meta.text}\n${meta.sub}` : meta.text;
       if (meta.sub) {
         const s = document.createElement("div"); s.className = "sub"; s.textContent = meta.sub;
         lbl.appendChild(s);
