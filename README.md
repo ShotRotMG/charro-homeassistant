@@ -303,6 +303,17 @@ keys still draw their own tile in rooms with no remote configured, and
 Name a template that doesn't exist and you get a card saying so, rather than
 silence.
 
+### Gaps
+
+Tiles fill a two-column grid in order, so a room with an odd number of them
+leaves whichever tile happens to land last sitting alone. **+ Gap** drops an
+empty cell into the run: the tile after it moves to the other column, or down
+to the next row, and nothing is drawn where the gap is.
+
+A gap is `{ "gap": true }` in the layout, and behaves like any other row — drag
+it where you want the space, hide it, delete it. It's half-width by definition;
+two in a row skip a whole line.
+
 ### Adding a card
 
 **+ Card** in the layout builder opens a panel with two ways in: a dropdown of

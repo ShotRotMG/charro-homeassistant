@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.26.1";
+const VERSION = "4.27.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -611,6 +611,10 @@ function layoutBody(r, hass) {
       } else {
         run.push(lightCard(it, r.no_dim));
       }
+    } else if (it.gap) {
+      // an empty cell: the next tile lands in the other column, or on the
+      // next row, without anything being drawn here
+      run.push({ type: "custom:charro-gap-card" });
     } else if (it.card) {
       flush(); out.push(it.card);
     } else if (it.block) {
@@ -1432,6 +1436,17 @@ class CharroAllOffCard extends CharroBase {
 }
 customElements.define("charro-all-off-card", CharroAllOffCard);
 
+/* Nothing, drawn deliberately. A grid cell has to be filled by something for
+ * the next tile to land in the other column, so a gap is a card that renders
+ * no card — no background, no border, no height of its own. */
+class CharroGapCard extends HTMLElement {
+  setConfig() {}
+  set hass(_h) {}
+  getCardSize() { return 0; }
+  getGridOptions() { return { columns: 6, rows: "auto", min_columns: 3 }; }
+}
+customElements.define("charro-gap-card", CharroGapCard);
+
 makeEditor("charro-all-off-card-editor", [
   { name: "label", selector: { text: {} } },
   { name: "entities", required: true, selector: ent(["switch"], true) },
@@ -2185,6 +2200,7 @@ const LayoutUI = {
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.gap) return { icon: "mdi:crop-free", text: "Gap" };
     if (it.card) return { icon: "mdi:code-braces", text: it.card.type || "card" };
     const st = this._hass.states[it.entity];
     return { icon: it.icon || (st && st.attributes.icon) || "mdi:lightbulb",
@@ -2330,7 +2346,7 @@ const LayoutUI = {
     });
     row.appendChild(move);
 
-    if (it.heading !== undefined || it.card || it.block) {
+    if (it.heading !== undefined || it.card || it.block || it.gap) {
       const del = document.createElement("button");
       del.className = "btn";
       del.title = it.block
@@ -2555,6 +2571,13 @@ const LayoutUI = {
       this._lbList("layout").push({ block: free[0] });
       this._lbRender(); this._lbChanged();
     });
+    const addGap = document.createElement("button");
+    addGap.textContent = "+ Gap";
+    addGap.title = "An empty half-width cell, to push the next tile across or down";
+    addGap.addEventListener("click", () => {
+      this._lbList("layout").push({ gap: true });
+      this._lbRender(); this._lbChanged();
+    });
     const addCard = document.createElement("button");
     addCard.textContent = "+ Card";
     addCard.title = "Paste or build any Lovelace card";
@@ -2571,7 +2594,7 @@ const LayoutUI = {
     reset.addEventListener("click", () => {
       delete r.layout; delete r.hidden; this._lbRender(); this._lbChanged();
     });
-    bar.append(addHead, addBlock, addCard, addGroup, reset);
+    bar.append(addHead, addBlock, addCard, addGap, addGroup, reset);
 
     // ---- Available: owned but not placed ----
     const cats = this._lbAvail();
