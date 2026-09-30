@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.31.0";
+const VERSION = "4.31.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2531,6 +2531,9 @@ const LB_CSS = `
 }
 button.vdel{ background:rgba(244,67,54,.16); color:#ef5350; align-self:flex-start;
   padding:5px 10px; font-size:12px; }
+ha-expansion-panel{ display:block; margin:14px 0 4px; --expansion-panel-content-padding:0 10px 10px; }
+.vfield ha-entity-picker, .vfield ha-icon-picker{ display:block; width:100%; }
+
 
 .traycat .cap{ display:block; margin:2px 2px 4px; }
 `;
@@ -3599,10 +3602,28 @@ class CharroRoomsEditor extends HTMLElement {
       catch (err) { this._say(`Extra cards: ${err.message}`, "err"); }
     });
 
-    const h4v = document.createElement("h4"); h4v.textContent = "Video / remotes";
+    // an expansion panel, to sit with the ha-form groups above it rather
+    // than sprawl open under them
     this._videoBox = document.createElement("div");
+    let videoHost = this._videoBox;
+    if (customElements.get("ha-expansion-panel")) {
+      const p = document.createElement("ha-expansion-panel");
+      p.header = "Video / remotes";
+      p.outlined = true;
+      p.leftChevron = false;
+      p.expanded = !!this._videoOpen;
+      p.addEventListener("expanded-changed", (ev) => {
+        this._videoOpen = ev.detail ? ev.detail.expanded : !this._videoOpen;
+      });
+      const ic = document.createElement("ha-icon");
+      ic.icon = "mdi:remote-tv";
+      ic.slot = "leading-icon";
+      ic.style.cssText = "--mdc-icon-size:22px;color:var(--secondary-text-color)";
+      p.append(ic, this._videoBox);
+      videoHost = p;
+    }
 
-    this._left.append(h2, secs, h4v, this._videoBox, h3, ta);
+    this._left.append(h2, secs, videoHost, h3, ta);
     this._renderVideo();
     this._lbEnsure();
     this._lbRender();
@@ -3642,11 +3663,48 @@ class CharroRoomsEditor extends HTMLElement {
       wrap.append(t, i);
       return wrap;
     };
+    /* An entity id is a thing to pick, not a string to remember — HA's own
+     * picker searches and validates, and it's registered on a plain dashboard
+     * load. Falls back to the text box if a future frontend drops it. */
+    const ent = (label, value, domains, onChange, hint) => {
+      if (!customElements.get("ha-entity-picker")) return field(label, value, onChange, hint);
+      const wrap = document.createElement("div");
+      wrap.className = "vfield";
+      const t = document.createElement("span"); t.textContent = label;
+      const p = document.createElement("ha-entity-picker");
+      p.hass = this._hass;
+      p.value = value || "";
+      p.allowCustomEntity = true;
+      if (domains && domains.length) p.includeDomains = domains;
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        onChange((ev.detail && ev.detail.value) || "");
+        changed();
+      });
+      wrap.append(t, p);
+      return wrap;
+    };
+    const iconField = (label, value, onChange) => {
+      if (!customElements.get("ha-icon-picker")) return field(label, value, onChange, "mdi:television");
+      const wrap = document.createElement("div");
+      wrap.className = "vfield";
+      const t = document.createElement("span"); t.textContent = label;
+      const p = document.createElement("ha-icon-picker");
+      p.hass = this._hass;
+      p.value = value || "";
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        onChange(((ev.detail && ev.detail.value) || "").trim());
+        changed();
+      });
+      wrap.append(t, p);
+      return wrap;
+    };
 
     // one screen needs no picker; more than one does
     const many = (v.displays || []).length > 1;
     if (many || v.focus) {
-      box.appendChild(field("Screen picker (input_select)", v.focus,
+      box.appendChild(ent("Screen picker", v.focus, ["input_select", "select"],
         (s) => { if (s) v.focus = s; else delete v.focus; },
         "input_select.saloon_device_select"));
       box.appendChild(field("Its “all off” option", v.off_option,
@@ -3663,12 +3721,13 @@ class CharroRoomsEditor extends HTMLElement {
       row.className = "vrowbox";
       row.appendChild(field("Name", d.name, (s) => { d.name = s; },
         many ? "must match a picker option" : "TV"));
-      row.appendChild(field("Icon", d.icon, (s) => { if (s) d.icon = s; else delete d.icon; },
-        "mdi:television"));
-      row.appendChild(field("Source select", d.source,
+      row.appendChild(iconField("Icon", d.icon,
+        (s) => { if (s) d.icon = s; else delete d.icon; }));
+      row.appendChild(ent("Source select", d.source, ["input_select", "select"],
         (s) => { if (s) d.source = s; else delete d.source; },
         "input_select.kitchen_media_select"));
-      row.appendChild(field("The screen itself", d.power,
+      row.appendChild(ent("The screen itself", d.power,
+        ["media_player", "switch", "remote"],
         (s) => { if (s) d.power = s; else delete d.power; },
         "media_player.kitchen_samsung_55_2"));
       const x = document.createElement("button");
@@ -3720,12 +3779,12 @@ class CharroRoomsEditor extends HTMLElement {
 
       row.appendChild(field("Title", spec.title, (s) => {
         if (s) spec.title = s; else delete spec.title; }, key));
-      row.appendChild(field("Remote entity", spec.remote, (s) => {
+      row.appendChild(ent("Remote entity", spec.remote, ["remote"], (s) => {
         if (s) spec.remote = s; else delete spec.remote; }, "remote.charro_superbox"));
-      row.appendChild(field("Media player", spec.media_player, (s) => {
+      row.appendChild(ent("Media player", spec.media_player, ["media_player"], (s) => {
         if (s) spec.media_player = s; else delete spec.media_player; },
         "media_player.charro_superbox"));
-      row.appendChild(field("Volume goes to", spec.volume, (s) => {
+      row.appendChild(ent("Volume goes to", spec.volume, ["media_player"], (s) => {
         if (s) spec.volume = s; else delete spec.volume; },
         "the screen's own media_player"));
 
