@@ -76,11 +76,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # revision: the manifest version plus the file's mtime. A reinstall or a
     # hand-edit of the file changes the URL, and the browser refetches.
     def _rev() -> str:
-        try:
-            mtime = int(os.path.getmtime(os.path.join(web, BUNDLE)))
-        except OSError:
-            mtime = 0
-        return f"{integration.version}.{mtime}"
+        # Newest mtime anywhere under frontend/, not just the bundle's: the
+        # cards stamp the template URLs with this same revision, so editing a
+        # template alone still has to move it or the old one stays cached.
+        newest = 0
+        for root_dir, _dirs, files in os.walk(web):
+            for name in files:
+                try:
+                    newest = max(newest, int(os.path.getmtime(os.path.join(root_dir, name))))
+                except OSError:
+                    continue
+        return f"{integration.version}.{newest}"
 
     url = f"{STATIC_URL}/{BUNDLE}?v={await hass.async_add_executor_job(_rev)}"
 

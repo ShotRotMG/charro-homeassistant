@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.48.0";
+const VERSION = "4.49.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -29,6 +29,21 @@ console.info(
 /* ------------------------------------------------------------- helpers -- */
 
 const TEMPLATE_BASE = new URL("templates/", import.meta.url).href;
+
+/* Whatever revision this bundle was loaded with — `?v=<version>.<mtime>` from
+ * the integration, `?hacstag=…` from a Lovelace resource. The templates ship
+ * next to the bundle and change only when it does, so reusing its revision
+ * makes them cacheable: Home Assistant serves both with a 31-day max-age, and
+ * a new release changes the URL. Before this they were fetched `no-store` on
+ * every page load, which for room-card.json is ~54 KB on the critical path of
+ * every card. With no revision to borrow there is nothing safe to cache
+ * against, so those fall back to always-fresh. */
+const ASSET_REV = (() => {
+  try {
+    const q = new URL(import.meta.url).search;
+    return q ? q.slice(1) : "";
+  } catch (err) { return ""; }
+})();
 
 const clone = (o) =>
   typeof structuredClone === "function" ? structuredClone(o) : JSON.parse(JSON.stringify(o));
@@ -48,11 +63,13 @@ function fireEvent(node, type, detail) {
 const _templates = new Map();
 
 function loadTemplate(name, override) {
-  const url = override || TEMPLATE_BASE + name;
+  const base = override || TEMPLATE_BASE + name;
+  const sep = base.includes("?") ? "&" : "?";
+  const url = ASSET_REV ? `${base}${sep}${ASSET_REV}` : `${base}${sep}t=${Date.now()}`;
   if (!_templates.has(url)) {
-    const p = fetch(`${url}?t=${Date.now()}`, { cache: "no-store" })
+    const p = fetch(url, ASSET_REV ? {} : { cache: "no-store" })
       .then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${base}`);
         return r.json();
       })
       .catch((err) => {
@@ -76,6 +93,7 @@ class CharroBase extends HTMLElement {
     this._config = config;
     this._card = null;
     this._building = false;
+    this._tplP = this._loadTpl(config);
     this.innerHTML = "";
     if (this._hass) this._build();
   }
@@ -84,6 +102,15 @@ class CharroBase extends HTMLElement {
     this._hass = hass;
     if (this._card) this._card.hass = hass;
     else this._build();
+  }
+
+  /* The template is wanted the moment the view builds the card, not when
+   * `hass` first arrives — starting it here overlaps the fetch with the rest
+   * of the dashboard coming up instead of queueing behind it. */
+  _loadTpl(config) {
+    const name = this.templateName();
+    if (!name && !(config && config.template_url)) return null;
+    return loadTemplate(name, config && config.template_url).catch(() => null);
   }
 
   // subclasses override
@@ -97,10 +124,16 @@ class CharroBase extends HTMLElement {
     this._building = true;
     try {
       const [tpl, helpers] = await Promise.all([
-        loadTemplate(this.templateName(), this._config.template_url),
+        // _loadTpl swallows the error so an early rejection can't go unhandled;
+        // a null means refetch here and let this one surface properly.
+        (this._tplP || Promise.resolve(null)).then(
+          (t) => t || loadTemplate(this.templateName(), this._config.template_url)),
         window.loadCardHelpers(),
       ]);
-      const cfg = clone(tpl);
+      /* Shallow, not a deep clone: only top-level keys are touched below, and
+       * button-card copies the config it is handed. Deep-cloning the room
+       * template once per tile was ~54 KB of structured clone per card. */
+      const cfg = { ...tpl };
       cfg.type = "custom:button-card";
       cfg.variables = { ...(tpl.variables || {}), ...this.variables() };
       const trg = this.triggers();
@@ -1658,6 +1691,7 @@ class CharroRoomCard extends CharroBase {
     this._card = null;
     this._building = false;
     this._merged = null;
+    this._tplP = this._loadTpl(config);
     this._roomP = config.room
       ? loadRoom(config.room, config).then((r) => {
           if (!r || typeof r !== "object")
