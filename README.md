@@ -521,6 +521,34 @@ so renaming one in `water_actions` means renaming it in the layout too.
 Fountains stay where they are — `fountain_entities` is a light group, so they
 render with the lights and keep their own chip.
 
+### Gates
+
+A gate is a button, not a door — pressing it pulses a relay and there's nothing
+to read back, so the tile's state line is the last time it was opened.
+
+```json
+"gates": [
+  { "name": "East Gate", "icon": "mdi:gate-arrow-left",
+    "press": "button.doorstation_1ccae3723d19_relay_1",
+    "hold":  "script.open_gate_east" }
+]
+```
+
+| key | what it does |
+| --- | --- |
+| `press` | what a tap runs. The service follows the domain — `button.press`, `script.turn_on`, `cover.open_cover` |
+| `hold` | something else for a long press, when a script does more than pulse the relay |
+| `state` | an open/closed sensor, if one exists — it becomes the tile's entity instead of the button |
+| `confirm` | `true` asks "Open East Gate?" first; a string asks that instead |
+| `name`, `icon` | as on any tile |
+
+`confirm` is worth setting on anything facing the street — a gate has no undo,
+and the tile is a tap away on a phone in a pocket.
+
+Each gate is a layout row too, sharing the two-up run so a pair sits side by
+side; `"width": "full"` takes the row. The rows appear in the tray under
+**Gates**, and the **Gates** panel in the editor covers all of it.
+
 ### Alert sensors
 
 An `alert_sensors` entry is an id, or an object carrying what the door needs:

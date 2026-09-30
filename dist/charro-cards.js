@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.42.1";
+const VERSION = "4.43.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -318,7 +318,7 @@ function lightCard(l, noDim) {
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
 const ROOM_SECTIONS = ["climate", "video", "media", "music", "lights", "water",
-                       "cameras", "security"];
+                       "gates", "cameras", "security"];
 
 /* `music` was carved out of `media` in 4.20, so a room that spelled out its
  * sections before then names only `media`. Rather than silently dropping its
@@ -580,6 +580,52 @@ function asConditional(card) {
   return { type: "conditional", conditions, card: inner };
 }
 
+/* A gate is a button, not a door: pressing it pulses a relay and there's
+ * nothing to read back, so the tile's state is the last time it was opened.
+ * `press` is whatever actually opens it — the relay button, or a script that
+ * does more than pulse — and `confirm` guards the ones you don't want opened
+ * by a mis-tap, which outdoors is most of them. */
+function gateCard(g, r) {
+  const o = typeof g === "object" && g ? g : {};
+  const id = o.entity || (typeof g === "string" ? g : "");
+  const run = o.press || o.script || o.button || id;
+  if (!run) return null;
+
+  const domain = String(run).split(".")[0];
+  const service = domain === "script" ? "script.turn_on"
+                : domain === "scene" ? "scene.turn_on"
+                : domain === "button" ? "button.press"
+                : domain === "cover" ? "cover.open_cover"
+                : "homeassistant.turn_on";
+  const act = { action: "perform-action", perform_action: service,
+                target: { entity_id: run } };
+  if (o.confirm) {
+    act.confirmation = { text: o.confirm === true
+      ? `Open ${o.name || "the gate"}?` : String(o.confirm) };
+  }
+
+  const card = {
+    type: "tile",
+    entity: o.state || id || run,
+    name: o.name || "Gate",
+    icon: o.icon || "mdi:gate",
+    vertical: false,
+    features_position: "bottom",
+    tap_action: act,
+    icon_tap_action: act,
+  };
+  if (o.hold) {
+    card.hold_action = { action: "perform-action",
+                         perform_action: String(o.hold).split(".")[0] === "script"
+                           ? "script.turn_on" : "button.press",
+                         target: { entity_id: o.hold } };
+  }
+  return card;
+}
+
+const gateAt = (r, name) => (r.gates || []).find(
+  (g) => (typeof g === "object" ? g.name : g) === name);
+
 /* A door is more than an entity id: a garage needs the button that operates
  * it and the sensor that says the opener isn't lying. An alert_sensors entry
  * can carry those, the same way a light can carry its name and icon. */
@@ -647,6 +693,13 @@ function blockCards(name, r, hass) {
 
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
+  if (name === "gates" && (r.gates || []).length) {
+    const cards = r.gates.map((g) => gateCard(g, r)).filter(Boolean);
+    if (cards.length) {
+      push({ type: "grid", columns: cards.length > 1 ? 2 : 1, square: false, cards });
+    }
+  }
+
   if (name === "water") for (const c of waterCards(r)) push(c);
 
   if (name === "player") push(mediaCard(r, hass));
@@ -775,6 +828,12 @@ function layoutBody(r, hass) {
         out.push({ type: "grid", columns: 1, square: false, cards: [lightCard(it, r.no_dim)] });
       } else {
         run.push(lightCard(it, r.no_dim));
+      }
+    } else if (it.gate) {
+      const c = gateCard(gateAt(r, it.gate), r);
+      if (c) {
+        if (it.width === "full") { flush(); out.push({ type: "grid", columns: 1, square: false, cards: [c] }); }
+        else run.push(c);
       }
     } else if (it.pump) {
       const c = pumpCard(r, it.pump);
@@ -938,6 +997,9 @@ function materializeLayout(r) {
         for (const l of list)
           out.push(typeof l === "string" ? { entity: l } : { ...l });
       }
+    } else if (name === "gates") {
+      for (const g of r.gates || [])
+        out.push({ gate: typeof g === "object" ? g.name : g });
     } else if (name === "water") {
       for (const k of ["pool", "spa"]) if (pumpCard(r, k)) out.push({ pump: k });
       for (const k of ["pool", "spa"]) if (heaterCard(r, k)) out.push({ heater: k });
@@ -2717,7 +2779,7 @@ const o_render = (it) => it.render || "mushroom";
 const BLOCK_LABEL = {
   climate: "Climate", video: "Video / remotes", media: "Media",
   music: "Music (every zone)", player: "Media player",
-  water: "Pool & spa", cameras: "Cameras",
+  water: "Pool & spa", gates: "Gates", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
 };
 
@@ -2959,6 +3021,15 @@ const LayoutUI = {
       if (zones.length) cats.push({ label: "Music zones", items: zones });
     }
 
+    if (!usedBlocks.has("gates")) {
+      const seenG = new Set(all.map((x) => x && x.gate).filter(Boolean));
+      const items = (r.gates || [])
+        .map((g) => (typeof g === "object" ? g.name : g))
+        .filter((n) => n && !seenG.has(n))
+        .map((n) => ({ gate: n }));
+      if (items.length) cats.push({ label: "Gates", items });
+    }
+
     if (!usedBlocks.has("water")) {
       const seenW = new Set(all.flatMap((x) => x ? [x.pump && "p:" + x.pump,
         x.heater && "h:" + x.heater, x.water_action && "a:" + x.water_action] : [])
@@ -2985,6 +3056,7 @@ const LayoutUI = {
       video: () => !!r.video,
       player: () => !!(r.media_player || r.media_card),
       water: () => !!(r.pool_switch || r.spa_switch || (r.water_actions || []).length),
+      gates: () => (r.gates || []).length,
       lights: () => LIGHT_GROUPS.some(([, k]) => (r[k] || []).length),
     };
     const blocks = Object.keys(BLOCK_LABEL)
@@ -3012,6 +3084,11 @@ const LayoutUI = {
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.gate) {
+      const g = gateAt(this._room, it.gate) || {};
+      return { icon: g.icon || "mdi:gate", text: it.gate,
+               sub: g.press || g.button || g.script || g.entity || "" };
+    }
     if (it.pump) {
       const p = waterPart(this._room, it.pump);
       return { icon: p.icon, text: p.name, sub: p.sw };
@@ -3275,7 +3352,7 @@ const LayoutUI = {
     row.appendChild(move);
 
     if (it.heading !== undefined || it.card || it.block || it.gap || it.zone
-        || it.sensor || it.pump || it.heater || it.water_action) {
+        || it.sensor || it.pump || it.heater || it.water_action || it.gate) {
       const del = document.createElement("button");
       del.className = "btn";
       del.title = it.block
@@ -3478,8 +3555,13 @@ const LayoutUI = {
 
     const wrap = document.createElement("div"); wrap.className = "lbwrap";
     const list = document.createElement("div"); list.className = "lb";
-    r.layout.forEach((it, i) => list.appendChild(
-      it && it.group !== undefined ? this._lbGroup(it, i) : this._lbRow(it, "layout", i)));
+    const rowEls = [];
+    r.layout.forEach((it, i) => {
+      const el = it && it.group !== undefined ? this._lbGroup(it, i)
+                                             : this._lbRow(it, "layout", i);
+      rowEls[i] = el;
+      list.appendChild(el);
+    });
     if (!r.layout.length) {
       const e = document.createElement("div");
       e.className = "hidempty"; e.textContent = "Empty — drag something here.";
@@ -3595,9 +3677,23 @@ const LayoutUI = {
     });
 
     wrap.append(list, bar);
-    if (this._cardCtx) wrap.appendChild(this._cardPanel());
+    let panel = null;
+    if (this._cardCtx) {
+      panel = this._cardPanel();
+      const ctx = this._cardCtx;
+      const anchor = ctx.key === "layout" && typeof ctx.index === "number"
+        ? rowEls[ctx.index] : null;
+      if (anchor && anchor.parentNode === list) anchor.after(panel);
+      else wrap.insertBefore(panel, bar.nextSibling);
+    }
     wrap.append(ah, tray, hh, hz);
     this._layoutBox.appendChild(wrap);
+    if (panel) {
+      requestAnimationFrame(() => {
+        try { panel.scrollIntoView({ block: "center", behavior: "smooth" }); }
+        catch (err) { panel.scrollIntoView(); }
+      });
+    }
   },
 };
 
@@ -3961,6 +4057,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._zoneBox = document.createElement("div");
     this._waterBox = document.createElement("div");
     this._doorsBox = document.createElement("div");
+    this._gatesBox = document.createElement("div");
 
     const videoHost = this._panel("Video / remotes",
       "Screens, their sources, one remote", "mdi:remote-tv", "_videoOpen", this._videoBox);
@@ -3974,6 +4071,9 @@ class CharroRoomsEditor extends HTMLElement {
     const doorsHost = this._panel("Door labels & buttons",
       "Name a door and say what opens it", "mdi:door-closed",
       "_doorsOpen", this._doorsBox);
+    const gatesHost = this._panel("Gates",
+      "What opens each one, and whether to ask first", "mdi:gate",
+      "_gatesOpen", this._gatesBox);
 
     /* Sections and the raw cards blob still do real work — sections orders
      * and filters the automatic body, and a room can carry cards a layout
@@ -3999,12 +4099,14 @@ class CharroRoomsEditor extends HTMLElement {
       "Section order, the media card override, and raw cards", "mdi:tune",
       "_advOpen", advBody);
 
-    this._left.append(videoHost, remotesHost, zoneHost, waterHost, doorsHost, advanced);
+    this._left.append(videoHost, remotesHost, zoneHost, waterHost, doorsHost,
+                     gatesHost, advanced);
     this._renderVideo();
     this._renderRemotes();
     this._renderZonePlayers();
     this._renderWaterActions();
     this._renderDoors();
+    this._renderGates();
     this._lbEnsure();
     this._lbRender();
     this._renderLights();
@@ -4155,6 +4257,52 @@ class CharroRoomsEditor extends HTMLElement {
 
     box.appendChild(f.add("+ Action", () => {
       (this._room.water_actions = this._room.water_actions || []).push({ name: "" });
+    }));
+  }
+
+  /* Gates: what opens them, and whether a tap should have to be meant. */
+  _renderGates() {
+    const box = this._gatesBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const f = this._fields(() => { this._renderGates(); this._renderPreview(); });
+    const list = this._room.gates || [];
+
+    list.forEach((gRaw, i) => {
+      const g = typeof gRaw === "object" ? gRaw : { name: String(gRaw) };
+      if (typeof gRaw !== "object") this._room.gates[i] = g;
+      const set = (k) => (v) => { if (v) g[k] = v; else delete g[k]; };
+      const row = f.rowBox();
+      row.appendChild(f.text("Name", g.name, set("name"), "East Gate"));
+      row.appendChild(f.icon("Icon", g.icon, set("icon")));
+      row.appendChild(f.ent("Opening it runs", g.press,
+        ["button", "script", "scene", "switch", "cover"], set("press")));
+      row.appendChild(f.ent("Holding it runs", g.hold, ["button", "script"], set("hold")));
+      row.appendChild(f.ent("Open/closed sensor", g.state,
+        ["binary_sensor", "cover", "sensor"], set("state")));
+
+      const ask = document.createElement("label");
+      ask.className = "vfield";
+      const t = document.createElement("span");
+      t.textContent = "Ask before opening";
+      const cb = document.createElement("ha-switch");
+      cb.checked = !!g.confirm;
+      cb.addEventListener("change", () => {
+        if (cb.checked) g.confirm = true; else delete g.confirm;
+        this._renderGates(); this._renderPreview();
+      });
+      ask.append(t, cb);
+      row.appendChild(ask);
+
+      row.appendChild(f.del("Remove gate", () => {
+        this._room.gates.splice(i, 1);
+        if (!this._room.gates.length) delete this._room.gates;
+      }));
+      box.appendChild(row);
+    });
+
+    box.appendChild(f.add("+ Gate", () => {
+      (this._room.gates = this._room.gates || []).push({ name: "" });
     }));
   }
 
