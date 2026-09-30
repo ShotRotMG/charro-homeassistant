@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.43.0";
+const VERSION = "4.44.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -626,6 +626,24 @@ function gateCard(g, r) {
 const gateAt = (r, name) => (r.gates || []).find(
   (g) => (typeof g === "object" ? g.name : g) === name);
 
+/* A garage door is worth telling apart from a window sensor: it's the one
+ * you'd want to know about from across the house. Explicit `garage: true`
+ * wins; otherwise a cover that says it's a garage door is one. */
+function isGarage(entry, hass) {
+  const o = typeof entry === "object" && entry ? entry : {};
+  if (o.garage !== undefined) return !!o.garage;
+  const id = o.entity || (typeof entry === "string" ? entry : "");
+  if (!id) return false;
+  if (!id.startsWith("cover.")) return false;
+  const st = hass && hass.states && hass.states[id];
+  return !!(st && st.attributes && st.attributes.device_class === "garage");
+}
+
+const garageSensors = (r, hass) =>
+  (r.alert_sensors || []).filter((e) => isGarage(e, hass));
+const plainSensors = (r, hass) =>
+  (r.alert_sensors || []).filter((e) => !isGarage(e, hass));
+
 /* A door is more than an entity id: a garage needs the button that operates
  * it and the sensor that says the opener isn't lying. An alert_sensors entry
  * can carry those, the same way a light can carry its name and icon. */
@@ -633,9 +651,14 @@ function securityCard(s, r) {
   const o = typeof s === "object" && s ? s : {};
   const id = o.entity || (typeof s === "string" ? s : "");
   const card = { type: "custom:charro-security-card", entity: id };
-  for (const k of ["label", "icon", "toggle_button", "vehicle_entity", "alert_mode"])
+  for (const k of ["label", "icon", "toggle_button", "vehicle_entity", "alert_mode",
+                   "confirm_sensor"])
     if (o[k]) card[k] = o[k];
-  if (!card.confirm_sensor && r && r.confirm_sensor) card.confirm_sensor = r.confirm_sensor;
+  // the room's guard is for its garage doors; an entry door alongside them
+  // isn't on that circuit, so `confirm_sensor: false` opts out
+  if (o.confirm_sensor === false || o.confirm_sensor === null) delete card.confirm_sensor;
+  else if (!card.confirm_sensor && r && r.confirm_sensor)
+    card.confirm_sensor = r.confirm_sensor;
   return card;
 }
 
@@ -1175,6 +1198,8 @@ const CHIP_BLUE   = ["rgba(33,150,243,0.22)", "#2196f3"];
 const CHIP_PURPLE = ["rgba(156,39,176,0.22)", "#ce93d8"];
 const CHIP_ORANGE = ["rgba(255,152,0,0.22)", "#ffb74d"];
 const CHIP_RED    = ["rgba(244,67,54,0.20)", "#ef5350"];
+/* Elk zones say "Violated"; covers say "open"; binary sensors say "on" */
+const OPENISH = ["violated", "on", "open", "opening"];
 
 const CHIP_GROUPS = [
   ["light_entities",     "mdi:lightbulb",     CHIP_AMBER,  "light",  "Lights"],
@@ -1262,6 +1287,29 @@ function roomChips(r, hass) {
   if (r.climate_entity) {
     const c = climateChip(hass, r.climate_entity);
     if (c) out.push(c);
+  }
+
+  // the one you'd want to know about from across the house
+  const garages = garageSensors(r, hass);
+  if (garages.length) {
+    const open = [];
+    for (const e of garages) {
+      const id = typeof e === "string" ? e : e.entity;
+      const st = hass.states[id];
+      if (!st || !OPENISH.includes(String(st.state).toLowerCase())) continue;
+      const reg = hass.entities && hass.entities[id];
+      open.push((typeof e === "object" && e.label)
+                || (reg && (reg.name || reg.original_name))
+                || (st.attributes && st.attributes.friendly_name) || id);
+    }
+    if (open.length) {
+      out.push({ key: "garage", icon: "mdi:garage-open-variant", col: CHIP_RED,
+                 text: open.length > 1 ? String(open.length) : "",
+                 title: `${listNames(open.map((n) => ({ name: n })))} open.`,
+                 tap: { kind: "more-info",
+                        entity: (typeof garages[0] === "string"
+                                 ? garages[0] : garages[0].entity) } });
+    }
   }
   return out;
 }
@@ -1380,8 +1428,9 @@ class RoomPopup {
 
     // the far-left marker for the room as a whole: grey while everything's
     // shut, red the moment something isn't
-    if ((this.room.alert_sensors || []).length) {
-      const { all, bad } = this._sensorState();
+    const plain = plainSensors(this.room, this._hass);
+    if (plain.length) {
+      const { all, bad } = this._sensorState(plain);
       const d = document.createElement("ha-icon");
       d.className = bad.length ? "door open" : "door";
       d.icon = bad.length ? "mdi:door-open" : "mdi:door-closed";
@@ -1482,20 +1531,22 @@ class RoomPopup {
   /* The alert sensors here aren't binary_sensors — the Elk zones are plain
    * sensors reading "Normal" or "Violated", so testing for "on" called a
    * violated zone closed. Take every shape these come in. */
-  _sensorState() {
+  _sensorState(list) {
     const hass = this._hass;
     const all = [], bad = [];
     if (!hass || !hass.states) return { all, bad };
-    for (const e of this.room.alert_sensors || []) {
-      const st = hass.states[e];
+    for (const e of list || this.room.alert_sensors || []) {
+      // an entry may be a bare id or an object carrying its label
+      const id = typeof e === "string" ? e : (e && e.entity);
+      const st = id && hass.states[id];
       if (!st) continue;
       const a = st.attributes || {};
-      const reg = hass.entities && hass.entities[e];
-      const s = String(st.state).toLowerCase();
+      const reg = hass.entities && hass.entities[id];
       const row = {
-        entity: e,
-        name: (reg && (reg.name || reg.original_name)) || a.friendly_name || e,
-        violated: s === "violated" || s === "on" || s === "open" || s === "opening",
+        entity: id,
+        name: (typeof e === "object" && e.label)
+              || (reg && (reg.name || reg.original_name)) || a.friendly_name || id,
+        violated: OPENISH.includes(String(st.state).toLowerCase()),
       };
       all.push(row);
       if (row.violated) bad.push(row);
@@ -1761,6 +1812,9 @@ class CharroRoomCard extends CharroBase {
       climate_entity: c.climate_entity || "",
       music_player: c.music_player || "",
       confirm_sensor: c.confirm_sensor || "",
+      // the tile's garage chip counts these on its own
+      garage_entities: garageSensors(c, this._hass)
+        .map((e) => (typeof e === "string" ? e : e.entity)).filter(Boolean),
       tv_entity: c.tv_entity || "",
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
