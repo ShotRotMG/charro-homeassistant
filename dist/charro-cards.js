@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.38.0";
+const VERSION = "4.39.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2802,47 +2802,61 @@ const LayoutUI = {
   /* Everything the room owns but hasn't placed: lights still loose, and any
    * block not in use. Derived, never stored — dragging one out creates the
    * item, it doesn't move it. */
+  /* What the room owns but the layout hasn't placed. A block that IS placed
+   * already draws its members, so offering them individually would let you
+   * add a second copy of something already on screen. */
   _lbAvail() {
     const r = this._room;
-    const placed = new Set(this._lbAll().map((x) => x && x.entity).filter(Boolean));
-    const usedBlocks = new Set(this._lbAll().map((x) => x && x.block).filter(Boolean));
+    const all = this._lbAll();
+    const placed = new Set(all.map((x) => x && x.entity).filter(Boolean));
+    const usedBlocks = new Set(all.map((x) => x && x.block).filter(Boolean));
     const cats = [];
-    for (const [label, key] of LIGHT_GROUPS) {
-      const items = (r[key] || [])
-        .map((l) => lightId(l))
-        .filter((e) => e && !placed.has(e))
-        .map((e) => ({ entity: e }));
-      if (items.length) cats.push({ label, items });
+
+    if (!usedBlocks.has("lights")) {
+      for (const [label, key] of LIGHT_GROUPS) {
+        const items = (r[key] || [])
+          .map((l) => lightId(l))
+          .filter((e) => e && !placed.has(e))
+          .map((e) => ({ entity: e }));
+        if (items.length) cats.push({ label, items });
+      }
     }
+
     const sid = (x) => (typeof x === "string" ? x : (x && x.entity));
-    const placedSensors = new Set(this._lbAll().map((x) => x && sid(x.sensor)).filter(Boolean));
-    const sensors = (r.alert_sensors || [])
-      .filter((x) => sid(x) && !placedSensors.has(sid(x)))
-      .map((x) => ({ sensor: x }));
-    if (sensors.length) cats.push({ label: "Door / motion", items: sensors });
+    if (!usedBlocks.has("security")) {
+      const seen = new Set(all.map((x) => x && sid(x.sensor)).filter(Boolean));
+      const sensors = (r.alert_sensors || [])
+        .filter((x) => sid(x) && !seen.has(sid(x)))
+        .map((x) => ({ sensor: x }));
+      if (sensors.length) cats.push({ label: "Door / motion", items: sensors });
+    }
 
     const zid = (z) => (typeof z === "string" ? z : (z && (z.entity || z.power)));
-    const placedZones = new Set(this._lbAll().map((x) => x && zid(x.zone)).filter(Boolean));
-    const zones = (r.music_powers || [])
-      .filter((z) => zid(z) && !placedZones.has(zid(z)))
-      .map((z) => ({ zone: z }));
-    if (zones.length) cats.push({ label: "Music zones", items: zones });
+    if (!usedBlocks.has("music")) {
+      const seen = new Set(all.map((x) => x && zid(x.zone)).filter(Boolean));
+      const zones = (r.music_powers || [])
+        .filter((z) => zid(z) && !seen.has(zid(z)))
+        .map((z) => ({ zone: z }));
+      if (zones.length) cats.push({ label: "Music zones", items: zones });
+    }
 
+    // a section is only offered when the room has something to put in it
+    const has = {
+      climate: () => !!r.climate_entity,
+      security: () => (r.alert_sensors || []).length,
+      cameras: () => (r.cameras || []).length,
+      media: () => !!(r.tv_entity || r.projector_entity || r.receiver_entity || r.remotes),
+      music: () => !!((r.music_powers || []).length || r.media_player),
+      video: () => !!r.video,
+      player: () => !!(r.media_player || r.media_card),
+      lights: () => LIGHT_GROUPS.some(([, k]) => (r[k] || []).length),
+    };
     const blocks = Object.keys(BLOCK_LABEL)
-      .filter((b) => b !== "lights" && !usedBlocks.has(b))
-      .filter((b) => {
-        if (b === "climate") return !!r.climate_entity;
-        if (b === "security") return (r.alert_sensors || []).length;
-        if (b === "cameras") return (r.cameras || []).length;
-        if (b === "media") return !!(r.tv_entity || r.projector_entity
-                                     || r.receiver_entity || r.remotes);
-        if (b === "music") return !!((r.music_powers || []).length || r.media_player);
-        if (b === "video") return !!r.video;
-        if (b === "player") return !!(r.media_player || r.media_card);
-        return true;
-      })
+      .filter((b) => !usedBlocks.has(b))
+      .filter((b) => (has[b] ? has[b]() : true))
       .map((b) => ({ block: b }));
-    if (blocks.length) cats.push({ label: "Blocks", items: blocks });
+    if (blocks.length) cats.push({ label: "Sections", items: blocks });
+
     // one flat list backs the drag indices
     this._avail = cats.flatMap((c) => c.items);
     return cats;
