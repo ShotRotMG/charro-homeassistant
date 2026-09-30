@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.28.4";
+const VERSION = "4.29.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -310,15 +310,22 @@ function lightCard(l, noDim) {
 /* Body of a room, shared by the pop-up and the page. Each block appears only
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
-const ROOM_SECTIONS = ["climate", "media", "music", "lights", "cameras", "security"];
+const ROOM_SECTIONS = ["climate", "video", "media", "music", "lights", "cameras", "security"];
 
 /* `music` was carved out of `media` in 4.20, so a room that spelled out its
  * sections before then names only `media`. Rather than silently dropping its
  * player, put `music` back in right behind it. */
 function sectionOrder(r) {
   const order = r.sections && r.sections.length ? [...r.sections] : [...ROOM_SECTIONS];
-  if (order.includes("media") && !order.includes("music"))
-    order.splice(order.indexOf("media") + 1, 0, "music");
+  // `music` (4.20) and `video` (4.29) were carved out of `media`, so a room
+  // that spelled out its sections before then names only `media`. Slot the
+  // newer blocks in around it rather than silently dropping their content.
+  if (order.includes("media")) {
+    if (!order.includes("music"))
+      order.splice(order.indexOf("media") + 1, 0, "music");
+    if (!order.includes("video"))
+      order.splice(order.indexOf("media"), 0, "video");
+  }
   return order;
 }
 
@@ -501,6 +508,11 @@ function blockCards(name, r, hass) {
   if (name === "music") {
     for (const p of r.music_powers || []) push(zoneCard(p, r, hass));
     push(mediaCard(r, hass));
+  }
+
+  if (name === "video" && r.video) {
+    push({ type: "custom:charro-video-card", video: r.video,
+           templates: r._remotes || {} });
   }
 
   if (name === "media") {
@@ -1378,7 +1390,7 @@ class CharroRoomCard extends CharroBase {
   async _resolve() {
     if (this._merged) return this._merged;
     const room = await this._roomP;
-    if ((room.remotes || this._config.remotes || []).length)
+    if ((room.remotes || this._config.remotes || []).length || room.video)
       room._remotes = await loadRemotes(this._config);
     const m = { ...room, ...this._config };
     for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
@@ -1686,6 +1698,219 @@ class CharroZoneCard extends CharroBase {
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
 customElements.define("charro-zone-card", CharroZoneCard);
+
+/* ------------------------------------------------------- video switch --- */
+/* A room with a matrix has three separate questions — which screen, what's
+ * feeding it, and what are the buttons for — and the obvious build answers
+ * them with one conditional card per (screen × source) pair. The Saloon's
+ * three screens and four sources would be twelve heavy remote cards all
+ * instantiated in the DOM so eleven could be hidden. This asks the same
+ * questions in order and builds the one remote the answers land on.
+ *
+ *   "video": {
+ *     "focus": "input_select.saloon_device_select",
+ *     "off_option": "Off",
+ *     "displays": [
+ *       { "name": "Bar", "icon": "mdi:glass-cocktail",
+ *         "source": "input_select.saloon_bar_media_select",
+ *         "power": "media_player.saloon_bar_samsung_q60_55" }
+ *     ],
+ *     "sources": { "SuperBox": { "use": "superbox" } }
+ *   }
+ *
+ * `use` names a template in _remotes.json, so the buttons live in one place
+ * however many screens can show that box.
+ */
+const VIDEO_CSS = `
+:host{ display:block; }
+.vwrap{ display:flex; flex-direction:column; gap:10px; }
+.vrow{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.vrow .sp{ margin-left:auto; }
+.vchip{
+  display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+  border:1px solid var(--divider-color); background:transparent;
+  color:var(--secondary-text-color); font:inherit; font-size:13.5px;
+  font-weight:600; padding:6px 12px; border-radius:999px; line-height:1;
+}
+.vchip ha-icon{
+  --mdc-icon-size:18px; width:18px; height:18px;
+  display:flex; align-items:center; justify-content:center;
+}
+.vchip:hover{ background:rgba(127,127,127,.14); }
+/* lit means that screen is on, so the row reads as status as well as choice */
+.vchip.live{ color:var(--primary-text-color); border-color:transparent;
+  background:rgba(255,152,0,.18); }
+.vchip.sel{ outline:2px solid var(--primary-color); outline-offset:1px;
+  color:var(--primary-text-color); }
+.vchip.off{ margin-left:auto; color:#ef5350; border-color:rgba(244,67,54,.4); }
+.vchip.off:hover{ background:rgba(244,67,54,.16); }
+.vnote{ font-size:13px; color:var(--secondary-text-color); padding:2px 2px 0; }
+.vslot > *{ display:block; }
+`;
+
+class CharroVideoCard extends HTMLElement {
+  setConfig(config) {
+    if (!config || !config.video) throw new Error("charro-video-card needs a video block");
+    this._config = config;
+    this._v = config.video;
+    this._templates = config.templates || {};
+    this.attachShadow({ mode: "open" });
+    this.shadowRoot.innerHTML = `<style>${VIDEO_CSS}</style><div class="vwrap"></div>`;
+    this._wrap = this.shadowRoot.querySelector(".vwrap");
+  }
+
+  set hass(h) {
+    this._hass = h;
+    for (const c of this._live || []) c.hass = h;
+    const sig = this._sig();
+    if (sig === this._lastSig) return;
+    this._lastSig = sig;
+    this._render();
+  }
+
+  getCardSize() { return 6; }
+
+  /* focus and every source select — the remote only changes when one does */
+  _sig() {
+    const h = this._hass;
+    if (!h || !h.states) return "";
+    const ids = [this._v.focus].concat(
+      (this._v.displays || []).flatMap((d) => [d.source, d.power].filter(Boolean)));
+    return ids.map((e) => `${e}=${h.states[e] ? h.states[e].state : "_"}`).join(";");
+  }
+
+  _focusName() {
+    const st = this._hass.states[this._v.focus];
+    return st ? st.state : "";
+  }
+  _display(name) {
+    return (this._v.displays || []).find((d) => d.name === name) || null;
+  }
+  _sourceOf(d) {
+    if (!d || !d.source) return "";
+    const st = this._hass.states[d.source];
+    return st ? st.state : "";
+  }
+  _isLive(d) {
+    if (!d) return false;
+    if (d.power) {
+      const st = this._hass.states[d.power];
+      if (st) return !OFFISH.includes(st.state);
+    }
+    const s = this._sourceOf(d);
+    return !!s && s !== (this._v.off_option || "Off");
+  }
+
+  _pick(value) {
+    this._hass.callService("input_select", "select_option",
+      { entity_id: this._v.focus, option: value });
+  }
+
+  async _render() {
+    const h = this._hass;
+    if (!h || !this._wrap) return;
+    const off = this._v.off_option || "Off";
+    const focus = this._focusName();
+    this._wrap.textContent = "";
+    this._live = [];
+
+    // ---- which screen
+    const row = document.createElement("div");
+    row.className = "vrow";
+    for (const d of this._v.displays || []) {
+      const b = document.createElement("button");
+      const live = this._isLive(d);
+      b.className = "vchip" + (live ? " live" : "") + (focus === d.name ? " sel" : "");
+      if (d.icon) {
+        const i = document.createElement("ha-icon");
+        i.icon = d.icon;
+        b.appendChild(i);
+      }
+      const s = document.createElement("span");
+      s.textContent = d.name;
+      b.appendChild(s);
+      const src = this._sourceOf(d);
+      b.title = live && src && src !== off ? `${d.name} — ${src}` : `${d.name} — off`;
+      b.addEventListener("click", () => this._pick(d.name));
+      row.appendChild(b);
+    }
+    if ((this._v.displays || []).length) {
+      const o = document.createElement("button");
+      o.className = "vchip off";
+      o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+      const sp = document.createElement("span");
+      sp.textContent = "All off";
+      o.appendChild(sp);
+      o.title = "Turn every screen in this room off";
+      o.addEventListener("click", () => this._pick(off));
+      row.appendChild(o);
+    }
+    this._wrap.appendChild(row);
+
+    const d = this._display(focus);
+    if (!d) return;                       // Off, or a name with no display
+
+    const helpers = await window.loadCardHelpers();
+    if (this._focusName() !== focus) return;   // changed while we awaited
+
+    const add = (cfg) => {
+      try {
+        const el = helpers.createCardElement(cfg);
+        el.hass = h;
+        const slot = document.createElement("div");
+        slot.className = "vslot";
+        slot.appendChild(el);
+        this._wrap.appendChild(slot);
+        this._live.push(el);
+      } catch (err) { console.error("charro-video-card:", cfg && cfg.type, err); }
+    };
+
+    // ---- what's feeding it
+    if (d.source) {
+      add({ type: "custom:mushroom-select-card", entity: d.source,
+            name: `${d.name} source`, layout: "horizontal",
+            fill_container: false, secondary_info: "none" });
+    }
+
+    // ---- and the buttons for it
+    const src = this._sourceOf(d);
+    if (!src || src === off) {
+      if (d.power) {
+        add({ type: "tile", entity: d.power, name: d.name,
+              icon: d.off_icon || "mdi:television-off", hide_state: true,
+              tap_action: { action: "toggle" }, icon_tap_action: { action: "toggle" } });
+      } else {
+        const n = document.createElement("div");
+        n.className = "vnote";
+        n.textContent = `${d.name} is off. Pick a source to turn it on.`;
+        this._wrap.appendChild(n);
+      }
+      return;
+    }
+
+    const spec = (this._v.sources || {})[src];
+    if (!spec) {
+      const n = document.createElement("div");
+      n.className = "vnote";
+      n.textContent = `No remote is configured for "${src}".`;
+      this._wrap.appendChild(n);
+      return;
+    }
+    if (spec.card) { add(spec.card); return; }
+    const tpl = this._templates[spec.use];
+    if (!tpl) {
+      const n = document.createElement("div");
+      n.className = "vnote";
+      n.textContent = `\`_remotes.json\` has no template named "${spec.use}".`;
+      this._wrap.appendChild(n);
+      return;
+    }
+    // the display's own volume, so the buttons act on the screen you're at
+    add(fillTemplate(clone(tpl), { title: spec.title || src, ...spec,
+                                   display: d.name, display_media: d.power || "" }));
+  }
+}
+customElements.define("charro-video-card", CharroVideoCard);
 
 makeEditor("charro-zone-card-editor", [
   { name: "entity", required: true, selector: ent(["switch"]) },
@@ -2252,7 +2477,8 @@ const LB_CSS = `
 const o_render = (it) => it.render || "mushroom";
 
 const BLOCK_LABEL = {
-  climate: "Climate", media: "Media", music: "Music", cameras: "Cameras",
+  climate: "Climate", video: "Video / remotes", media: "Media", music: "Music",
+  cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
 };
 
@@ -2477,6 +2703,7 @@ const LayoutUI = {
         if (b === "media") return !!(r.tv_entity || r.projector_entity
                                      || r.receiver_entity || r.remotes);
         if (b === "music") return !!((r.music_powers || []).length || r.media_player);
+        if (b === "video") return !!r.video;
         return true;
       })
       .map((b) => ({ block: b }));
@@ -3220,7 +3447,7 @@ class CharroRoomsEditor extends HTMLElement {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       let j = await r.json();
       if (j && !j.room_name && j[key] && typeof j[key] === "object") j = j[key];
-      if ((j.remotes || []).length) j._remotes = await loadRemotes(this._config);
+      if ((j.remotes || []).length || j.video) j._remotes = await loadRemotes(this._config);
       this._room = j; this._orig = JSON.parse(JSON.stringify(j));
       if (!quiet) this._say("");
       this._renderForm();

@@ -229,6 +229,59 @@ otherwise the built-in `media-control`. Set `media_card` to a full card config
 to override. The room tile grows a now-playing chip while that player is
 playing; tapping it opens the media card on its own `#<room>-media` hash.
 
+### Video switching
+
+A room with a matrix asks three questions in order — which screen, what's
+feeding it, what are the buttons for — and answering them with conditional
+cards means one remote card per screen × source pair, all instantiated so all
+but one can be hidden. The Saloon's three screens and four sources would be
+twelve. A `video` block asks the questions in order and builds only the remote
+the answers land on.
+
+```json
+"video": {
+  "focus": "input_select.saloon_device_select",
+  "off_option": "Off",
+  "displays": [
+    { "name": "Bar", "icon": "mdi:glass-cocktail",
+      "source": "input_select.saloon_bar_media_select",
+      "power": "media_player.saloon_bar_samsung_q60_55" }
+  ],
+  "sources": {
+    "SuperBox": { "use": "superbox", "title": "Charro SuperBox",
+                  "remote": "remote.charro_superbox",
+                  "volume": "media_player.saloon_bar_samsung_q60_55" }
+  }
+}
+```
+
+What renders: a row of screen chips, the source dropdown for whichever is
+focused, and one remote.
+
+| key | what it does |
+| --- | --- |
+| `focus` | the input_select naming which screen you're controlling |
+| `off_option` | the option that means "all off" (default `Off`) |
+| `displays[].source` | that screen's own source list — the projector's differs |
+| `displays[].power` | the screen itself, for the off tile and the lit chip |
+| `sources` | keyed by the option text in a source select |
+| `sources[].use` | a template in `_remotes.json`; the rest of the entry fills its `{{…}}` |
+| `sources[].card` | a whole card instead, when a box doesn't fit a template |
+
+A chip is lit when that screen is on, so the row reads as status as well as
+choice, and its tooltip names what it's showing. **All off** is pushed to the
+right end rather than sitting in the focus list — it's a different kind of
+action and shouldn't be in the path of changing screens. With the focus on
+`Off` the panel collapses to just the chips.
+
+A screen whose source is `Off` shows its power tile where the remote goes, so
+the panel never has a hole. A source with no entry, or a `use` naming no
+template, says so rather than rendering nothing.
+
+Volume belongs to the screen, not the box — a matrix sits between them — so
+templates take a `{{volume}}` that the source entry points at the display's
+own media_player.
+
 ### Remotes
 
 Every Samsung TV wants the same remote with different entity ids, so the
