@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.42.0";
+const VERSION = "4.42.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4009,6 +4009,30 @@ class CharroRoomsEditor extends HTMLElement {
     this._lbRender();
     this._renderLights();
     this._renderPreview();
+  }
+
+  /* Six of these panels want the same collapsible shell, so it lives once. */
+  _panel(header, secondary, iconName, openKey, body) {
+    if (!customElements.get("ha-expansion-panel")) {
+      const d = document.createElement("div");
+      const h = document.createElement("h4"); h.textContent = header;
+      d.append(h, body);
+      return d;
+    }
+    const p = document.createElement("ha-expansion-panel");
+    p.header = header;
+    if (secondary) p.secondary = secondary;
+    p.outlined = true;
+    p.leftChevron = false;
+    p.expanded = !!this[openKey];
+    p.addEventListener("expanded-changed", (ev) => {
+      this[openKey] = ev.detail ? ev.detail.expanded : !this[openKey];
+    });
+    const ic = document.createElement("ha-icon");
+    ic.icon = iconName; ic.slot = "leading-icon";
+    ic.style.cssText = "--mdc-icon-size:22px;color:var(--secondary-text-color)";
+    p.append(ic, body);
+    return p;
   }
 
   /* Remotes that aren't behind a video switcher — a room with one TV and one
