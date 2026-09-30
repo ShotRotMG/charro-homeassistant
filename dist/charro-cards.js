@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.28.3";
+const VERSION = "4.28.4";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -828,8 +828,15 @@ const POPUP_CSS = `
   position:absolute; left:50%; transform:translateX(-50%);
   display:flex; align-items:center; gap:14px; max-width:78%;
 }
+/* ha-icon lays out inline, so it sits on the text baseline and reads low
+ * beside a 24px title however the row is aligned. Make each one its own
+ * flex box of a known size and the row can centre it properly. */
+.charro-pop-hd ha-icon{
+  display:flex; align-items:center; justify-content:center; line-height:0;
+}
 .charro-pop-hd .mid > ha-icon{
-  --mdc-icon-size:26px; color:var(--primary-text-color); flex:none;
+  --mdc-icon-size:26px; width:26px; height:26px;
+  color:var(--primary-text-color); flex:none;
 }
 .charro-pop-hd .t{
   pointer-events:none; min-width:0;
@@ -841,8 +848,8 @@ const POPUP_CSS = `
 }
 /* the door is the far-left marker for the whole room, not part of the name */
 .charro-pop-hd .door{
-  --mdc-icon-size:24px; color:var(--secondary-text-color);
-  cursor:default; flex:none;
+  --mdc-icon-size:24px; width:24px; height:24px;
+  color:var(--secondary-text-color); cursor:default; flex:none;
 }
 .charro-pop-hd .door.open{ color:#ef5350; cursor:pointer; }
 /* Only the round icon buttons — a chip is a button too, and this rule's
@@ -861,8 +868,11 @@ const POPUP_CSS = `
   width:auto; height:auto; min-width:0; padding:3px 9px; border-radius:999px;
   font-size:13.5px; font-weight:700; line-height:1.45; white-space:nowrap;
 }
-.charro-chip ha-icon{ --mdc-icon-size:17px; width:17px; height:17px; flex:none; }
-.charro-chip span{ flex:none; }
+.charro-chip ha-icon{
+  --mdc-icon-size:17px; width:17px; height:17px; flex:none;
+  display:flex; align-items:center; justify-content:center; line-height:0;
+}
+.charro-chip span{ flex:none; line-height:1; }
 .charro-chip:hover{ filter:brightness(1.25); }
 .charro-chip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
 @media (max-width:900px){
