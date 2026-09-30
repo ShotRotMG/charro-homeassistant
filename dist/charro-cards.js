@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.33.0";
+const VERSION = "4.34.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -255,6 +255,13 @@ const roomHash = (c) => {
 /* A light may be a plain id or {entity, name, icon, dim}. */
 const lightId = (l) => (typeof l === "string" ? l : l && l.entity);
 const lightIds = (list) => (list || []).map(lightId).filter(Boolean);
+
+/* A Lutron group and its members are the same bulbs twice, so counting both
+ * makes the chip read high and "turn them all off" do the same work twice.
+ * `count: false` keeps a light controllable but out of the arithmetic — it
+ * still renders, it just isn't represented in the chip. */
+const counted = (l) => !(l && typeof l === "object" && l.count === false);
+const countedIds = (list) => (list || []).filter(counted).map(lightId).filter(Boolean);
 
 const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style" };
 
@@ -1003,11 +1010,12 @@ function roomChips(r, hass) {
   for (const [key, icon, col, domain, label] of CHIP_GROUPS) {
     const list = r[key] || [];
     if (!list.length) continue;
-    const n = onCount(hass, list);
+    const real = list.filter(counted);
+    const n = onCount(hass, real);
     if (!n) continue;
     out.push({ key, icon, col, text: String(n),
                title: `${label} — ${n} on. Tap to turn them off.`,
-               tap: { kind: "off", domain, entities: lightIds(list) } });
+               tap: { kind: "off", domain, entities: lightIds(real) } });
   }
 
   const zones = (r.music_powers || []).filter(
@@ -1183,8 +1191,9 @@ class RoomPopup {
       const i = document.createElement("ha-icon");
       i.icon = this.room.room_icon;
       // amber whenever anything in the room is lit, exactly as on the tile
-      const lit = onCount(this._hass, [].concat(this.room.light_entities || [],
-                                                this.room.landscape_entities || []));
+      const lit = onCount(this._hass,
+        [].concat(this.room.light_entities || [],
+                  this.room.landscape_entities || []).filter(counted));
       if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
       mid.appendChild(i);
     }
@@ -1549,7 +1558,8 @@ class CharroRoomCard extends CharroBase {
       receiver_entity: c.receiver_entity || "",
     };
     // a light may be {entity, name, dim} in rooms.json; the tile wants ids
-    for (const k of ROOM_LISTS) v[k] = lightIds(c[k]);
+    // the tile's chips both count and switch off, so both skip the doubles
+    for (const k of ROOM_LISTS) v[k] = countedIds(c[k]);
     if (c.fountain_entity && !v.fountain_entities.includes(c.fountain_entity)) {
       v.fountain_entities = [c.fountain_entity, ...v.fountain_entities];
     }
@@ -2892,6 +2902,20 @@ const LayoutUI = {
           this._lbRender(); this._lbChanged();
         });
 
+        // a Lutron group and its members are the same bulbs twice
+        const cnt = document.createElement("button");
+        cnt.className = "btn";
+        cnt.title = it.count === false
+          ? "Not counted in the chip — click to count it"
+          : "Counted in the chip — click to leave it out (for groups and duplicates)";
+        cnt.innerHTML = `<ha-icon icon="${it.count === false
+          ? "mdi:numeric-0-box-multiple-outline" : "mdi:counter"}"></ha-icon>`;
+        if (it.count === false) cnt.style.color = "var(--primary-color)";
+        cnt.addEventListener("click", () => {
+          if (it.count === false) delete it.count; else it.count = false;
+          this._lbRender(); this._lbChanged();
+        });
+
         const rend = document.createElement("select");
         for (const [v, label] of Object.entries(RENDER_KINDS)) {
           const op = document.createElement("option");
@@ -2905,7 +2929,7 @@ const LayoutUI = {
           this._lbChanged();
         });
 
-        row.append(nm, icf, rend, dim, wide);
+        row.append(nm, icf, rend, dim, wide, cnt);
       }
     }
 
@@ -3912,7 +3936,7 @@ class CharroRoomsEditor extends HTMLElement {
 
     const row = document.createElement("div"); row.className = "h4row";
     const h = document.createElement("h4");
-    h.textContent = "Per-light name, icon and dimming";
+    h.textContent = "Per-light name, icon, dimming and counting";
     const n = document.createElement("span"); n.className = "n";
     n.textContent = `${rows.length} total`;
     const hide = document.createElement("button");
@@ -3926,7 +3950,8 @@ class CharroRoomsEditor extends HTMLElement {
     const tbl = document.createElement("table");
     tbl.hidden = !!this._lightsHidden;
     tbl.innerHTML =
-      "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Dims</th></tr></thead>";
+      "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Dims</th>" +
+      "<th title=\"Off for a group whose members are also listed\">Counts</th></tr></thead>";
     const tb = document.createElement("tbody");
 
     for (const [list, l] of rows) {
@@ -3946,12 +3971,18 @@ class CharroRoomsEditor extends HTMLElement {
       const td = document.createElement("td");
       const sw = document.createElement("ha-switch");
       sw.checked = obj.dim !== false;
+      // a group and its members are the same bulbs twice
+      const tc = document.createElement("td");
+      const cw = document.createElement("ha-switch");
+      cw.checked = obj.count !== false;
+      cw.title = "Counted in the room's light chip";
 
       const write = () => {
         const next = { entity: id };
         if (nm.value.trim()) next.name = nm.value.trim();
         if (ic.value.trim()) next.icon = ic.value.trim();
         if (!sw.checked) next.dim = false;
+        if (!cw.checked) next.count = false;
         const arr = this._room[list];
         const i = arr.findIndex((x) => lightId(x) === id);
         arr[i] = Object.keys(next).length > 1 ? next : id;
@@ -3960,9 +3991,10 @@ class CharroRoomsEditor extends HTMLElement {
       nm.addEventListener("change", write);
       ic.addEventListener("change", write);
       sw.addEventListener("change", write);
+      cw.addEventListener("change", write);
 
-      tn.appendChild(nm); ti.appendChild(ic); td.appendChild(sw);
-      tr.append(te, tn, ti, td);
+      tn.appendChild(nm); ti.appendChild(ic); td.appendChild(sw); tc.appendChild(cw);
+      tr.append(te, tn, ti, td, tc);
       tb.appendChild(tr);
     }
     tbl.appendChild(tb);

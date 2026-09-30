@@ -111,9 +111,19 @@ so anything set on the card wins over the file:
 A file that wraps the object in its own key (`{"master": { ... }}`) is read
 too, so a room lifted out of a combined file works unchanged.
 
-A light is an id, or an object with `name`, `icon` and `dim`. Set `dim: false`
-on a Lutron relay or wall switch — Home Assistant reports brightness support
-for those, which is wrong.
+A light is an id, or an object with `name`, `icon`, `dim` and `count`. Set
+`dim: false` on a Lutron relay or wall switch — Home Assistant reports
+brightness support for those, which is wrong.
+
+Set `count: false` on a group whose members are also in the list. A Lutron
+group and its members are the same bulbs twice, so counting both makes the
+chip read high and "turn them all off" do the same work twice. The light still
+renders and still works; it just isn't represented in the chip, and isn't
+included when the chip switches the room off. Hiding a light in the layout is
+a separate thing — hidden lights still count unless you also turn this off.
+
+Both are toggles in the rooms editor: the **Counts** column in the per-light
+table, and a counter button on each layout row.
 
 ### What the pop-up and page contain
 
