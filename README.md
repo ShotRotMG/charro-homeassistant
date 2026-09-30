@@ -309,18 +309,24 @@ The header reads like the room's own tile rather than a plain dialog bar:
 
 - the room icon on the left, amber whenever anything in `light_entities` or
   `landscape_entities` is on — the same rule the tile uses
+- beside it, a door icon for any room with `alert_sensors`: closed and grey
+  while everything is shut, open and red when something isn't
 - the room name centred, at 24px
-- on the right, the same chips the tile shows, then anything open, then the
-  full-page and close buttons
+- on the right, the same chips the tile shows, then the full-page and close
+  buttons
+
+The title is positioned off the panel's centre rather than laid out between
+the two sides, so it is centred on the panel itself and the chips keep their
+natural width. Under 900px it drops back into the flow, left-aligned.
 
 Chips are clickable. A count chip (lights, landscape, fans, water, music
 zones) turns that group off, which is what the tile's chips do. A single-entity
 chip (TV, projector, receiver, now playing, thermostat) opens more-info. Each
 carries a tooltip saying what it is and what a tap will do.
 
-`alert_sensors` that aren't closed put a red door icon beside the chips.
-Hovering it names them — "Saloon Lanai Door — open" — and lists all of them
-when more than one is open; clicking opens the first.
+Hovering the door names what's open — "Saloon Lanai Door — open" — and lists
+all of them when more than one is; clicking opens the first. Closed, it says
+how many sensors it's watching.
 
 The header redraws when the states behind it change, guarded by a signature of
 just those entities, so an active house doesn't rebuild it on every tick.

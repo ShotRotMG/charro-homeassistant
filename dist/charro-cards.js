@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.28.0";
+const VERSION = "4.28.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -816,46 +816,59 @@ const POPUP_CSS = `
 @media (min-width:1900px){
   .charro-pop{ width:min(var(--charro-pop-w,680px),82vw); }
 }
-/* Three columns, the outer two equal, so the title sits centred however wide
- * the chip strip gets. Below 700px it gives up and goes back to one row. */
+/* The title is positioned off the panel's own centre rather than laid out
+ * between the two sides — a grid column would have to shrink one of them to
+ * keep the middle centred, and it was the chips that gave way. Now nothing
+ * competes: icons left, chips right at their natural width, name dead centre.
+ * Below 900px it drops back into the flow so it can't overlap them. */
 .charro-pop-hd{
-  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
-  align-items:center; gap:10px; margin:2px 4px 14px;
+  position:relative; display:flex; align-items:center; gap:8px;
+  margin:2px 4px 14px; min-height:34px;
 }
-.charro-pop-hd .lead{ display:flex; align-items:center; gap:8px; min-width:0; }
+.charro-pop-hd .lead{ display:flex; align-items:center; gap:6px; flex:none; }
 .charro-pop-hd .lead > ha-icon{ --mdc-icon-size:26px; color:var(--primary-text-color); }
 .charro-pop-hd .t{
+  position:absolute; left:50%; transform:translateX(-50%);
+  max-width:46%; pointer-events:none;
   font-size:24px; font-weight:650; letter-spacing:-.02em; text-align:center;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .charro-pop-hd .tail{
-  display:flex; align-items:center; gap:6px; justify-content:flex-end;
-  min-width:0; flex-wrap:wrap;
+  display:flex; align-items:center; gap:6px; margin-left:auto; flex:none;
 }
-.charro-pop-hd button{
+/* the door sits with the room icon and only colours when something is open */
+.charro-pop-hd .door{
+  --mdc-icon-size:22px; color:var(--secondary-text-color);
+  cursor:default; flex:none;
+}
+.charro-pop-hd .door.open{ color:#ef5350; cursor:pointer; }
+/* Only the round icon buttons — a chip is a button too, and this rule's
+ * fixed 32px box was squaring it and stacking the count under the icon. */
+.charro-pop-hd .tail > button{
   border:none; background:rgba(127,127,127,.16); color:var(--primary-text-color);
   width:32px; height:32px; border-radius:50%; cursor:pointer;
   display:grid; place-items:center; font:inherit; flex:none;
 }
-.charro-pop-hd button:hover{ background:rgba(127,127,127,.28); }
-.charro-pop-hd button ha-icon{ --mdc-icon-size:18px; }
-/* the alert sits with the chips but reads as a warning, not a count */
-.charro-pop-hd button.alert{ background:rgba(244,67,54,0.20); color:#ef5350; }
-.charro-pop-hd button.alert:hover{ background:rgba(244,67,54,0.32); }
-.charro-chips{ display:flex; align-items:center; gap:5px; flex-wrap:wrap;
-  justify-content:flex-end; }
+.charro-pop-hd .tail > button:hover{ background:rgba(127,127,127,.28); }
+.charro-pop-hd .tail > button ha-icon{ --mdc-icon-size:18px; }
+.charro-chips{ display:flex; align-items:center; gap:5px; flex:none; }
 .charro-chip{
-  display:inline-flex; align-items:center; gap:3px; cursor:pointer;
-  border:none; padding:2px 7px; border-radius:999px; font:inherit;
-  font-size:13px; font-weight:700; line-height:1.5; white-space:nowrap;
+  display:inline-flex; flex-direction:row; flex-wrap:nowrap; align-items:center;
+  gap:4px; cursor:pointer; border:none; font:inherit;
+  width:auto; height:auto; min-width:0; padding:3px 9px; border-radius:999px;
+  font-size:13.5px; font-weight:700; line-height:1.45; white-space:nowrap;
 }
-.charro-chip ha-icon{ --mdc-icon-size:17px; width:17px; }
+.charro-chip ha-icon{ --mdc-icon-size:17px; width:17px; height:17px; flex:none; }
+.charro-chip span{ flex:none; }
 .charro-chip:hover{ filter:brightness(1.25); }
 .charro-chip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
-@media (max-width:700px){
-  .charro-pop-hd{ display:flex; flex-wrap:wrap; }
-  .charro-pop-hd .t{ font-size:20px; text-align:left; }
-  .charro-pop-hd .tail{ margin-left:auto; }
+@media (max-width:900px){
+  .charro-pop-hd{ flex-wrap:wrap; }
+  .charro-pop-hd .t{
+    position:static; transform:none; max-width:none; text-align:left;
+    font-size:20px; flex:1 1 auto;
+  }
+  .charro-chips{ flex-wrap:wrap; justify-content:flex-end; }
 }
 .charro-pop-body > *{ margin-bottom:8px; display:block; }
 @media (prefers-reduced-motion:reduce){
@@ -1086,6 +1099,25 @@ class RoomPopup {
       lead.appendChild(i);
     }
 
+    // the door lives beside the room icon and is always there once a room
+    // watches anything: grey while everything's shut, red the moment it isn't
+    if ((this.room.alert_sensors || []).length) {
+      const open = this._openSensors();
+      const d = document.createElement("ha-icon");
+      d.className = open.length ? "door open" : "door";
+      d.icon = open.length ? "mdi:door-open" : "mdi:door-closed";
+      if (open.length) {
+        const names = open.map((o) => `${o.name} — ${o.state}`).join("\n");
+        d.title = open.length === 1 ? names : `${open.length} open:\n${names}`;
+        d.addEventListener("click", () => this._moreInfo(open[0].entity));
+      } else {
+        const n = this.room.alert_sensors.length;
+        d.title = `All ${n} sensor${n > 1 ? "s" : ""} closed`;
+      }
+      d.setAttribute("aria-label", d.title.replace(/\n/g, ", "));
+      lead.appendChild(d);
+    }
+
     const t = document.createElement("div");
     t.className = "t";
     t.textContent = this.titleOverride || this.room.room_name || "";
@@ -1093,18 +1125,6 @@ class RoomPopup {
     const tail = document.createElement("div");
     tail.className = "tail";
     tail.appendChild(this._chipStrip());
-
-    const open = this._openSensors();
-    if (open.length) {
-      const a = document.createElement("button");
-      a.className = "alert";
-      const names = open.map((o) => `${o.name} — ${o.state}`).join("\n");
-      a.title = open.length === 1 ? names : `${open.length} open:\n${names}`;
-      a.setAttribute("aria-label", a.title.replace(/\n/g, ", "));
-      a.innerHTML = `<ha-icon icon="mdi:door-open"></ha-icon>`;
-      a.addEventListener("click", () => this._moreInfo(open[0].entity));
-      tail.appendChild(a);
-    }
 
     if (this.room.page_path) {
       const go = document.createElement("button");
