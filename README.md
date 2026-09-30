@@ -475,6 +475,18 @@ What lands is an ordinary `{ "card": … }` layout row: draggable, hideable, and
 droppable into a column like anything else. The pencil on an existing card row
 reopens the same panel.
 
+A card takes the whole row by default. `"width": "half"` puts it into the
+two-up run with the lights instead, which is how a garage door ends up beside
+the opener light it belongs to:
+
+```json
+{ "card": { "type": "custom:charro-security-card", "entity": "cover.door_3" },
+  "width": "half" },
+{ "entity": "light.opener_3", "name": "Overhead 3" }
+```
+
+The arrows button on a card row toggles it.
+
 This replaces `cards.<slot>` as the place to put one-offs. The old slots still
 work and still render — switching a room to a custom layout materializes them
 into rows — but there's no longer a reason to hand-edit that blob.

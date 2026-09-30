@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.35.0";
+const VERSION = "4.36.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -683,7 +683,10 @@ function layoutBody(r, hass) {
       // next row, without anything being drawn here
       run.push({ type: "custom:charro-gap-card" });
     } else if (it.card) {
-      flush(); out.push(it.card);
+      // a card takes the row to itself unless it's asked to share, which is
+      // what pairs a door with the light above it
+      if (it.width === "half") run.push(it.card);
+      else { flush(); out.push(it.card); }
     } else if (it.block) {
       flush();
       for (const c of blockCards(it.block, r, hass)) out.push(c);
@@ -2973,6 +2976,20 @@ const LayoutUI = {
     }
 
     if (it.card) {
+      // a card defaults to the full row; half lets it pair with a light
+      const half = document.createElement("button");
+      half.className = "btn";
+      half.title = it.width === "half"
+        ? "Half row — click for full"
+        : "Full row — click for half, to sit beside a light";
+      half.innerHTML = `<ha-icon icon="${it.width === "half"
+        ? "mdi:arrow-collapse-horizontal" : "mdi:arrow-expand-horizontal"}"></ha-icon>`;
+      half.addEventListener("click", () => {
+        if (it.width === "half") delete it.width; else it.width = "half";
+        this._lbRender(); this._lbChanged();
+      });
+      row.appendChild(half);
+
       const edit = document.createElement("button");
       edit.className = "btn"; edit.title = "Edit this card";
       edit.innerHTML = `<ha-icon icon="mdi:pencil-outline"></ha-icon>`;
