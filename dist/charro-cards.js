@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.41.0";
+const VERSION = "4.42.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -568,6 +568,18 @@ function waterCards(r) {
   return out;
 }
 
+/* `visibility` is handled by Home Assistant's own card wrapper, not by the
+ * card — so a hand-written card we instantiate ourselves ignores it and shows
+ * regardless. A `conditional` card does the same job from the inside, and
+ * takes the same conditions, so translate rather than silently show. */
+function asConditional(card) {
+  if (!card || !card.visibility) return card;
+  const inner = { ...card };
+  const conditions = inner.visibility;
+  delete inner.visibility;
+  return { type: "conditional", conditions, card: inner };
+}
+
 /* A door is more than an entity id: a garage needs the button that operates
  * it and the sensor that says the opener isn't lying. An alert_sensors entry
  * can carry those, the same way a light can carry its name and icon. */
@@ -706,7 +718,7 @@ function autoBody(r, hass) {
   const out = [];
   const push = (c) => { if (c) out.push(c); };
 
-  for (const c of extra.start || []) push(c);
+  for (const c of extra.start || []) push(asConditional(c));
   for (const name of order) {
     if (name === "lights") {
       const groups = LIGHT_GROUPS
@@ -721,9 +733,9 @@ function autoBody(r, hass) {
     } else {
       for (const c of blockCards(name, r, hass)) push(c);
     }
-    for (const c of extra[name] || []) push(c);
+    for (const c of extra[name] || []) push(asConditional(c));
   }
-  for (const c of extra.end || []) push(c);
+  for (const c of extra.end || []) push(asConditional(c));
   return out;
 }
 
@@ -797,8 +809,8 @@ function layoutBody(r, hass) {
     } else if (it.card) {
       // a card takes the row to itself unless it's asked to share, which is
       // what pairs a door with the light above it
-      if (it.width === "half") run.push(it.card);
-      else { flush(); out.push(it.card); }
+      if (it.width === "half") run.push(asConditional(it.card));
+      else { flush(); out.push(asConditional(it.card)); }
     } else if (it.block) {
       flush();
       for (const c of blockCards(it.block, r, hass)) out.push(c);
@@ -1730,6 +1742,8 @@ const ROOM_SCHEMA = [
       { value: "half", label: "Half width" },
       { value: "full", label: "Full width" }] } } },
   { name: "popup_hash", selector: { text: {} } },
+  { name: "page_path", selector: { text: {} } },
+  { name: "popup_width", selector: { text: {} } },
   { type: "expandable", name: "", title: "Lights", icon: "mdi:lightbulb", schema: [
     { name: "light_entities", selector: ent(["light", "switch"], true) },
     { name: "landscape_entities", selector: ent(["light", "switch"], true) },
@@ -1743,8 +1757,10 @@ const ROOM_SCHEMA = [
   ]},
   { type: "expandable", name: "", title: "Pool & water", icon: "mdi:pool", schema: [
     { name: "pool_switch", selector: ent(["switch"]) },
+    { name: "pool_name", selector: { text: {} } },
     { name: "pool_heater", selector: ent(["water_heater", "climate"]) },
     { name: "spa_switch", selector: ent(["switch"]) },
+    { name: "spa_name", selector: { text: {} } },
     { name: "spa_heater", selector: ent(["water_heater", "climate"]) },
     { name: "fountain_entities", selector: ent(["switch", "light"], true) },
   ]},
@@ -1770,6 +1786,10 @@ const ROOM_LABELS = {
   tile_size: "Tile width on the rooms view",
   rooms_dir: "Folder holding the room files",
   popup_hash: "Pop-up hash (blank = from the name)",
+  page_path: "Full-page path",
+  popup_width: "Pop-up width",
+  pool_name: "Pool tile name",
+  spa_name: "Spa tile name",
   light_entities: "Lights",
   landscape_entities: "Landscape lights (own chip)",
   fan_entities: "Ceiling fans",
@@ -1791,6 +1811,8 @@ const ROOM_LABELS = {
 const ROOM_HELPERS = {
   tile_size: 'Ignored if the card in the view sets its own grid_options.',
   popup_hash: 'The card\'s own pop-up, e.g. "#garage-east". Blank derives it from the name.',
+  page_path: 'Where the pop-up\'s expand button goes. Blank derives it from the room key.',
+  popup_width: 'Overrides the width the column count picks. A number is pixels, or give a CSS length.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   fan_entities: "The Lutron fan dimmers. Gets the ceiling-fan chip.",
   bath_fan_entities: "Everything else that moves air \u2014 exhaust fans, air purifiers, tower fans. Gets its own chip. A fan. entity gets fan controls, a light-domain dimmer gets a speed slider.",
@@ -3932,56 +3954,317 @@ class CharroRoomsEditor extends HTMLElement {
     });
 
     // an expansion panel, to sit with the ha-form groups above it rather
-    // than sprawl open under them
+    // than sprawl open under them. Each list-of-objects gets its own group,
+    // so the left column reads as sections rather than one long form.
     this._videoBox = document.createElement("div");
-    let videoHost = this._videoBox;
-    if (customElements.get("ha-expansion-panel")) {
-      const p = document.createElement("ha-expansion-panel");
-      p.header = "Video / remotes";
-      p.outlined = true;
-      p.leftChevron = false;
-      p.expanded = !!this._videoOpen;
-      p.addEventListener("expanded-changed", (ev) => {
-        this._videoOpen = ev.detail ? ev.detail.expanded : !this._videoOpen;
-      });
-      const ic = document.createElement("ha-icon");
-      ic.icon = "mdi:remote-tv";
-      ic.slot = "leading-icon";
-      ic.style.cssText = "--mdc-icon-size:22px;color:var(--secondary-text-color)";
-      p.append(ic, this._videoBox);
-      videoHost = p;
-    }
+    this._remotesBox = document.createElement("div");
+    this._zoneBox = document.createElement("div");
+    this._waterBox = document.createElement("div");
+    this._doorsBox = document.createElement("div");
+
+    const videoHost = this._panel("Video / remotes",
+      "Screens, their sources, one remote", "mdi:remote-tv", "_videoOpen", this._videoBox);
+    const remotesHost = this._panel("Remotes",
+      "For a room with no screen picker", "mdi:remote", "_remotesOpen", this._remotesBox);
+    const zoneHost = this._panel("Music zone inputs",
+      "Which player each amplifier input carries", "mdi:speaker-multiple",
+      "_zoneOpen", this._zoneBox);
+    const waterHost = this._panel("Pool & spa actions",
+      "Scripts the switches can't express", "mdi:pool", "_waterOpen", this._waterBox);
+    const doorsHost = this._panel("Door labels & buttons",
+      "Name a door and say what opens it", "mdi:door-closed",
+      "_doorsOpen", this._doorsBox);
 
     /* Sections and the raw cards blob still do real work — sections orders
      * and filters the automatic body, and a room can carry cards a layout
      * hasn't been built from yet — but neither is the way you'd reach for
-     * now, so they fold away instead of sitting open above the layout. */
-    let advanced = document.createElement("div");
-    if (customElements.get("ha-expansion-panel")) {
-      const p = document.createElement("ha-expansion-panel");
-      p.header = "Advanced";
-      p.secondary = "Section order, and cards not yet in the layout";
-      p.outlined = true;
-      p.leftChevron = false;
-      p.expanded = !!this._advOpen;
-      p.addEventListener("expanded-changed", (ev) => {
-        this._advOpen = ev.detail ? ev.detail.expanded : !this._advOpen;
-      });
-      const ic = document.createElement("ha-icon");
-      ic.icon = "mdi:tune"; ic.slot = "leading-icon";
-      ic.style.cssText = "--mdc-icon-size:22px;color:var(--secondary-text-color)";
-      p.append(ic, h2, secs, h3, ta);
-      advanced = p;
-    } else {
-      advanced.append(h2, secs, h3, ta);
-    }
+     * now, so they fold away too. */
+    const h5 = document.createElement("h4");
+    h5.textContent = "Media player card override (JSON)";
+    const mc = document.createElement("textarea");
+    mc.spellcheck = false;
+    mc.style.minHeight = "120px";
+    mc.value = this._room.media_card ? JSON.stringify(this._room.media_card, null, 2) : "";
+    mc.placeholder = '{ "type": "media-control", "entity": "media_player.x" }';
+    mc.addEventListener("change", () => {
+      const t = mc.value.trim();
+      if (!t) { delete this._room.media_card; this._say(""); this._renderPreview(); return; }
+      try { this._room.media_card = JSON.parse(t); this._say(""); this._renderPreview(); }
+      catch (err) { this._say(`Media card: ${err.message}`, "err"); }
+    });
 
-    this._left.append(videoHost, advanced);
+    const advBody = document.createElement("div");
+    advBody.append(h2, secs, h5, mc, h3, ta);
+    const advanced = this._panel("Advanced",
+      "Section order, the media card override, and raw cards", "mdi:tune",
+      "_advOpen", advBody);
+
+    this._left.append(videoHost, remotesHost, zoneHost, waterHost, doorsHost, advanced);
     this._renderVideo();
+    this._renderRemotes();
+    this._renderZonePlayers();
+    this._renderWaterActions();
+    this._renderDoors();
     this._lbEnsure();
     this._lbRender();
     this._renderLights();
     this._renderPreview();
+  }
+
+  /* Remotes that aren't behind a video switcher — a room with one TV and one
+   * box. Same specs the `remotes` list takes. */
+  _renderRemotes() {
+    const box = this._remotesBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const f = this._fields(() => { this._renderRemotes(); this._renderPreview(); });
+    const list = this._room.remotes || [];
+    const tpls = Object.keys(this._room._remotes || {});
+
+    list.forEach((spec, i) => {
+      const row = f.rowBox();
+      const sel = document.createElement("div");
+      sel.className = "vfield";
+      const t = document.createElement("span"); t.textContent = "Remote template";
+      const dd = document.createElement("select");
+      for (const v of ["", ...tpls]) {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = v || "— pick one —";
+        if (spec.use === v) o.selected = true;
+        dd.appendChild(o);
+      }
+      dd.addEventListener("change", () => {
+        if (dd.value) spec.use = dd.value; else delete spec.use;
+        this._renderRemotes(); this._renderPreview();
+      });
+      sel.append(t, dd);
+      row.appendChild(sel);
+
+      const set = (k) => (v) => { if (v) spec[k] = v; else delete spec[k]; };
+      row.appendChild(f.text("Title", spec.title, set("title"), "Javon TV"));
+      row.appendChild(f.ent("Media player", spec.media_player, ["media_player"],
+        set("media_player")));
+      row.appendChild(f.ent("Remote entity", spec.remote, ["remote"], set("remote")));
+      row.appendChild(f.ent("Volume goes to", spec.volume, ["media_player"], set("volume")));
+      row.appendChild(f.ent("Show it while this is on", spec.when,
+        ["media_player", "switch", "remote", "binary_sensor"], set("when")));
+      row.appendChild(f.ent("Waking it runs", spec.wake, ["script", "scene", "button"],
+        set("wake")));
+      row.appendChild(f.text("Off tile name", spec.off_name, set("off_name"), "Javon TV"));
+      row.appendChild(f.icon("Off tile icon", spec.off_icon, set("off_icon")));
+      row.appendChild(f.del("Remove remote", () => {
+        this._room.remotes.splice(i, 1);
+        if (!this._room.remotes.length) delete this._room.remotes;
+      }));
+      box.appendChild(row);
+    });
+
+    box.appendChild(f.add("+ Remote", () => {
+      (this._room.remotes = this._room.remotes || []).push({});
+    }));
+  }
+
+  /* Which player each amplifier input is carrying. */
+  _renderZonePlayers() {
+    const box = this._zoneBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const f = this._fields(() => { this._renderZonePlayers(); this._renderPreview(); });
+    const map = this._room.zone_players || {};
+
+    for (const [value, entity] of Object.entries(map)) {
+      const row = f.rowBox();
+      row.appendChild(f.text("Source value", value, (v) => {
+        if (!v || v === value) return;
+        const next = {};
+        for (const [k, e] of Object.entries(this._room.zone_players))
+          next[k === value ? v : k] = e;
+        this._room.zone_players = next;
+      }, "1"));
+      row.appendChild(f.ent("Player on that input", entity, ["media_player"], (v) => {
+        if (v) this._room.zone_players[value] = v;
+        else delete this._room.zone_players[value];
+      }));
+      row.appendChild(f.del("Remove input", () => {
+        delete this._room.zone_players[value];
+        if (!Object.keys(this._room.zone_players).length) delete this._room.zone_players;
+      }));
+      box.appendChild(row);
+    }
+
+    box.appendChild(f.add("+ Input", () => {
+      const m = this._room.zone_players = this._room.zone_players || {};
+      let n = 1;
+      while (m[String(n)]) n++;
+      m[String(n)] = "";
+    }));
+  }
+
+  /* The scripts a Pentair needs that its switches can't express. */
+  _renderWaterActions() {
+    const box = this._waterBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const f = this._fields(() => { this._renderWaterActions(); this._renderPreview(); });
+    const list = this._room.water_actions || [];
+
+    list.forEach((a, i) => {
+      const row = f.rowBox();
+      const set = (k) => (v) => { if (v) a[k] = v; else delete a[k]; };
+      row.appendChild(f.text("Name", a.name, set("name"), "Turn Spa On"));
+      row.appendChild(f.icon("Icon", a.icon, set("icon")));
+      row.appendChild(f.ent("Tapping it runs", a.script,
+        ["script", "scene", "button", "automation"], set("script")));
+      row.appendChild(f.text("Colour", a.color, set("color"), "light-green"));
+      row.appendChild(f.ent("Show while this is off", a.when_off,
+        ["switch", "light", "water_heater", "binary_sensor"], set("when_off")));
+      row.appendChild(f.many("Show while any of these is on", a.when_on,
+        ["switch", "light", "water_heater", "binary_sensor"], (v) => {
+          if (v.length) a.when_on = v; else delete a.when_on;
+        }));
+      row.appendChild(f.del("Remove action", () => {
+        this._room.water_actions.splice(i, 1);
+        if (!this._room.water_actions.length) delete this._room.water_actions;
+      }));
+      box.appendChild(row);
+    });
+
+    box.appendChild(f.add("+ Action", () => {
+      (this._room.water_actions = this._room.water_actions || []).push({ name: "" });
+    }));
+  }
+
+  /* A door's label and the button that operates it, for rooms that never
+   * take their layout over — where the layout row would be the only way. */
+  _renderDoors() {
+    const box = this._doorsBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const f = this._fields(() => { this._renderDoors(); this._renderPreview(); });
+    const list = this._room.alert_sensors || [];
+    if (!list.length) {
+      const n = document.createElement("div");
+      n.className = "vnote";
+      n.textContent = "Add sensors under Door / motion alert above, then name them here.";
+      box.appendChild(n);
+      return;
+    }
+
+    list.forEach((sRaw, i) => {
+      const id = typeof sRaw === "string" ? sRaw : sRaw.entity;
+      const o = typeof sRaw === "object" ? sRaw : {};
+      const obj = () => {
+        if (typeof this._room.alert_sensors[i] === "string")
+          this._room.alert_sensors[i] = { entity: id };
+        return this._room.alert_sensors[i];
+      };
+      const set = (k) => (v) => {
+        if (v) obj()[k] = v;
+        else if (typeof this._room.alert_sensors[i] === "object")
+          delete this._room.alert_sensors[i][k];
+      };
+      const row = f.rowBox();
+      const cap = document.createElement("div");
+      cap.className = "vcap"; cap.textContent = id;
+      row.appendChild(cap);
+      row.appendChild(f.text("Label", o.label, set("label"), "Door 3"));
+      row.appendChild(f.icon("Icon", o.icon, set("icon")));
+      row.appendChild(f.ent("Button that opens it", o.toggle_button,
+        ["button", "switch", "script", "cover"], set("toggle_button")));
+      row.appendChild(f.ent("Vehicle sensor", o.vehicle_entity, ["binary_sensor"],
+        set("vehicle_entity")));
+      box.appendChild(row);
+    });
+  }
+
+  /* Every one of these panels edits a list of objects, which `ha-form` has no
+   * good shape for, so they all build rows out of the same three fields.
+   * `redraw` is what to re-run after a change — the panel plus the preview. */
+  _fields(redraw) {
+    const wrap = (label, el) => {
+      const w = document.createElement("div");
+      w.className = "vfield";
+      const t = document.createElement("span"); t.textContent = label;
+      w.append(t, el);
+      return w;
+    };
+    const text = (label, value, onChange, placeholder) => {
+      const i = document.createElement("input");
+      i.type = "text"; i.value = value || ""; i.placeholder = placeholder || "";
+      i.addEventListener("change", () => { onChange(i.value.trim()); redraw(); });
+      return wrap(label, i);
+    };
+    const ent = (label, value, domains, onChange, hint) => {
+      if (!customElements.get("ha-entity-picker")) return text(label, value, onChange, hint);
+      const p = document.createElement("ha-entity-picker");
+      p.hass = this._hass;
+      p.value = value || "";
+      p.allowCustomEntity = true;
+      if (domains && domains.length) p.includeDomains = domains;
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        onChange((ev.detail && ev.detail.value) || "");
+        redraw();
+      });
+      return wrap(label, p);
+    };
+    const icon = (label, value, onChange) => {
+      if (!customElements.get("ha-icon-picker"))
+        return text(label, value, onChange, "mdi:…");
+      const p = document.createElement("ha-icon-picker");
+      p.hass = this._hass;
+      p.value = value || "";
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        onChange(((ev.detail && ev.detail.value) || "").trim());
+        redraw();
+      });
+      return wrap(label, p);
+    };
+    /* A list of entities, as one picker per entry plus an empty one to
+     * grow into — simpler to reason about than a multi-select. */
+    const many = (label, values, domains, onChange) => {
+      const box = document.createElement("div");
+      box.className = "vfield";
+      const t = document.createElement("span"); t.textContent = label;
+      box.appendChild(t);
+      const list = [].concat(values || []);
+      [...list, ""].forEach((v, i) => {
+        const row = ent("", v, domains, (nv) => {
+          const next = [...list];
+          if (i < next.length) { if (nv) next[i] = nv; else next.splice(i, 1); }
+          else if (nv) next.push(nv);
+          onChange(next);
+        });
+        row.querySelector("span").remove();
+        box.appendChild(row);
+      });
+      return box;
+    };
+    /* A remove button that reads as one */
+    const del = (label, onClick) => {
+      const b = document.createElement("button");
+      b.className = "vdel"; b.textContent = label;
+      b.addEventListener("click", () => { onClick(); redraw(); });
+      return b;
+    };
+    const add = (label, onClick) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", () => { onClick(); redraw(); });
+      return b;
+    };
+    const cap = (t) => {
+      const d = document.createElement("div");
+      d.className = "vcap"; d.textContent = t;
+      return d;
+    };
+    const rowBox = () => {
+      const d = document.createElement("div");
+      d.className = "vrowbox";
+      return d;
+    };
+    return { text, ent, icon, many, del, add, cap, rowBox };
   }
 
   /* Screens and sources are lists of objects, which ha-form has no good shape
@@ -4005,54 +4288,9 @@ class CharroRoomsEditor extends HTMLElement {
       return;
     }
 
-    const changed = () => { this._renderVideo(); this._renderPreview(); };
-    const field = (label, value, onChange, placeholder) => {
-      const wrap = document.createElement("label");
-      wrap.className = "vfield";
-      const t = document.createElement("span"); t.textContent = label;
-      const i = document.createElement("input");
-      i.type = "text"; i.value = value || ""; i.placeholder = placeholder || "";
-      i.addEventListener("change", () => { onChange(i.value.trim()); changed(); });
-      wrap.append(t, i);
-      return wrap;
-    };
-    /* An entity id is a thing to pick, not a string to remember — HA's own
-     * picker searches and validates, and it's registered on a plain dashboard
-     * load. Falls back to the text box if a future frontend drops it. */
-    const ent = (label, value, domains, onChange, hint) => {
-      if (!customElements.get("ha-entity-picker")) return field(label, value, onChange, hint);
-      const wrap = document.createElement("div");
-      wrap.className = "vfield";
-      const t = document.createElement("span"); t.textContent = label;
-      const p = document.createElement("ha-entity-picker");
-      p.hass = this._hass;
-      p.value = value || "";
-      p.allowCustomEntity = true;
-      if (domains && domains.length) p.includeDomains = domains;
-      p.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        onChange((ev.detail && ev.detail.value) || "");
-        changed();
-      });
-      wrap.append(t, p);
-      return wrap;
-    };
-    const iconField = (label, value, onChange) => {
-      if (!customElements.get("ha-icon-picker")) return field(label, value, onChange, "mdi:television");
-      const wrap = document.createElement("div");
-      wrap.className = "vfield";
-      const t = document.createElement("span"); t.textContent = label;
-      const p = document.createElement("ha-icon-picker");
-      p.hass = this._hass;
-      p.value = value || "";
-      p.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        onChange(((ev.detail && ev.detail.value) || "").trim());
-        changed();
-      });
-      wrap.append(t, p);
-      return wrap;
-    };
+    const { text: field, ent, icon: iconField } = this._fields(() => {
+      this._renderVideo(); this._renderPreview();
+    });
 
     // one screen needs no picker; more than one does
     const many = (v.displays || []).length > 1;
@@ -4222,7 +4460,7 @@ class CharroRoomsEditor extends HTMLElement {
 
     const row = document.createElement("div"); row.className = "h4row";
     const h = document.createElement("h4");
-    h.textContent = "Per-light name, icon, dimming and counting";
+    h.textContent = "Per-light name, icon, render, dimming and counting";
     const n = document.createElement("span"); n.className = "n";
     n.textContent = `${rows.length} total`;
     const hide = document.createElement("button");
@@ -4236,7 +4474,7 @@ class CharroRoomsEditor extends HTMLElement {
     const tbl = document.createElement("table");
     tbl.hidden = !!this._lightsHidden;
     tbl.innerHTML =
-      "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Dims</th>" +
+      "<thead><tr><th>Entity</th><th>Name</th><th>Icon</th><th>Render</th><th>Dims</th>" +
       "<th title=\"Off for a group whose members are also listed\">Counts</th></tr></thead>";
     const tb = document.createElement("tbody");
 
@@ -4254,6 +4492,14 @@ class CharroRoomsEditor extends HTMLElement {
       const ti = document.createElement("td");
       const ic = document.createElement("input"); ic.type = "text";
       ic.value = obj.icon || ""; ic.placeholder = "mdi:…";
+      const trd = document.createElement("td");
+      const rsel = document.createElement("select");
+      for (const [v, lab] of Object.entries(RENDER_KINDS)) {
+        const op = document.createElement("option");
+        op.value = v; op.textContent = lab;
+        if (o_render(obj) === v) op.selected = true;
+        rsel.appendChild(op);
+      }
       const td = document.createElement("td");
       const sw = document.createElement("ha-switch");
       sw.checked = obj.dim !== false;
@@ -4269,6 +4515,7 @@ class CharroRoomsEditor extends HTMLElement {
         if (ic.value.trim()) next.icon = ic.value.trim();
         if (!sw.checked) next.dim = false;
         if (!cw.checked) next.count = false;
+        if (rsel.value !== "mushroom") next.render = rsel.value;
         const arr = this._room[list];
         const i = arr.findIndex((x) => lightId(x) === id);
         arr[i] = Object.keys(next).length > 1 ? next : id;
@@ -4278,9 +4525,11 @@ class CharroRoomsEditor extends HTMLElement {
       ic.addEventListener("change", write);
       sw.addEventListener("change", write);
       cw.addEventListener("change", write);
+      rsel.addEventListener("change", write);
 
-      tn.appendChild(nm); ti.appendChild(ic); td.appendChild(sw); tc.appendChild(cw);
-      tr.append(te, tn, ti, td, tc);
+      tn.appendChild(nm); ti.appendChild(ic); trd.appendChild(rsel);
+      td.appendChild(sw); tc.appendChild(cw);
+      tr.append(te, tn, ti, trd, td, tc);
       tb.appendChild(tr);
     }
     tbl.appendChild(tb);

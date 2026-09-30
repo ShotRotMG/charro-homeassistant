@@ -449,6 +449,28 @@ just those entities, so an active house doesn't rebuild it on every tick.
 Chip colours live in one place in the code, shared by this header, so the tile
 and the pop-up can't drift apart.
 
+### Editing a room
+
+Everything in a room file is reachable from the rooms editor. The form covers
+the scalars and the entity lists; six collapsible panels cover the rest:
+
+| panel | what it edits |
+| --- | --- |
+| Video / remotes | the `video` block — screens, their sources, the templates |
+| Remotes | `remotes`, for a room with no screen picker |
+| Music zone inputs | `zone_players` |
+| Pool & spa actions | `water_actions` — script, colour, and both conditions |
+| Door labels & buttons | per-sensor `label`, `icon`, `toggle_button`, `vehicle_entity` |
+| Advanced | `sections`, `media_card`, and the raw `cards` slots |
+
+The layout builder owns arrangement, and the per-light table covers name,
+icon, render, dimming and counting for rooms that never take their layout over.
+
+A hand-written card's `visibility` is translated into a `conditional` card when
+it renders. Home Assistant applies `visibility` in its own card wrapper, which
+a card instantiated directly never passes through — so a card with
+`visibility` used to show regardless of its conditions.
+
 ### Pool, spa and their scripts
 
 The `water` block draws the pumps you've already named in `pool_switch` and
