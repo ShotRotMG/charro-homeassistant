@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.36.0";
+const VERSION = "4.37.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -491,6 +491,19 @@ function climateCard(r) {
   return card;
 }
 
+/* A door is more than an entity id: a garage needs the button that operates
+ * it and the sensor that says the opener isn't lying. An alert_sensors entry
+ * can carry those, the same way a light can carry its name and icon. */
+function securityCard(s, r) {
+  const o = typeof s === "object" && s ? s : {};
+  const id = o.entity || (typeof s === "string" ? s : "");
+  const card = { type: "custom:charro-security-card", entity: id };
+  for (const k of ["label", "icon", "toggle_button", "vehicle_entity", "alert_mode"])
+    if (o[k]) card[k] = o[k];
+  if (!card.confirm_sensor && r && r.confirm_sensor) card.confirm_sensor = r.confirm_sensor;
+  return card;
+}
+
 /* An RTI zone is three entities in three different domains that share one
  * name: switch.<zone>_power, select.<zone>_source, number.<zone>_volume.
  * Swapping only the suffix leaves the domain wrong — switch.<zone>_source
@@ -593,7 +606,7 @@ function blockCards(name, r, hass) {
 
   if (name === "security" && (r.alert_sensors || []).length) {
     push({ type: "grid", columns: 2, square: false,
-           cards: r.alert_sensors.map((e) => ({ type: "custom:charro-security-card", entity: e })) });
+           cards: r.alert_sensors.map((e) => securityCard(e, r)) });
   }
 
   return out;
@@ -671,6 +684,14 @@ function layoutBody(r, hass) {
         out.push({ type: "grid", columns: 1, square: false, cards: [lightCard(it, r.no_dim)] });
       } else {
         run.push(lightCard(it, r.no_dim));
+      }
+    } else if (it.sensor) {
+      if (it.width === "full") {
+        flush();
+        out.push({ type: "grid", columns: 1, square: false,
+                   cards: [securityCard(it.sensor, r)] });
+      } else {
+        run.push(securityCard(it.sensor, r));
       }
     } else if (it.zone) {
       // a single music zone, so it can sit with its own room's lights
@@ -814,6 +835,8 @@ function materializeLayout(r) {
         for (const l of list)
           out.push(typeof l === "string" ? { entity: l } : { ...l });
       }
+    } else if (name === "security") {
+      for (const e of r.alert_sensors || []) out.push({ sensor: e });
     } else if (name === "music") {
       // split, so each zone can be dragged to the room it belongs to
       for (const p of r.music_powers || []) out.push({ zone: p });
@@ -2789,6 +2812,13 @@ const LayoutUI = {
         .map((e) => ({ entity: e }));
       if (items.length) cats.push({ label, items });
     }
+    const sid = (x) => (typeof x === "string" ? x : (x && x.entity));
+    const placedSensors = new Set(this._lbAll().map((x) => x && sid(x.sensor)).filter(Boolean));
+    const sensors = (r.alert_sensors || [])
+      .filter((x) => sid(x) && !placedSensors.has(sid(x)))
+      .map((x) => ({ sensor: x }));
+    if (sensors.length) cats.push({ label: "Door / motion", items: sensors });
+
     const zid = (z) => (typeof z === "string" ? z : (z && (z.entity || z.power)));
     const placedZones = new Set(this._lbAll().map((x) => x && zid(x.zone)).filter(Boolean));
     const zones = (r.music_powers || [])
@@ -2830,6 +2860,16 @@ const LayoutUI = {
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.sensor) {
+      const id = typeof it.sensor === "string" ? it.sensor : it.sensor.entity;
+      const st = this._hass.states[id];
+      const reg = this._hass.entities && this._hass.entities[id];
+      return { icon: (typeof it.sensor === "object" && it.sensor.icon) || "mdi:door-closed",
+               text: (typeof it.sensor === "object" && it.sensor.label)
+                     || (reg && (reg.name || reg.original_name))
+                     || (st && st.attributes.friendly_name) || id,
+               sub: id };
+    }
     if (it.zone) {
       const id = typeof it.zone === "string" ? it.zone : (it.zone.entity || it.zone.power);
       const stem = String(id).replace(/^[^.]*\./, "").replace(/_power$/, "");
@@ -2975,6 +3015,65 @@ const LayoutUI = {
       return row;
     }
 
+    if (it.sensor) {
+      // promote a bare id the moment you set something on it
+      const obj = () => {
+        if (typeof it.sensor === "string") it.sensor = { entity: it.sensor };
+        return it.sensor;
+      };
+      const o = typeof it.sensor === "object" ? it.sensor : {};
+
+      const lbl = document.createElement("input");
+      lbl.type = "text"; lbl.className = "nm"; lbl.value = o.label || "";
+      lbl.placeholder = "Label";
+      lbl.addEventListener("change", () => {
+        const v = lbl.value.trim();
+        if (v) obj().label = v; else if (typeof it.sensor === "object") delete it.sensor.label;
+        this._lbChanged();
+      });
+      row.appendChild(lbl);
+
+      // a garage door needs the button that operates it
+      const tog = customElements.get("ha-entity-picker")
+        ? document.createElement("ha-entity-picker")
+        : document.createElement("input");
+      if (tog.tagName === "HA-ENTITY-PICKER") {
+        tog.className = "ic pick";
+        tog.hass = this._hass;
+        tog.value = o.toggle_button || "";
+        tog.allowCustomEntity = true;
+        tog.includeDomains = ["button", "switch", "script", "cover"];
+        tog.addEventListener("value-changed", (ev) => {
+          ev.stopPropagation();
+          const v = (ev.detail && ev.detail.value) || "";
+          if (v) obj().toggle_button = v;
+          else if (typeof it.sensor === "object") delete it.sensor.toggle_button;
+          this._lbChanged();
+        });
+      } else {
+        tog.type = "text"; tog.className = "ic"; tog.value = o.toggle_button || "";
+        tog.placeholder = "opens it";
+        tog.addEventListener("change", () => {
+          const v = tog.value.trim();
+          if (v) obj().toggle_button = v;
+          else if (typeof it.sensor === "object") delete it.sensor.toggle_button;
+          this._lbChanged();
+        });
+      }
+      row.appendChild(tog);
+
+      const w = document.createElement("button");
+      w.className = "btn";
+      w.title = it.width === "full" ? "Full row — click for half" : "Half row — click for full";
+      w.innerHTML = `<ha-icon icon="${it.width === "full"
+        ? "mdi:arrow-expand-horizontal" : "mdi:arrow-collapse-horizontal"}"></ha-icon>`;
+      w.addEventListener("click", () => {
+        if (it.width === "full") delete it.width; else it.width = "full";
+        this._lbRender(); this._lbChanged();
+      });
+      row.appendChild(w);
+    }
+
     if (it.card) {
       // a card defaults to the full row; half lets it pair with a light
       const half = document.createElement("button");
@@ -3010,7 +3109,8 @@ const LayoutUI = {
     });
     row.appendChild(move);
 
-    if (it.heading !== undefined || it.card || it.block || it.gap || it.zone) {
+    if (it.heading !== undefined || it.card || it.block || it.gap || it.zone
+        || it.sensor) {
       const del = document.createElement("button");
       del.className = "btn";
       del.title = it.block

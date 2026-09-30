@@ -448,6 +448,37 @@ just those entities, so an active house doesn't rebuild it on every tick.
 Chip colours live in one place in the code, shared by this header, so the tile
 and the pop-up can't drift apart.
 
+### Alert sensors
+
+An `alert_sensors` entry is an id, or an object carrying what the door needs:
+
+```json
+"alert_sensors": [
+  { "entity": "cover.ratgdo32_2b68b8_door",
+    "label": "Door 3",
+    "toggle_button": "button.ratgdo32_2b68b8_toggle_door" }
+]
+```
+
+`label`, `icon`, `toggle_button`, `vehicle_entity` and `alert_mode` all pass
+through to the card, and the room's `confirm_sensor` is inherited unless the
+entry sets its own. A `toggle_button` is what makes the icon operate the door
+rather than just report on it.
+
+Each sensor is also a layout row of its own:
+
+```json
+{ "sensor": "cover.ratgdo32_2b68b8_door" },
+{ "entity": "light.ratgdo32_2b68b8_light", "name": "Overhead 3" }
+```
+
+It shares the two-up run like a light, so a door pairs with the opener light on
+the same ratgdo; `"width": "full"` takes the row. Switching a room to a custom
+layout expands the `security` block into these automatically, and unplaced ones
+show in the tray under **Door / motion**. The row carries a label field and a
+picker for the button that opens it, so none of this needs a hand-written
+`custom:charro-security-card`.
+
 ### Gaps
 
 Tiles fill a two-column grid in order, so a room with an odd number of them
@@ -475,17 +506,10 @@ What lands is an ordinary `{ "card": … }` layout row: draggable, hideable, and
 droppable into a column like anything else. The pencil on an existing card row
 reopens the same panel.
 
-A card takes the whole row by default. `"width": "half"` puts it into the
-two-up run with the lights instead, which is how a garage door ends up beside
-the opener light it belongs to:
+A card takes the whole row by default; `"width": "half"` puts it into the
+two-up run with the lights instead. The arrows button on a card row toggles it.
 
-```json
-{ "card": { "type": "custom:charro-security-card", "entity": "cover.door_3" },
-  "width": "half" },
-{ "entity": "light.opener_3", "name": "Overhead 3" }
-```
-
-The arrows button on a card row toggles it.
+For a door you don't need a card at all — see **Alert sensors** below.
 
 This replaces `cards.<slot>` as the place to put one-offs. The old slots still
 work and still render — switching a room to a custom layout materializes them
