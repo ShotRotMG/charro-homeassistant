@@ -303,6 +303,31 @@ keys still draw their own tile in rooms with no remote configured, and
 Name a template that doesn't exist and you get a card saying so, rather than
 silence.
 
+### The pop-up header
+
+The header reads like the room's own tile rather than a plain dialog bar:
+
+- the room icon on the left, amber whenever anything in `light_entities` or
+  `landscape_entities` is on — the same rule the tile uses
+- the room name centred, at 24px
+- on the right, the same chips the tile shows, then anything open, then the
+  full-page and close buttons
+
+Chips are clickable. A count chip (lights, landscape, fans, water, music
+zones) turns that group off, which is what the tile's chips do. A single-entity
+chip (TV, projector, receiver, now playing, thermostat) opens more-info. Each
+carries a tooltip saying what it is and what a tap will do.
+
+`alert_sensors` that aren't closed put a red door icon beside the chips.
+Hovering it names them — "Saloon Lanai Door — open" — and lists all of them
+when more than one is open; clicking opens the first.
+
+The header redraws when the states behind it change, guarded by a signature of
+just those entities, so an active house doesn't rebuild it on every tick.
+
+Chip colours live in one place in the code, shared by this header, so the tile
+and the pop-up can't drift apart.
+
 ### Gaps
 
 Tiles fill a two-column grid in order, so a room with an odd number of them

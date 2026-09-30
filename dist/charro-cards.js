@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.27.0";
+const VERSION = "4.28.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -816,23 +816,151 @@ const POPUP_CSS = `
 @media (min-width:1900px){
   .charro-pop{ width:min(var(--charro-pop-w,680px),82vw); }
 }
+/* Three columns, the outer two equal, so the title sits centred however wide
+ * the chip strip gets. Below 700px it gives up and goes back to one row. */
 .charro-pop-hd{
-  display:flex; align-items:center; gap:10px; margin:2px 4px 12px;
+  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  align-items:center; gap:10px; margin:2px 4px 14px;
 }
-.charro-pop-hd ha-icon{ --mdc-icon-size:22px; color:var(--secondary-text-color); }
-.charro-pop-hd .t{ font-size:19px; font-weight:600; letter-spacing:-.01em; }
-.charro-pop-hd .sp{ margin-left:auto; }
+.charro-pop-hd .lead{ display:flex; align-items:center; gap:8px; min-width:0; }
+.charro-pop-hd .lead > ha-icon{ --mdc-icon-size:26px; color:var(--primary-text-color); }
+.charro-pop-hd .t{
+  font-size:24px; font-weight:650; letter-spacing:-.02em; text-align:center;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.charro-pop-hd .tail{
+  display:flex; align-items:center; gap:6px; justify-content:flex-end;
+  min-width:0; flex-wrap:wrap;
+}
 .charro-pop-hd button{
   border:none; background:rgba(127,127,127,.16); color:var(--primary-text-color);
   width:32px; height:32px; border-radius:50%; cursor:pointer;
-  display:grid; place-items:center; font:inherit;
+  display:grid; place-items:center; font:inherit; flex:none;
 }
 .charro-pop-hd button:hover{ background:rgba(127,127,127,.28); }
+.charro-pop-hd button ha-icon{ --mdc-icon-size:18px; }
+/* the alert sits with the chips but reads as a warning, not a count */
+.charro-pop-hd button.alert{ background:rgba(244,67,54,0.20); color:#ef5350; }
+.charro-pop-hd button.alert:hover{ background:rgba(244,67,54,0.32); }
+.charro-chips{ display:flex; align-items:center; gap:5px; flex-wrap:wrap;
+  justify-content:flex-end; }
+.charro-chip{
+  display:inline-flex; align-items:center; gap:3px; cursor:pointer;
+  border:none; padding:2px 7px; border-radius:999px; font:inherit;
+  font-size:13px; font-weight:700; line-height:1.5; white-space:nowrap;
+}
+.charro-chip ha-icon{ --mdc-icon-size:17px; width:17px; }
+.charro-chip:hover{ filter:brightness(1.25); }
+.charro-chip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
+@media (max-width:700px){
+  .charro-pop-hd{ display:flex; flex-wrap:wrap; }
+  .charro-pop-hd .t{ font-size:20px; text-align:left; }
+  .charro-pop-hd .tail{ margin-left:auto; }
+}
 .charro-pop-body > *{ margin-bottom:8px; display:block; }
 @media (prefers-reduced-motion:reduce){
   .charro-pop,.charro-pop-backdrop{ transition:none; }
 }
 `;
+
+/* The same chips the room tile shows, described in one place so the pop-up
+ * header and the tile can't drift apart on colour or meaning. Each is only
+ * produced when it has something to say, and carries what a tap should do. */
+const CHIP_AMBER  = ["rgba(255,193,7,0.22)", "var(--state-light-active-color, #ffc107)"];
+const CHIP_GREEN  = ["rgba(76,175,80,0.22)", "#4caf50"];
+const CHIP_BLUE   = ["rgba(33,150,243,0.22)", "#2196f3"];
+const CHIP_PURPLE = ["rgba(156,39,176,0.22)", "#ce93d8"];
+const CHIP_ORANGE = ["rgba(255,152,0,0.22)", "#ffb74d"];
+const CHIP_RED    = ["rgba(244,67,54,0.20)", "#ef5350"];
+
+const CHIP_GROUPS = [
+  ["light_entities",     "mdi:lightbulb",     CHIP_AMBER,  "light",  "Lights"],
+  ["landscape_entities", "mdi:palm-tree",     CHIP_AMBER,  "light",  "Landscape"],
+  ["fan_entities",       "mdi:ceiling-fan",   CHIP_GREEN,  "light",  "Ceiling fans"],
+  ["bath_fan_entities",  "mdi:fan",           CHIP_GREEN,  "light",  "Other fans"],
+  ["fountain_entities",  "mdi:fountain",      CHIP_BLUE,   "light",  "Water"],
+];
+
+const onCount = (hass, list) =>
+  (list || []).map(lightId).filter((e) => e && hass.states[e]
+                                       && hass.states[e].state === "on").length;
+
+/* what the thermostat is doing beats what it is set to */
+function climateChip(hass, id) {
+  const st = hass.states[id];
+  if (!st || st.state === "off" || st.state === "unavailable") return null;
+  const a = st.attributes || {};
+  const act = a.hvac_action;
+  const cur = a.current_temperature, set = a.temperature;
+  const known = cur != null && set != null;
+  let col = CHIP_GREEN, icon = "mdi:thermostat";
+  if (act === "cooling") col = CHIP_BLUE;
+  else if (act === "heating") col = CHIP_RED;
+  else if (act === "idle" || act === "fan") col = CHIP_GREEN;
+  else if (st.state === "cool") col = (known && cur <= set) ? CHIP_GREEN : CHIP_BLUE;
+  else if (st.state === "heat") col = (known && cur >= set) ? CHIP_GREEN : CHIP_RED;
+  else if (st.state === "heat_cool") col = CHIP_PURPLE;
+  const unit = (hass.config && hass.config.unit_system
+                && hass.config.unit_system.temperature) || "°";
+  return { key: "climate", icon, col,
+           text: cur != null ? `${Math.round(cur)}${unit}` : "",
+           title: `${st.attributes.friendly_name || id} — ${act || st.state}`,
+           tap: { kind: "more-info", entity: id } };
+}
+
+function roomChips(r, hass) {
+  if (!hass || !hass.states) return [];
+  const out = [];
+
+  for (const [key, icon, col, domain, label] of CHIP_GROUPS) {
+    const list = r[key] || [];
+    if (!list.length) continue;
+    const n = onCount(hass, list);
+    if (!n) continue;
+    out.push({ key, icon, col, text: String(n),
+               title: `${label} — ${n} on. Tap to turn them off.`,
+               tap: { kind: "off", domain, entities: lightIds(list) } });
+  }
+
+  const zones = (r.music_powers || []).filter(
+    (p) => { const id = typeof p === "string" ? p : (p && (p.entity || p.power));
+             return id && hass.states[id] && hass.states[id].state === "on"; });
+  if (zones.length) {
+    out.push({ key: "music", icon: "mdi:music", col: CHIP_PURPLE,
+               text: String(zones.length),
+               title: `${zones.length} music zone${zones.length > 1 ? "s" : ""} on. Tap to turn them off.`,
+               tap: { kind: "off", domain: "switch",
+                      entities: zones.map((p) => typeof p === "string" ? p : (p.entity || p.power)) } });
+  }
+
+  const mp = r.media_player && hass.states[r.media_player];
+  if (mp && mp.state === "playing") {
+    const a = mp.attributes || {};
+    out.push({ key: "nowplaying", icon: "mdi:music-note", col: CHIP_PURPLE, text: "",
+               title: a.media_title ? `${a.media_title}${a.media_artist ? " — " + a.media_artist : ""}`
+                                    : "Playing",
+               tap: { kind: "more-info", entity: r.media_player } });
+  }
+
+  for (const [key, icon, col, label] of [
+    ["tv_entity", "mdi:television", CHIP_ORANGE, "TV"],
+    ["projector_entity", "mdi:projector", CHIP_BLUE, "Projector"],
+    ["receiver_entity", "mdi:audio-video", CHIP_PURPLE, "Receiver"],
+  ]) {
+    const id = r[key];
+    const st = id && hass.states[id];
+    if (!st || OFFISH.includes(st.state) || st.state === "idle") continue;
+    out.push({ key, icon, col, text: "",
+               title: `${label} — ${st.state}`,
+               tap: { kind: "more-info", entity: id } });
+  }
+
+  if (r.climate_entity) {
+    const c = climateChip(hass, r.climate_entity);
+    if (c) out.push(c);
+  }
+  return out;
+}
 
 /* The panel has to live inside <home-assistant>, not in document.body.
  * Home Assistant's gesture layer doesn't reach elements outside its own tree:
@@ -860,10 +988,44 @@ class RoomPopup {
     this.hash = hash; this.room = room; this._hass = hass;
     this.bodyFn = bodyFn || null; this.titleOverride = title || null;
     this.el = null; this.backdrop = null;
+    this._hd = null; this._hdSig = null;
   }
   set hass(h) {
     this._hass = h;
     for (const c of this._cards || []) c.hass = h;
+    // hass ticks constantly; only redraw the header when something it shows
+    // has actually moved, or a busy house would rebuild it hundreds of times
+    if (!this._hd) return;
+    const sig = this._headerSig();
+    if (sig === this._hdSig) return;
+    this._hdSig = sig;
+    const next = this._header();
+    this._hd.replaceWith(next);
+    this._hd = next;
+  }
+
+  _headerSig() {
+    const hass = this._hass;
+    if (!hass || !hass.states) return "";
+    const r = this.room;
+    const ids = [].concat(
+      lightIds(r.light_entities), lightIds(r.landscape_entities),
+      lightIds(r.fan_entities), lightIds(r.bath_fan_entities),
+      lightIds(r.fountain_entities), r.alert_sensors || [],
+      (r.music_powers || []).map((p) => typeof p === "string" ? p : (p && (p.entity || p.power))),
+      [r.media_player, r.tv_entity, r.projector_entity, r.receiver_entity, r.climate_entity],
+    ).filter(Boolean);
+    let s = "";
+    for (const e of ids) {
+      const st = hass.states[e];
+      s += st ? `${e}=${st.state};` : `${e}=_;`;
+    }
+    const cl = r.climate_entity && hass.states[r.climate_entity];
+    if (cl) {
+      const a = cl.attributes || {};
+      s += `a=${a.hvac_action}|${a.current_temperature}|${a.temperature};`;
+    }
+    return s;
   }
   async open() {
     if (this.el) return;
@@ -881,39 +1043,9 @@ class RoomPopup {
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-modal", "true");
 
-    const hd = document.createElement("div");
-    hd.className = "charro-pop-hd";
-    if (this.room.room_icon) {
-      const i = document.createElement("ha-icon");
-      i.icon = this.room.room_icon;
-      hd.appendChild(i);
-    }
-    const t = document.createElement("div");
-    t.className = "t";
-    t.textContent = this.titleOverride || this.room.room_name || "";
-    hd.appendChild(t);
-    const sp = document.createElement("div");
-    sp.className = "sp";
-    hd.appendChild(sp);
-
-    if (this.room.page_path) {
-      const go = document.createElement("button");
-      go.title = "Open the full page";
-      go.setAttribute("aria-label", "Open the full page");
-      go.innerHTML = `<ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:18px"></ha-icon>`;
-      go.addEventListener("click", () => {
-        this.dismiss();
-        history.pushState(null, "", this.room.page_path);
-        window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, composed: true }));
-      });
-      hd.appendChild(go);
-    }
-    const x = document.createElement("button");
-    x.title = "Close";
-    x.setAttribute("aria-label", "Close");
-    x.innerHTML = `<ha-icon icon="mdi:close" style="--mdc-icon-size:18px"></ha-icon>`;
-    x.addEventListener("click", () => this.dismiss());
-    hd.appendChild(x);
+    const hd = this._header();
+    this._hd = hd;
+    this._hdSig = this._headerSig();
 
     const body = document.createElement("div");
     body.className = "charro-pop-body";
@@ -935,6 +1067,129 @@ class RoomPopup {
     this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
     window.addEventListener("keydown", this._key);
   }
+  /* The header reads like the room's own tile: the coloured icon on the left,
+   * the name big and centred, and on the right the same chips plus anything
+   * that's open. Rebuilt on state changes so the chips stay live. */
+  _header() {
+    const hd = document.createElement("div");
+    hd.className = "charro-pop-hd";
+
+    const lead = document.createElement("div");
+    lead.className = "lead";
+    if (this.room.room_icon) {
+      const i = document.createElement("ha-icon");
+      i.icon = this.room.room_icon;
+      // amber whenever anything in the room is lit, exactly as on the tile
+      const lit = onCount(this._hass, [].concat(this.room.light_entities || [],
+                                                this.room.landscape_entities || []));
+      if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
+      lead.appendChild(i);
+    }
+
+    const t = document.createElement("div");
+    t.className = "t";
+    t.textContent = this.titleOverride || this.room.room_name || "";
+
+    const tail = document.createElement("div");
+    tail.className = "tail";
+    tail.appendChild(this._chipStrip());
+
+    const open = this._openSensors();
+    if (open.length) {
+      const a = document.createElement("button");
+      a.className = "alert";
+      const names = open.map((o) => `${o.name} — ${o.state}`).join("\n");
+      a.title = open.length === 1 ? names : `${open.length} open:\n${names}`;
+      a.setAttribute("aria-label", a.title.replace(/\n/g, ", "));
+      a.innerHTML = `<ha-icon icon="mdi:door-open"></ha-icon>`;
+      a.addEventListener("click", () => this._moreInfo(open[0].entity));
+      tail.appendChild(a);
+    }
+
+    if (this.room.page_path) {
+      const go = document.createElement("button");
+      go.title = "Open the full page";
+      go.setAttribute("aria-label", "Open the full page");
+      go.innerHTML = `<ha-icon icon="mdi:open-in-new"></ha-icon>`;
+      go.addEventListener("click", () => {
+        this.dismiss();
+        history.pushState(null, "", this.room.page_path);
+        window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, composed: true }));
+      });
+      tail.appendChild(go);
+    }
+    const x = document.createElement("button");
+    x.title = "Close";
+    x.setAttribute("aria-label", "Close");
+    x.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
+    x.addEventListener("click", () => this.dismiss());
+    tail.appendChild(x);
+
+    hd.append(lead, t, tail);
+    return hd;
+  }
+
+  _chipStrip() {
+    const strip = document.createElement("div");
+    strip.className = "charro-chips";
+    for (const c of roomChips(this.room, this._hass)) {
+      const b = document.createElement("button");
+      b.className = "charro-chip";
+      b.style.background = c.col[0];
+      b.style.color = c.col[1];
+      b.title = c.title;
+      b.setAttribute("aria-label", c.title);
+      const i = document.createElement("ha-icon");
+      i.icon = c.icon;
+      b.appendChild(i);
+      if (c.text) {
+        const s = document.createElement("span");
+        s.textContent = c.text;
+        b.appendChild(s);
+      }
+      b.addEventListener("click", () => this._chipTap(c.tap));
+      strip.appendChild(b);
+    }
+    return strip;
+  }
+
+  _chipTap(tap) {
+    if (!tap || !this._hass) return;
+    if (tap.kind === "more-info") return this._moreInfo(tap.entity);
+    if (tap.kind === "off" && (tap.entities || []).length) {
+      this._hass.callService(tap.domain, "turn_off", { entity_id: tap.entities });
+    }
+  }
+
+  _moreInfo(entity) {
+    const ev = new CustomEvent("hass-more-info", {
+      detail: { entityId: entity }, bubbles: true, composed: true,
+    });
+    (this.el || document.querySelector("home-assistant")).dispatchEvent(ev);
+  }
+
+  /* Anything the room watches that isn't closed, with the friendly name so
+   * the tooltip says which door rather than just that one is open. */
+  _openSensors() {
+    const hass = this._hass;
+    if (!hass || !hass.states) return [];
+    const out = [];
+    for (const e of this.room.alert_sensors || []) {
+      const st = hass.states[e];
+      if (!st || st.state !== "on") continue;
+      const a = st.attributes || {};
+      const reg = hass.entities && hass.entities[e];
+      out.push({
+        entity: e,
+        name: (reg && (reg.name || reg.original_name)) || a.friendly_name || e,
+        state: a.device_class === "garage_door" ? "open"
+             : a.device_class === "motion" ? "motion"
+             : a.device_class === "window" ? "open" : "open",
+      });
+    }
+    return out;
+  }
+
   /* Width follows the content. A single-column room stays narrow however big
    * the monitor is — stretching one column of tiles across 1300px reads worse,
    * not better. Extra width is only worth taking when there are columns to put
@@ -957,6 +1212,7 @@ class RoomPopup {
     if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
     const el = this.el, bd = this.backdrop;
     this.el = null; this.backdrop = null; this._cards = [];
+    this._hd = null; this._hdSig = null;
     if (!el) return;
     try { el.classList.remove("in"); if (bd) bd.classList.remove("in"); } catch (e) {}
     setTimeout(() => { try { el.remove(); if (bd) bd.remove(); } catch (e) {} }, 260);
