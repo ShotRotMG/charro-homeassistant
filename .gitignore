@@ -3,3 +3,5 @@ _to_delete/
 .ha_states.json
 .ha_lights.json
 .ha_addr.json
+__pycache__/
+*.pyc

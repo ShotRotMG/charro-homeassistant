@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Charro Cards",
+        "description": "Registers the Charro cards with the frontend and adds a Rooms page to the sidebar for admins. Nothing to configure."
+      }
+    },
+    "abort": {
+      "already_configured": "Charro Cards is already set up."
+    }
+  }
+}

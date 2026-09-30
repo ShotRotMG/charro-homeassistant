@@ -24,8 +24,35 @@ The first four render `custom:button-card` underneath, with the styling in
 ## Install
 
 HACS → three-dot menu → **Custom repositories** → paste this repo's URL,
-category **Dashboard** → Add. Then find "Charro Home Assistant" in HACS and
-download it. HACS registers the Lovelace resource itself.
+category **Integration** → Add. Find "Charro Home Assistant" in HACS,
+download it, restart Home Assistant, then **Settings → Devices & services →
+Add integration → Charro Cards**.
+
+That is the whole setup. Adding the integration does three things:
+
+- serves `charro-cards.js` at `/charro_static/` and registers it with the
+  frontend, so the six cards exist with no Lovelace resource entry
+- puts **Rooms** on the sidebar — the editor as a full page, admin only
+- exposes `charro/save_room`, so the editor writes room files without the
+  `shell_command` that used to go in `configuration.yaml`
+
+Room files don't move: they stay at `/config/www/rooms/*.json`, served at
+`/local/rooms/`, and a dashboard loads a room exactly as before.
+
+### Coming from the Dashboard version
+
+HACS lets a repository be an integration or a dashboard plugin, not both, so
+the switch is a remove and a re-add:
+
+1. HACS → Charro Home Assistant → **Remove**
+2. **Settings → Dashboards → Resources** → delete the
+   `/hacsfiles/charro-homeassistant/charro-cards.js` line
+3. add the repo again with category **Integration**, download, restart, then
+   add the integration
+4. optional — delete the `shell_command: charro_write_room` block and
+   `/config/scripts/charro_write_room.sh`; the integration replaces both
+
+Your rooms, dashboards and views are untouched by all of that.
 
 ---
 
@@ -836,9 +863,12 @@ Fountain rows go blue when on; everything else goes amber.
 
 ## `charro-rooms-editor`
 
-Drop it on a config view and edit the room files in place — entity pickers,
-icon pickers, per-light overrides, and a live preview of the tile beside the
-form.
+With the integration installed this is already on the sidebar as **Rooms** —
+admin only, full width, nothing to place. The card below is the same editor,
+for putting it on a dashboard instead.
+
+Edit the room files in place — entity pickers, icon pickers, per-light
+overrides, and a live preview of the tile beside the form.
 
 Give it a `type: panel` view of its own — it lays out in three columns
 (settings, the per-light table, a live preview) and wants the width.
@@ -860,9 +890,13 @@ cards:
 
 ### Finding the rooms
 
-A browser cannot list a folder, so the card works it out two ways and merges
-the results: it reads every dashboard's config over the websocket and collects
-each `room:` already placed on a `charro-room-card`, and it reads
+With the integration installed the folder is simply listed over the
+websocket, and that's the end of it — every room file shows up, including one
+that is on disk but not on any dashboard yet.
+
+Without it, a browser cannot list a folder, so the card works it out two ways
+and merges the results: it reads every dashboard's config over the websocket
+and collects each `room:` already placed on a `charro-room-card`, and it reads
 `_index.json` from the rooms folder, which the save script rewrites on every
 save. Between them a room shows up whether it has been put on a dashboard yet
 or not, and nothing has to be listed by hand.
@@ -907,12 +941,22 @@ when opened. Choosing Pop-up widens that column and narrows the other two.
 
 ### Saving
 
-A browser cannot write to `/config`, so Save takes one of two routes.
+A browser cannot write to `/config`, so Save takes the best route it can find
+and tells you which one in the footer under the form.
 
-Without any setup the button reads **Copy JSON** — it puts the finished file
-on your clipboard and names the path to paste it into.
+**The integration.** Nothing to set up — `charro/save_room` writes
+`/config/www/rooms/<key>.json` and rebuilds `_index.json`, so the revision
+every other fetch is stamped with moves and the change shows up on the next
+load. The command is admin-only; the room key has to match
+`^[a-z0-9][a-z0-9_-]*$`, so it can't name a file outside that folder; and the
+file is written to a temp name and moved into place, so a reader never sees
+half of one.
 
-Add the helper below and it becomes a real **Save** that writes the file:
+**Copy JSON.** Neither route available: the button puts the finished file on
+your clipboard and names the path to paste it into.
+
+**`shell_command`.** The pre-integration route, still honoured if the
+integration isn't there:
 
 ```yaml
 # configuration.yaml
@@ -928,7 +972,11 @@ script sanitises the room name again, writes to a temp file, refuses to
 install anything that doesn't parse as JSON, and only then moves it into
 place. The card notices the service by itself — no option to set.
 
-Either way the other cards pick the change up on a hard refresh.
+Whichever route ran, the other cards pick the change up on a hard refresh.
+
+Autosave is on unless you turn it off, and the checkbox is remembered per
+browser. It waits 1.5s after the last keystroke, so typing a name is one write
+rather than one per character.
 
 ---
 
