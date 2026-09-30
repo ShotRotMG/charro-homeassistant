@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.44.0";
+const VERSION = "4.44.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4399,6 +4399,59 @@ class CharroRoomsEditor extends HTMLElement {
         ["button", "switch", "script", "cover"], set("toggle_button")));
       row.appendChild(f.ent("Vehicle sensor", o.vehicle_entity, ["binary_sensor"],
         set("vehicle_entity")));
+
+      /* A garage door gets its own chip, and the room's guard is for the
+       * garage circuit — an entry door beside them is on neither. Both are
+       * three-state: inherit, or say yes/no for this one. */
+      const tri = (label, value, onPick, options) => {
+        const w = document.createElement("div");
+        w.className = "vfield";
+        const t = document.createElement("span"); t.textContent = label;
+        const dd = document.createElement("select");
+        for (const [v, lab] of options) {
+          const op = document.createElement("option");
+          op.value = v; op.textContent = lab;
+          if (String(value) === v) op.selected = true;
+          dd.appendChild(op);
+        }
+        dd.addEventListener("change", () => {
+          onPick(dd.value);
+          this._renderDoors(); this._renderPreview();
+        });
+        w.append(t, dd);
+        return w;
+      };
+
+      const isAuto = o.garage === undefined;
+      row.appendChild(tri("Counts as a garage door",
+        isAuto ? "auto" : String(!!o.garage),
+        (v) => {
+          if (v === "auto") { if (typeof this._room.alert_sensors[i] === "object")
+            delete this._room.alert_sensors[i].garage; }
+          else obj().garage = v === "true";
+        },
+        [["auto", "Work it out from the entity"], ["true", "Yes"], ["false", "No"]]));
+
+      const guard = o.confirm_sensor === false ? "off"
+                  : o.confirm_sensor ? "own" : "room";
+      row.appendChild(tri("Only alert when also open",
+        guard,
+        (v) => {
+          const o2 = obj();
+          if (v === "room") delete o2.confirm_sensor;
+          else if (v === "off") o2.confirm_sensor = false;
+          else if (typeof o2.confirm_sensor !== "string") o2.confirm_sensor = "";
+        },
+        [["room", "Use the room's sensor"], ["off", "No guard for this one"],
+         ["own", "Its own sensor"]]));
+      if (guard === "own") {
+        row.appendChild(f.ent("Its guard sensor",
+          typeof o.confirm_sensor === "string" ? o.confirm_sensor : "",
+          ["sensor", "binary_sensor"], (v) => {
+            if (v) obj().confirm_sensor = v; else obj().confirm_sensor = "";
+          }));
+      }
+
       box.appendChild(row);
     });
   }
