@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.50.0";
+const VERSION = "4.51.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -696,6 +696,9 @@ function securityCard(s, r) {
   for (const k of ["label", "icon", "toggle_button", "vehicle_entity", "alert_mode",
                    "confirm_sensor"])
     if (o[k]) card[k] = o[k];
+  // the card decides for itself whether the icon operates the door, and the
+  // flag is how a room overrides that guess either way
+  if (o.garage !== undefined) card.garage = !!o.garage;
   // the room's guard is for its garage doors; an entry door alongside them
   // isn't on that circuit, so `confirm_sensor: false` opts out
   if (o.confirm_sensor === false || o.confirm_sensor === null) delete card.confirm_sensor;
@@ -1965,9 +1968,15 @@ class CharroSecurityCard extends CharroBase {
     return { type: "custom:charro-security-card", entity: "", icon: "mdi:shield-check" };
   }
 
-  // a toggle_button means the icon press operates the door
+  /* The garage template is the one whose icon operates the door. A
+   * toggle_button obviously wants it, but so does a plain garage cover: it
+   * can be driven directly, so there is nothing to configure and no reason
+   * for its icon to do nothing but open more-info. */
   templateName() {
-    return this._config.toggle_button ? "garage-card.json" : "security-card.json";
+    const c = this._config;
+    if (c.toggle_button) return "garage-card.json";
+    if (c.garage !== undefined) return c.garage ? "garage-card.json" : "security-card.json";
+    return isGarage(c, this._hass) ? "garage-card.json" : "security-card.json";
   }
 
   variables() {
@@ -1992,7 +2001,7 @@ makeEditor("charro-security-card-editor", [
   { name: "entity", required: true, selector: ent(["sensor", "binary_sensor", "cover"]) },
   { name: "label", selector: { text: {} } },
   { name: "icon", selector: { icon: {} } },
-  { name: "toggle_button", selector: ent(["button", "switch", "script"]) },
+  { name: "toggle_button", selector: ent(["button", "switch", "script", "cover"]) },
   { name: "vehicle_entity", selector: ent(["binary_sensor"]) },
   { name: "alert_mode", selector: { select: { mode: "dropdown", options: [
       { value: "violated", label: "Red when Violated (Elk sensor)" },
@@ -2006,7 +2015,8 @@ makeEditor("charro-security-card-editor", [
   vehicle_entity: "Vehicle-detected sensor",
   alert_mode: "Alert mode (blank = from the entity)",
 }, {
-  toggle_button: "Set this for garage doors — tapping the round icon operates the door.",
+  toggle_button: "What the round icon fires. A garage cover doesn't need one — " +
+    "it's operated directly. Set it when a separate button works the door.",
   vehicle_entity: "Green when a car is in the bay, white when closed and empty.",
 });
 
