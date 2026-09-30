@@ -312,6 +312,7 @@ focused, and one remote.
 | `displays[].source` | that screen's own source list — the projector's differs |
 | `displays[].power` | the screen itself, for the off tile and the lit chip |
 | `sources` | keyed by the option text in a source select |
+| `displays[].sources` | the same, for one screen only — two screens can both offer "Samsung" and mean different televisions, and a display's own map wins over the room's |
 | `sources[].use` | a template in `_remotes.json`; the rest of the entry fills its `{{…}}` |
 | `sources[].card` | a whole card instead, when a box doesn't fit a template |
 

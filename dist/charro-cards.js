@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.37.0";
+const VERSION = "4.38.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1985,7 +1985,9 @@ class CharroVideoCard extends HTMLElement {
       return;
     }
 
-    const spec = (this._v.sources || {})[src];
+    // two screens can both offer "Samsung" and mean different televisions,
+    // so a display's own map wins over the room's
+    const spec = ((d.sources || {})[src]) || (this._v.sources || {})[src];
     if (!spec) {
       const n = document.createElement("div");
       n.className = "vnote";
