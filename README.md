@@ -449,6 +449,56 @@ just those entities, so an active house doesn't rebuild it on every tick.
 Chip colours live in one place in the code, shared by this header, so the tile
 and the pop-up can't drift apart.
 
+### Pool, spa and their scripts
+
+The `water` block draws the pumps you've already named in `pool_switch` and
+`spa_switch` as a pair of tiles, then each heater — but only while its pump is
+on, since a heater panel for a pump that's off is a dead control.
+
+A Pentair has modes the switches can't express: "turn the spa on" is a script,
+and "turn the whole thing off" is another. `water_actions` lists them, each
+shown only while it's the one worth pressing:
+
+```json
+"water_actions": [
+  { "name": "Turn Spa On", "icon": "mdi:hot-tub", "color": "light-green",
+    "script": "script.pentair_spa_on",
+    "when_off": "switch.charro_spa" },
+  { "name": "Turn Pentair Off", "icon": "mdi:power-plug-off", "color": "red",
+    "script": "script.pentair_all_off",
+    "when_on": ["switch.charro_spa", "switch.charro_pool",
+                "switch.charro_water_feature"] }
+]
+```
+
+| key | what it does |
+| --- | --- |
+| `script` / `perform_action` | what a tap runs; `target` if it needs one |
+| `when_off` | show while this entity is off |
+| `when_on` | show while **any** of these is on |
+| `name`, `icon`, `color` | as on any tile |
+
+Both are `conditional` cards, so they appear and disappear live. An action with
+neither `when_off` nor `when_on` is always shown. `pool_name` and `spa_name`
+rename the pump tiles.
+
+Each piece is also a layout row, so none of it is stuck inside the block:
+
+```json
+{ "pump": "pool" }, { "pump": "spa" },
+{ "heater": "pool" },
+{ "water_action": "Turn Spa On" }
+```
+
+A pump shares the two-up run, so Pool and Spa pair; `"width": "full"` takes the
+row. A heater and an action take the row to themselves. Switching a room to a
+custom layout expands the `water` block into these, and unplaced ones show in
+the tray under **Pool & water**. An action row is keyed by the action's `name`,
+so renaming one in `water_actions` means renaming it in the layout too.
+
+Fountains stay where they are — `fountain_entities` is a light group, so they
+render with the lights and keep their own chip.
+
 ### Alert sensors
 
 An `alert_sensors` entry is an id, or an object carrying what the door needs:

@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.39.0";
+const VERSION = "4.41.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -317,7 +317,8 @@ function lightCard(l, noDim) {
 /* Body of a room, shared by the pop-up and the page. Each block appears only
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
-const ROOM_SECTIONS = ["climate", "video", "media", "music", "lights", "cameras", "security"];
+const ROOM_SECTIONS = ["climate", "video", "media", "music", "lights", "water",
+                       "cameras", "security"];
 
 /* `music` was carved out of `media` in 4.20, so a room that spelled out its
  * sections before then names only `media`. Rather than silently dropping its
@@ -491,6 +492,82 @@ function climateCard(r) {
   return card;
 }
 
+/* Pool and spa, and the scripts that actually drive them. A Pentair has
+ * modes the switches can't express — "turn the spa on" is a script, and
+ * "turn the whole thing off" is another — so a room can list actions, each
+ * shown only while it's the one worth pressing. The heaters follow their
+ * pump: a heater panel for a pump that's off is just a dead control. */
+function waterPart(r, kind) {
+  const pool = kind === "pool";
+  return { sw: pool ? r.pool_switch : r.spa_switch,
+           heater: pool ? r.pool_heater : r.spa_heater,
+           name: (pool ? r.pool_name : r.spa_name) || (pool ? "Pool" : "Spa"),
+           icon: pool ? "mdi:pool" : "mdi:hot-tub" };
+}
+
+function pumpCard(r, kind) {
+  const p = waterPart(r, kind);
+  if (!p.sw) return null;
+  return { type: "tile", entity: p.sw, name: p.name, icon: p.icon,
+           vertical: false, features_position: "bottom" };
+}
+
+/* A heater panel for a pump that's off is a dead control, so it follows
+ * its pump rather than sitting there greyed out. */
+function heaterCard(r, kind) {
+  const p = waterPart(r, kind);
+  if (!p.heater) return null;
+  const card = { type: "thermostat", entity: p.heater, name: `${p.name} heater`,
+                 features: [{ type: "water-heater-operation-modes" }] };
+  if (!p.sw) return card;
+  return { type: "conditional",
+           conditions: [{ condition: "state", entity: p.sw, state: "on" }],
+           card };
+}
+
+/* A Pentair has modes the switches can't express — "turn the spa on" is a
+ * script, and "turn the whole thing off" is another — so each action is
+ * shown only while it's the one worth pressing. */
+function waterActionCard(a, r) {
+  const run = a && (a.perform_action || a.script);
+  if (!run) return null;
+  const act = { action: "perform-action", perform_action: run, target: a.target || {} };
+  const card = { type: "tile", entity: a.entity || r.spa_switch || r.pool_switch,
+                 name: a.name || run, icon: a.icon || "mdi:play", hide_state: true,
+                 vertical: false, tap_action: act, icon_tap_action: act };
+  if (a.color) card.color = a.color;
+
+  const on = (e) => ({ condition: "state", entity: e, state: "on" });
+  const any = [].concat(a.when_on || []);
+  const conds = [].concat(a.when_off || [])
+    .map((e) => ({ condition: "state", entity: e, state: "off" }));
+  if (any.length === 1) conds.push(on(any[0]));
+  else if (any.length) conds.push({ condition: "or", conditions: any.map(on) });
+
+  return conds.length ? { type: "conditional", conditions: conds, card } : card;
+}
+
+const waterAction = (r, name) =>
+  (r.water_actions || []).find((a) => (a.name || a.script || a.perform_action) === name);
+
+function waterCards(r) {
+  const out = [];
+  const pumps = ["pool", "spa"].map((k) => pumpCard(r, k)).filter(Boolean);
+  if (pumps.length) {
+    out.push({ type: "grid", columns: pumps.length > 1 ? 2 : 1,
+               square: false, cards: pumps });
+  }
+  for (const k of ["pool", "spa"]) {
+    const h = heaterCard(r, k);
+    if (h) out.push(h);
+  }
+  for (const a of r.water_actions || []) {
+    const c = waterActionCard(a, r);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
 /* A door is more than an entity id: a garage needs the button that operates
  * it and the sensor that says the opener isn't lying. An alert_sensors entry
  * can carry those, the same way a light can carry its name and icon. */
@@ -558,6 +635,8 @@ function blockCards(name, r, hass) {
 
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
+  if (name === "water") for (const c of waterCards(r)) push(c);
+
   if (name === "player") push(mediaCard(r, hass));
 
   if (name === "music") {
@@ -685,6 +764,18 @@ function layoutBody(r, hass) {
       } else {
         run.push(lightCard(it, r.no_dim));
       }
+    } else if (it.pump) {
+      const c = pumpCard(r, it.pump);
+      if (c) {
+        if (it.width === "full") { flush(); out.push({ type: "grid", columns: 1, square: false, cards: [c] }); }
+        else run.push(c);
+      }
+    } else if (it.heater) {
+      const c = heaterCard(r, it.heater);
+      if (c) { flush(); out.push(c); }
+    } else if (it.water_action) {
+      const c = waterActionCard(waterAction(r, it.water_action), r);
+      if (c) { flush(); out.push(c); }
     } else if (it.sensor) {
       if (it.width === "full") {
         flush();
@@ -835,6 +926,11 @@ function materializeLayout(r) {
         for (const l of list)
           out.push(typeof l === "string" ? { entity: l } : { ...l });
       }
+    } else if (name === "water") {
+      for (const k of ["pool", "spa"]) if (pumpCard(r, k)) out.push({ pump: k });
+      for (const k of ["pool", "spa"]) if (heaterCard(r, k)) out.push({ heater: k });
+      for (const a of r.water_actions || [])
+        out.push({ water_action: a.name || a.script || a.perform_action });
     } else if (name === "security") {
       for (const e of r.alert_sensors || []) out.push({ sensor: e });
     } else if (name === "music") {
@@ -2598,7 +2694,8 @@ const o_render = (it) => it.render || "mushroom";
 
 const BLOCK_LABEL = {
   climate: "Climate", video: "Video / remotes", media: "Media",
-  music: "Music (every zone)", player: "Media player", cameras: "Cameras",
+  music: "Music (every zone)", player: "Media player",
+  water: "Pool & spa", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
 };
 
@@ -2840,6 +2937,22 @@ const LayoutUI = {
       if (zones.length) cats.push({ label: "Music zones", items: zones });
     }
 
+    if (!usedBlocks.has("water")) {
+      const seenW = new Set(all.flatMap((x) => x ? [x.pump && "p:" + x.pump,
+        x.heater && "h:" + x.heater, x.water_action && "a:" + x.water_action] : [])
+        .filter(Boolean));
+      const items = [];
+      for (const k of ["pool", "spa"])
+        if (pumpCard(r, k) && !seenW.has("p:" + k)) items.push({ pump: k });
+      for (const k of ["pool", "spa"])
+        if (heaterCard(r, k) && !seenW.has("h:" + k)) items.push({ heater: k });
+      for (const a of r.water_actions || []) {
+        const n = a.name || a.script || a.perform_action;
+        if (n && !seenW.has("a:" + n)) items.push({ water_action: n });
+      }
+      if (items.length) cats.push({ label: "Pool & water", items });
+    }
+
     // a section is only offered when the room has something to put in it
     const has = {
       climate: () => !!r.climate_entity,
@@ -2849,6 +2962,7 @@ const LayoutUI = {
       music: () => !!((r.music_powers || []).length || r.media_player),
       video: () => !!r.video,
       player: () => !!(r.media_player || r.media_card),
+      water: () => !!(r.pool_switch || r.spa_switch || (r.water_actions || []).length),
       lights: () => LIGHT_GROUPS.some(([, k]) => (r[k] || []).length),
     };
     const blocks = Object.keys(BLOCK_LABEL)
@@ -2876,6 +2990,19 @@ const LayoutUI = {
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.pump) {
+      const p = waterPart(this._room, it.pump);
+      return { icon: p.icon, text: p.name, sub: p.sw };
+    }
+    if (it.heater) {
+      const p = waterPart(this._room, it.heater);
+      return { icon: "mdi:thermometer", text: `${p.name} heater`, sub: p.heater };
+    }
+    if (it.water_action) {
+      const a = waterAction(this._room, it.water_action) || {};
+      return { icon: a.icon || "mdi:play", text: it.water_action,
+               sub: a.script || a.perform_action || "" };
+    }
     if (it.sensor) {
       const id = typeof it.sensor === "string" ? it.sensor : it.sensor.entity;
       const st = this._hass.states[id];
@@ -3126,7 +3253,7 @@ const LayoutUI = {
     row.appendChild(move);
 
     if (it.heading !== undefined || it.card || it.block || it.gap || it.zone
-        || it.sensor) {
+        || it.sensor || it.pump || it.heater || it.water_action) {
       const del = document.createElement("button");
       del.className = "btn";
       del.title = it.block
