@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.31.1";
+const VERSION = "4.32.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -559,6 +559,10 @@ function blockCards(name, r, hass) {
     for (const spec of r.remotes || []) {
       const w = spec.when || spec.media_player || spec.remote || spec.entity;
       if (w) covered.add(w);
+    }
+    // a screen the video block owns doesn't want a second tile either
+    for (const d of (r.video && r.video.displays) || []) {
+      if (d.power) covered.add(d.power);
     }
     const av = [
       [r.tv_entity, "TV", "mdi:television"],
