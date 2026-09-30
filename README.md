@@ -283,7 +283,7 @@ focused, and one remote.
 
 | key | what it does |
 | --- | --- |
-| `focus` | the input_select naming which screen you're controlling |
+| `focus` | the input_select naming which screen you're controlling — omit it in a one-screen room and that screen is always the focus, with no chip row and no **All off** |
 | `off_option` | the option that means "all off" (default `Off`) |
 | `displays[].source` | that screen's own source list — the projector's differs |
 | `displays[].power` | the screen itself, for the off tile and the lit chip |
@@ -304,6 +304,12 @@ template, says so rather than rendering nothing.
 Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
+
+All of it is editable in the rooms editor under **Video / remotes**: screens
+and sources are lists of objects, which `ha-form` has no good shape for, so
+they get their own rows — add, fill in, remove. The remote template is a
+dropdown of whatever `_remotes.json` holds. The screen picker only appears
+once a room has more than one screen.
 
 ### Remotes
 

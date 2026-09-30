@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.30.0";
+const VERSION = "4.31.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1810,12 +1810,20 @@ class CharroVideoCard extends HTMLElement {
   _sig() {
     const h = this._hass;
     if (!h || !h.states) return "";
-    const ids = [this._v.focus].concat(
+    const ids = [this._v.focus].filter(Boolean).concat(
       (this._v.displays || []).flatMap((d) => [d.source, d.power].filter(Boolean)));
     return ids.map((e) => `${e}=${h.states[e] ? h.states[e].state : "_"}`).join(";");
   }
 
+  /* A room with one screen has nothing to choose between, so it needs no
+   * focus select and no chip row — that screen is always the focused one. */
+  _single() {
+    const d = this._v.displays || [];
+    return !this._v.focus && d.length === 1 ? d[0] : null;
+  }
   _focusName() {
+    const one = this._single();
+    if (one) return one.name;
     const st = this._hass.states[this._v.focus];
     return st ? st.state : "";
   }
@@ -1838,6 +1846,7 @@ class CharroVideoCard extends HTMLElement {
   }
 
   _pick(value) {
+    if (!this._v.focus) return;
     this._hass.callService("input_select", "select_option",
       { entity_id: this._v.focus, option: value });
   }
@@ -1850,10 +1859,10 @@ class CharroVideoCard extends HTMLElement {
     this._wrap.textContent = "";
     this._live = [];
 
-    // ---- which screen
+    // ---- which screen (skipped entirely when there's only the one)
     const row = document.createElement("div");
     row.className = "vrow";
-    for (const d of this._v.displays || []) {
+    for (const d of (this._single() ? [] : this._v.displays || [])) {
       const b = document.createElement("button");
       const live = this._isLive(d);
       b.className = "vchip" + (live ? " live" : "") + (focus === d.name ? " sel" : "");
@@ -1870,7 +1879,7 @@ class CharroVideoCard extends HTMLElement {
       b.addEventListener("click", () => this._pick(d.name));
       row.appendChild(b);
     }
-    if ((this._v.displays || []).length) {
+    if (this._v.focus && (this._v.displays || []).length) {
       const o = document.createElement("button");
       o.className = "vchip off";
       o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
@@ -1881,7 +1890,7 @@ class CharroVideoCard extends HTMLElement {
       o.addEventListener("click", () => this._pick(off));
       row.appendChild(o);
     }
-    this._wrap.appendChild(row);
+    if (row.childElementCount) this._wrap.appendChild(row);
 
     const d = this._display(focus);
     if (!d) return;                       // Off, or a name with no display
@@ -2507,6 +2516,22 @@ const LB_CSS = `
 .it select{ font-size:12px; padding:3px 4px; border-radius:6px;
   border:1px solid var(--divider-color); background:var(--card-background-color); }
 .tray{ display:flex; flex-direction:column; gap:8px; }
+.vcap{ font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--secondary-text-color); margin:12px 0 4px; }
+.vrowbox{
+  border:1px solid var(--divider-color); border-radius:8px; padding:8px;
+  margin-bottom:6px; display:flex; flex-direction:column; gap:6px;
+}
+.vfield{ display:flex; flex-direction:column; gap:2px; }
+.vfield > span{ font-size:11.5px; color:var(--secondary-text-color); }
+.vfield input, .vfield select{
+  padding:5px 7px; font-size:12.5px; border-radius:7px;
+  border:1px solid var(--divider-color); background:var(--card-background-color);
+  color:var(--primary-text-color); font:inherit; width:100%; box-sizing:border-box;
+}
+button.vdel{ background:rgba(244,67,54,.16); color:#ef5350; align-self:flex-start;
+  padding:5px 10px; font-size:12px; }
+
 .traycat .cap{ display:block; margin:2px 2px 4px; }
 `;
 
@@ -3483,7 +3508,9 @@ class CharroRoomsEditor extends HTMLElement {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       let j = await r.json();
       if (j && !j.room_name && j[key] && typeof j[key] === "object") j = j[key];
-      if ((j.remotes || []).length || j.video) j._remotes = await loadRemotes(this._config);
+      // the editor always wants the template list, so the source dropdown
+      // can offer them before a room has any remotes of its own
+      j._remotes = await loadRemotes(this._config);
       this._room = j; this._orig = JSON.parse(JSON.stringify(j));
       if (!quiet) this._say("");
       this._renderForm();
@@ -3572,11 +3599,157 @@ class CharroRoomsEditor extends HTMLElement {
       catch (err) { this._say(`Extra cards: ${err.message}`, "err"); }
     });
 
-    this._left.append(h2, secs, h3, ta);
+    const h4v = document.createElement("h4"); h4v.textContent = "Video / remotes";
+    this._videoBox = document.createElement("div");
+
+    this._left.append(h2, secs, h4v, this._videoBox, h3, ta);
+    this._renderVideo();
     this._lbEnsure();
     this._lbRender();
     this._renderLights();
     this._renderPreview();
+  }
+
+  /* Screens and sources are lists of objects, which ha-form has no good shape
+   * for, so they get their own rows: add, fill in, remove. A room with one
+   * screen needs no focus select at all, which is the common case. */
+  _renderVideo() {
+    const box = this._videoBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const v = this._room.video;
+
+    if (!v) {
+      const b = document.createElement("button");
+      b.textContent = "+ Add video switching";
+      b.title = "Screens, their sources, and one remote for whatever is on";
+      b.addEventListener("click", () => {
+        this._room.video = { displays: [{ name: "TV" }], sources: {} };
+        this._renderVideo(); this._renderPreview();
+      });
+      box.appendChild(b);
+      return;
+    }
+
+    const changed = () => { this._renderVideo(); this._renderPreview(); };
+    const field = (label, value, onChange, placeholder) => {
+      const wrap = document.createElement("label");
+      wrap.className = "vfield";
+      const t = document.createElement("span"); t.textContent = label;
+      const i = document.createElement("input");
+      i.type = "text"; i.value = value || ""; i.placeholder = placeholder || "";
+      i.addEventListener("change", () => { onChange(i.value.trim()); changed(); });
+      wrap.append(t, i);
+      return wrap;
+    };
+
+    // one screen needs no picker; more than one does
+    const many = (v.displays || []).length > 1;
+    if (many || v.focus) {
+      box.appendChild(field("Screen picker (input_select)", v.focus,
+        (s) => { if (s) v.focus = s; else delete v.focus; },
+        "input_select.saloon_device_select"));
+      box.appendChild(field("Its “all off” option", v.off_option,
+        (s) => { if (s) v.off_option = s; else delete v.off_option; }, "Off"));
+    }
+
+    const dh = document.createElement("div");
+    dh.className = "vcap";
+    dh.textContent = many ? "Screens" : "Screen";
+    box.appendChild(dh);
+
+    (v.displays || []).forEach((d, i) => {
+      const row = document.createElement("div");
+      row.className = "vrowbox";
+      row.appendChild(field("Name", d.name, (s) => { d.name = s; },
+        many ? "must match a picker option" : "TV"));
+      row.appendChild(field("Icon", d.icon, (s) => { if (s) d.icon = s; else delete d.icon; },
+        "mdi:television"));
+      row.appendChild(field("Source select", d.source,
+        (s) => { if (s) d.source = s; else delete d.source; },
+        "input_select.kitchen_media_select"));
+      row.appendChild(field("The screen itself", d.power,
+        (s) => { if (s) d.power = s; else delete d.power; },
+        "media_player.kitchen_samsung_55_2"));
+      const x = document.createElement("button");
+      x.className = "vdel"; x.textContent = "Remove screen";
+      x.addEventListener("click", () => { v.displays.splice(i, 1); changed(); });
+      row.appendChild(x);
+      box.appendChild(row);
+    });
+
+    const addD = document.createElement("button");
+    addD.textContent = "+ Screen";
+    addD.addEventListener("click", () => {
+      (v.displays = v.displays || []).push({ name: "" }); changed();
+    });
+    box.appendChild(addD);
+
+    const sh = document.createElement("div");
+    sh.className = "vcap";
+    sh.textContent = "Sources — one row per option in the source select";
+    box.appendChild(sh);
+
+    const tpls = Object.keys(this._room._remotes || {});
+    for (const [key, spec] of Object.entries(v.sources || {})) {
+      const row = document.createElement("div");
+      row.className = "vrowbox";
+      row.appendChild(field("Option text", key, (s) => {
+        if (!s || s === key) return;
+        const next = {};
+        for (const [k, val] of Object.entries(v.sources)) next[k === key ? s : k] = val;
+        v.sources = next;
+      }, "SuperBox"));
+
+      const sel = document.createElement("label");
+      sel.className = "vfield";
+      const st = document.createElement("span"); st.textContent = "Remote template";
+      const dd = document.createElement("select");
+      for (const t of ["", ...tpls]) {
+        const o = document.createElement("option");
+        o.value = t; o.textContent = t || "— pick one —";
+        if (spec.use === t) o.selected = true;
+        dd.appendChild(o);
+      }
+      dd.addEventListener("change", () => {
+        if (dd.value) spec.use = dd.value; else delete spec.use;
+        changed();
+      });
+      sel.append(st, dd);
+      row.appendChild(sel);
+
+      row.appendChild(field("Title", spec.title, (s) => {
+        if (s) spec.title = s; else delete spec.title; }, key));
+      row.appendChild(field("Remote entity", spec.remote, (s) => {
+        if (s) spec.remote = s; else delete spec.remote; }, "remote.charro_superbox"));
+      row.appendChild(field("Media player", spec.media_player, (s) => {
+        if (s) spec.media_player = s; else delete spec.media_player; },
+        "media_player.charro_superbox"));
+      row.appendChild(field("Volume goes to", spec.volume, (s) => {
+        if (s) spec.volume = s; else delete spec.volume; },
+        "the screen's own media_player"));
+
+      const x = document.createElement("button");
+      x.className = "vdel"; x.textContent = "Remove source";
+      x.addEventListener("click", () => { delete v.sources[key]; changed(); });
+      row.appendChild(x);
+      box.appendChild(row);
+    }
+
+    const addS = document.createElement("button");
+    addS.textContent = "+ Source";
+    addS.addEventListener("click", () => {
+      v.sources = v.sources || {};
+      let n = "New source", i = 2;
+      while (v.sources[n]) n = `New source ${i++}`;
+      v.sources[n] = {};
+      changed();
+    });
+    const rm = document.createElement("button");
+    rm.className = "vdel";
+    rm.textContent = "Remove video switching";
+    rm.addEventListener("click", () => { delete this._room.video; changed(); });
+    box.append(addS, rm);
   }
 
   _schema() {
