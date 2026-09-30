@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.29.0";
+const VERSION = "4.30.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -416,9 +416,7 @@ function remoteCards(r, templates) {
   return out;
 }
 
-function mediaCard(r, hass) {
-  if (r.media_card) return r.media_card;          // hand-written wins
-  const id = r.media_player;
+function playerCard(id, hass) {
   if (!id) return null;
   if (isMassPlayer(hass, id)) {
     return { type: "custom:mediocre-media-player-card", entity_id: id,
@@ -426,6 +424,41 @@ function mediaCard(r, hass) {
              options: { show_volume_step_buttons: true } };
   }
   return { type: "media-control", entity: id };
+}
+
+function mediaCard(r, hass) {
+  if (r.media_card) return r.media_card;          // hand-written wins
+  return playerCard(r.media_player, hass);
+}
+
+/* A zone is an amplifier channel, not a player: what you're actually hearing
+ * depends on which input it's switched to. `zone_players` maps the source
+ * value to the player feeding it, so the zone card can be followed by the
+ * controls for whatever is on it. Conditional cards rather than a state read,
+ * because the pop-up body is built once and these have to follow along. */
+function zonePlayerCards(p, r, hass) {
+  const o = typeof p === "object" && p ? p : {};
+  const power = o.entity || o.power || (typeof p === "string" ? p : "");
+  if (!power) return [];
+  const stem = String(power).replace(/^[^.]*\./, "").replace(/_power$/, "");
+  const source = o.source_entity || o.source || `select.${stem}_source`;
+  const map = o.players || r.zone_players;
+  if (!map) return [];
+
+  const out = [];
+  for (const [value, entity] of Object.entries(map)) {
+    const card = playerCard(entity, hass);
+    if (!card) continue;
+    out.push({
+      type: "conditional",
+      conditions: [
+        { condition: "state", entity: power, state: "on" },
+        { condition: "state", entity: source, state: String(value) },
+      ],
+      card,
+    });
+  }
+  return out;
 }
 
 /* A thermostat reads better as one line than as a panel: what it's doing and
@@ -506,7 +539,10 @@ function blockCards(name, r, hass) {
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
   if (name === "music") {
-    for (const p of r.music_powers || []) push(zoneCard(p, r, hass));
+    for (const p of r.music_powers || []) {
+      push(zoneCard(p, r, hass));
+      for (const c of zonePlayerCards(p, r, hass)) push(c);
+    }
     push(mediaCard(r, hass));
   }
 

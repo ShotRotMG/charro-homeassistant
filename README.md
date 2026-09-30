@@ -229,6 +229,29 @@ otherwise the built-in `media-control`. Set `media_card` to a full card config
 to override. The room tile grows a now-playing chip while that player is
 playing; tapping it opens the media card on its own `#<room>-media` hash.
 
+### Zone players
+
+A music zone is an amplifier channel, not a player — what you're hearing
+depends on which input it's switched to. `zone_players` maps a source value to
+the player feeding it, and each zone card is followed by the controls for
+whatever is on it:
+
+```json
+"music_powers": ["switch.rti_ad_8x_amp2_saloon_bar_power",
+                 "switch.rti_ad_8x_amp2_stage_power"],
+"zone_players": { "1": "media_player.sonos_1", "2": "media_player.sonos_2" }
+```
+
+The map applies to every zone in the room, since they usually share an amp and
+its input numbering. A `music_powers` entry written as an object can carry its
+own `players` map instead, for a zone wired differently.
+
+Each pairing becomes a `conditional` card watching that zone's power and
+source, rather than a state read — the pop-up body is built once when it
+opens, so these have to follow state on their own. A Music Assistant player
+gets the Mediocre card, anything else the built-in `media-control`, same rule
+as `media_player`.
+
 ### Video switching
 
 A room with a matrix asks three questions in order — which screen, what's
