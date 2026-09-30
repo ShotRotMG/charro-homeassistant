@@ -70,7 +70,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     root = os.path.dirname(__file__)
     web = os.path.join(root, "frontend")
 
-    await _register_static(hass, STATIC_URL, web)
+    # aiohttp's router refuses a second route on the same prefix, and the
+    # prefix never changes — only the query does — so this happens once per
+    # Home Assistant run rather than once per setup.
+    store = hass.data.setdefault(DOMAIN, {})
+    if not store.get("static"):
+        await _register_static(hass, STATIC_URL, web)
+        store["static"] = True
 
     # The bundle is served with HA's long cache headers, so the URL carries a
     # revision: the manifest version plus the file's mtime. A reinstall or a
@@ -111,15 +117,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_delete_room)
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"url": url}
+    store[entry.entry_id] = {"url": url}
     _LOGGER.debug("Charro Cards %s ready at %s", integration.version, url)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Drop the sidebar panel. The static route and the JS stay until restart."""
+    """Undo setup cleanly enough that Reload picks up new frontend files.
+
+    The revision in the bundle's URL is computed at setup, so the old URL has
+    to come back out of the frontend's list or a reload would serve both the
+    stale one and the fresh one. With it removed, Reload + a browser refresh
+    is enough for any change under frontend/; only edits to this Python need
+    a Home Assistant restart, since the module is already imported.
+
+    The static route stays: aiohttp can't unregister one, and it doesn't need
+    to — the path is stable and setup skips re-adding it.
+    """
     frontend.async_remove_panel(hass, PANEL_URL)
-    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if data and data.get("url"):
+        try:
+            frontend.remove_extra_js_url(hass, data["url"])
+        except (KeyError, ValueError, AttributeError):
+            # older core without the remover, or it was never added
+            _LOGGER.debug("couldn't drop %s from the frontend", data["url"])
     return True
 
 

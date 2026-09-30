@@ -54,6 +54,20 @@ the switch is a remove and a re-add:
 
 Your rooms, dashboards and views are untouched by all of that.
 
+### Updating
+
+HACS → Redownload, then:
+
+- **changes under `frontend/`** (the cards, the templates) — **Settings →
+  Devices & services → Charro Cards → Reload**, then hard-refresh the
+  browser. Reload drops the old bundle URL and emits the new revision, so no
+  restart is needed.
+- **changes to the integration's Python** — restart Home Assistant. The
+  module is already imported by then, so a reload can't replace it. This is
+  true of every custom integration, not just this one.
+
+If you're unsure which changed, restart; it always works.
+
 ---
 
 ## `charro-room-card`
