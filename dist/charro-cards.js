@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.28.2";
+const VERSION = "4.28.3";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -816,29 +816,32 @@ const POPUP_CSS = `
 @media (min-width:1900px){
   .charro-pop{ width:min(var(--charro-pop-w,680px),82vw); }
 }
-/* The title is positioned off the panel's own centre rather than laid out
- * between the two sides — a grid column would have to shrink one of them to
- * keep the middle centred, and it was the chips that gave way. Now nothing
- * competes: icons left, chips right at their natural width, name dead centre.
- * Below 900px it drops back into the flow so it can't overlap them. */
+/* Room icon, name and chips travel together as one centred cluster, taken
+ * out of the flow so neither the door on the left nor the buttons on the
+ * right can push it off centre or squeeze the chips. Below 900px the cluster
+ * rejoins the flow, where overlapping would be the worse problem. */
 .charro-pop-hd{
   position:relative; display:flex; align-items:center; gap:8px;
   margin:2px 4px 14px; min-height:34px;
 }
-.charro-pop-hd .lead{ display:flex; align-items:center; gap:6px; flex:none; }
-.charro-pop-hd .lead > ha-icon{ --mdc-icon-size:26px; color:var(--primary-text-color); }
-.charro-pop-hd .t{
+.charro-pop-hd .mid{
   position:absolute; left:50%; transform:translateX(-50%);
-  max-width:46%; pointer-events:none;
+  display:flex; align-items:center; gap:14px; max-width:78%;
+}
+.charro-pop-hd .mid > ha-icon{
+  --mdc-icon-size:26px; color:var(--primary-text-color); flex:none;
+}
+.charro-pop-hd .t{
+  pointer-events:none; min-width:0;
   font-size:24px; font-weight:650; letter-spacing:-.02em; text-align:center;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .charro-pop-hd .tail{
   display:flex; align-items:center; gap:6px; margin-left:auto; flex:none;
 }
-/* the door sits with the room icon and only colours when something is open */
+/* the door is the far-left marker for the whole room, not part of the name */
 .charro-pop-hd .door{
-  --mdc-icon-size:22px; color:var(--secondary-text-color);
+  --mdc-icon-size:24px; color:var(--secondary-text-color);
   cursor:default; flex:none;
 }
 .charro-pop-hd .door.open{ color:#ef5350; cursor:pointer; }
@@ -864,11 +867,12 @@ const POPUP_CSS = `
 .charro-chip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
 @media (max-width:900px){
   .charro-pop-hd{ flex-wrap:wrap; }
-  .charro-pop-hd .t{
-    position:static; transform:none; max-width:none; text-align:left;
-    font-size:20px; flex:1 1 auto;
+  .charro-pop-hd .mid{
+    position:static; transform:none; max-width:none; flex:1 1 auto;
+    gap:10px; min-width:0;
   }
-  .charro-chips{ flex-wrap:wrap; justify-content:flex-end; }
+  .charro-pop-hd .t{ text-align:left; font-size:20px; }
+  .charro-chips{ flex-wrap:wrap; }
 }
 .charro-pop-body > *{ margin-bottom:8px; display:block; }
 @media (prefers-reduced-motion:reduce){
@@ -1089,27 +1093,15 @@ class RoomPopup {
     this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
     window.addEventListener("keydown", this._key);
   }
-  /* The header reads like the room's own tile: the coloured icon on the left,
-   * the name big and centred, and on the right the same chips plus anything
-   * that's open. Rebuilt on state changes so the chips stay live. */
+  /* The header reads like the room's own tile: the door alone at the far
+   * left, then the room icon, name and chips as one centred cluster, then
+   * the panel buttons. Rebuilt on state changes so the chips stay live. */
   _header() {
     const hd = document.createElement("div");
     hd.className = "charro-pop-hd";
 
-    const lead = document.createElement("div");
-    lead.className = "lead";
-    if (this.room.room_icon) {
-      const i = document.createElement("ha-icon");
-      i.icon = this.room.room_icon;
-      // amber whenever anything in the room is lit, exactly as on the tile
-      const lit = onCount(this._hass, [].concat(this.room.light_entities || [],
-                                                this.room.landscape_entities || []));
-      if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
-      lead.appendChild(i);
-    }
-
-    // the door lives beside the room icon and is always there once a room
-    // watches anything: grey while everything's shut, red the moment it isn't
+    // the far-left marker for the room as a whole: grey while everything's
+    // shut, red the moment something isn't
     if ((this.room.alert_sensors || []).length) {
       const { all, bad } = this._sensorState();
       const d = document.createElement("ha-icon");
@@ -1120,16 +1112,31 @@ class RoomPopup {
         : `${listNames(all)} closed.`;
       if (bad.length) d.addEventListener("click", () => this._moreInfo(bad[0].entity));
       d.setAttribute("aria-label", d.title);
-      lead.appendChild(d);
+      hd.appendChild(d);
+    }
+
+    const mid = document.createElement("div");
+    mid.className = "mid";
+    if (this.room.room_icon) {
+      const i = document.createElement("ha-icon");
+      i.icon = this.room.room_icon;
+      // amber whenever anything in the room is lit, exactly as on the tile
+      const lit = onCount(this._hass, [].concat(this.room.light_entities || [],
+                                                this.room.landscape_entities || []));
+      if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
+      mid.appendChild(i);
     }
 
     const t = document.createElement("div");
     t.className = "t";
     t.textContent = this.titleOverride || this.room.room_name || "";
+    mid.appendChild(t);
+
+    const chips = this._chipStrip();
+    if (chips.childElementCount) mid.appendChild(chips);
 
     const tail = document.createElement("div");
     tail.className = "tail";
-    tail.appendChild(this._chipStrip());
 
     if (this.room.page_path) {
       const go = document.createElement("button");
@@ -1150,7 +1157,7 @@ class RoomPopup {
     x.addEventListener("click", () => this.dismiss());
     tail.appendChild(x);
 
-    hd.append(lead, t, tail);
+    hd.append(mid, tail);
     return hd;
   }
 

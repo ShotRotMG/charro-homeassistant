@@ -307,17 +307,19 @@ silence.
 
 The header reads like the room's own tile rather than a plain dialog bar:
 
-- the room icon on the left, amber whenever anything in `light_entities` or
-  `landscape_entities` is on — the same rule the tile uses
-- beside it, a door icon for any room with `alert_sensors`: closed and grey
-  while everything is shut, open and red when something isn't
-- the room name centred, at 24px
-- on the right, the same chips the tile shows, then the full-page and close
-  buttons
+- far left, on its own: a door icon for any room with `alert_sensors` — closed
+  and grey while everything is shut, open and red when something isn't
+- centred: the room icon, the name at 24px, and the chips, travelling together
+  as one cluster with a gap either side of the name
+- far right: the full-page and close buttons
 
-The title is positioned off the panel's centre rather than laid out between
-the two sides, so it is centred on the panel itself and the chips keep their
-natural width. Under 900px it drops back into the flow, left-aligned.
+The room icon is amber whenever anything in `light_entities` or
+`landscape_entities` is on — the same rule the tile uses.
+
+The centre cluster is taken out of the flow and positioned off the panel's own
+centre, so neither the door nor the buttons can push it off or squeeze the
+chips. Under 900px it rejoins the flow and left-aligns, where overlapping would
+be the worse problem.
 
 Chips are clickable. A count chip (lights, landscape, fans, water, music
 zones) turns that group off, which is what the tile's chips do. A single-entity
