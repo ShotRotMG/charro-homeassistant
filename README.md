@@ -256,6 +256,20 @@ The map applies to every zone in the room, since they usually share an amp and
 its input numbering. A `music_powers` entry written as an object can carry its
 own `players` map instead, for a zone wired differently.
 
+The `music` block draws every zone together, which is right for a room with
+one. A combined room usually wants them apart — the Living zone beside the
+Living lights, not stacked with Dining's at the top — so a zone is also a
+layout row of its own:
+
+```json
+{ "zone": "switch.rti_ad_8x_amp2_living_room_power" }
+```
+
+Switching a room to a custom layout splits them automatically: `music`
+materializes into one row per zone plus a `player` block for the room's
+`media_player`, and each can be dragged wherever it belongs. Unplaced zones
+show in the tray under **Music zones**.
+
 Each pairing becomes a `conditional` card watching that zone's power and
 source, rather than a state read — the pop-up body is built once when it
 opens, so these have to follow state on their own. A Music Assistant player

@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.34.0";
+const VERSION = "4.35.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -545,6 +545,8 @@ function blockCards(name, r, hass) {
 
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
+  if (name === "player") push(mediaCard(r, hass));
+
   if (name === "music") {
     for (const p of r.music_powers || []) {
       push(zoneCard(p, r, hass));
@@ -670,6 +672,12 @@ function layoutBody(r, hass) {
       } else {
         run.push(lightCard(it, r.no_dim));
       }
+    } else if (it.zone) {
+      // a single music zone, so it can sit with its own room's lights
+      // rather than being stuck in the block with every other zone
+      flush();
+      out.push(zoneCard(it.zone, r, hass));
+      for (const c of zonePlayerCards(it.zone, r, hass)) out.push(c);
     } else if (it.gap) {
       // an empty cell: the next tile lands in the other column, or on the
       // next row, without anything being drawn here
@@ -803,6 +811,10 @@ function materializeLayout(r) {
         for (const l of list)
           out.push(typeof l === "string" ? { entity: l } : { ...l });
       }
+    } else if (name === "music") {
+      // split, so each zone can be dragged to the room it belongs to
+      for (const p of r.music_powers || []) out.push({ zone: p });
+      if (r.media_player || r.media_card) out.push({ block: "player" });
     } else {
       out.push({ block: name });
     }
@@ -2557,8 +2569,8 @@ ha-expansion-panel h4:first-of-type{ margin-top:4px; }
 const o_render = (it) => it.render || "mushroom";
 
 const BLOCK_LABEL = {
-  climate: "Climate", video: "Video / remotes", media: "Media", music: "Music",
-  cameras: "Cameras",
+  climate: "Climate", video: "Video / remotes", media: "Media",
+  music: "Music (every zone)", player: "Media player", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
 };
 
@@ -2774,6 +2786,13 @@ const LayoutUI = {
         .map((e) => ({ entity: e }));
       if (items.length) cats.push({ label, items });
     }
+    const zid = (z) => (typeof z === "string" ? z : (z && (z.entity || z.power)));
+    const placedZones = new Set(this._lbAll().map((x) => x && zid(x.zone)).filter(Boolean));
+    const zones = (r.music_powers || [])
+      .filter((z) => zid(z) && !placedZones.has(zid(z)))
+      .map((z) => ({ zone: z }));
+    if (zones.length) cats.push({ label: "Music zones", items: zones });
+
     const blocks = Object.keys(BLOCK_LABEL)
       .filter((b) => b !== "lights" && !usedBlocks.has(b))
       .filter((b) => {
@@ -2784,6 +2803,7 @@ const LayoutUI = {
                                      || r.receiver_entity || r.remotes);
         if (b === "music") return !!((r.music_powers || []).length || r.media_player);
         if (b === "video") return !!r.video;
+        if (b === "player") return !!(r.media_player || r.media_card);
         return true;
       })
       .map((b) => ({ block: b }));
@@ -2807,6 +2827,12 @@ const LayoutUI = {
   _lbLabel(it) {
     if (it.heading !== undefined) return null;
     if (it.block) return { icon: "mdi:view-agenda-outline", text: BLOCK_LABEL[it.block] || it.block };
+    if (it.zone) {
+      const id = typeof it.zone === "string" ? it.zone : (it.zone.entity || it.zone.power);
+      const stem = String(id).replace(/^[^.]*\./, "").replace(/_power$/, "");
+      return { icon: "mdi:speaker", text: zoneName(id, stem, this._room, this._hass),
+               sub: id };
+    }
     if (it.gap) return { icon: "mdi:crop-free", text: "Gap" };
     if (it.card) return { icon: "mdi:code-braces", text: it.card.type || "card" };
     const st = this._hass.states[it.entity];
@@ -2967,7 +2993,7 @@ const LayoutUI = {
     });
     row.appendChild(move);
 
-    if (it.heading !== undefined || it.card || it.block || it.gap) {
+    if (it.heading !== undefined || it.card || it.block || it.gap || it.zone) {
       const del = document.createElement("button");
       del.className = "btn";
       del.title = it.block
