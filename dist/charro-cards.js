@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.32.0";
+const VERSION = "4.33.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2536,6 +2536,8 @@ const LB_CSS = `
 button.vdel{ background:rgba(244,67,54,.16); color:#ef5350; align-self:flex-start;
   padding:5px 10px; font-size:12px; }
 ha-expansion-panel{ display:block; margin:14px 0 4px; --expansion-panel-content-padding:0 10px 10px; }
+ha-expansion-panel h4:first-of-type{ margin-top:4px; }
+
 .vfield ha-entity-picker, .vfield ha-icon-picker{ display:block; width:100%; }
 
 
@@ -3124,7 +3126,20 @@ const LayoutUI = {
         this._room.hidden = this._room.hidden || [];
         this._lbRender(); this._lbChanged();
       });
-      const bar = document.createElement("div"); bar.className = "lbbar"; bar.appendChild(go);
+      // adding a card is a reason to take the layout over, so do both at
+      // once rather than making "+ Card" something you can only reach after
+      // pressing an unrelated button first
+      const card = document.createElement("button");
+      card.textContent = "+ Card";
+      card.title = "Paste or build any Lovelace card — takes the layout over too";
+      card.addEventListener("click", () => {
+        this._room.layout = materializeLayout(this._room);
+        this._room.hidden = this._room.hidden || [];
+        this._lbChanged();
+        this._openCard({ key: "layout", index: null });
+      });
+      const bar = document.createElement("div"); bar.className = "lbbar";
+      bar.append(go, card);
       this._layoutBox.append(hint, bar);
       return;
     }
@@ -3627,7 +3642,31 @@ class CharroRoomsEditor extends HTMLElement {
       videoHost = p;
     }
 
-    this._left.append(h2, secs, videoHost, h3, ta);
+    /* Sections and the raw cards blob still do real work — sections orders
+     * and filters the automatic body, and a room can carry cards a layout
+     * hasn't been built from yet — but neither is the way you'd reach for
+     * now, so they fold away instead of sitting open above the layout. */
+    let advanced = document.createElement("div");
+    if (customElements.get("ha-expansion-panel")) {
+      const p = document.createElement("ha-expansion-panel");
+      p.header = "Advanced";
+      p.secondary = "Section order, and cards not yet in the layout";
+      p.outlined = true;
+      p.leftChevron = false;
+      p.expanded = !!this._advOpen;
+      p.addEventListener("expanded-changed", (ev) => {
+        this._advOpen = ev.detail ? ev.detail.expanded : !this._advOpen;
+      });
+      const ic = document.createElement("ha-icon");
+      ic.icon = "mdi:tune"; ic.slot = "leading-icon";
+      ic.style.cssText = "--mdc-icon-size:22px;color:var(--secondary-text-color)";
+      p.append(ic, h2, secs, h3, ta);
+      advanced = p;
+    } else {
+      advanced.append(h2, secs, h3, ta);
+    }
+
+    this._left.append(videoHost, advanced);
     this._renderVideo();
     this._lbEnsure();
     this._lbRender();
