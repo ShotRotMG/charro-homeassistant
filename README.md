@@ -324,9 +324,15 @@ zones) turns that group off, which is what the tile's chips do. A single-entity
 chip (TV, projector, receiver, now playing, thermostat) opens more-info. Each
 carries a tooltip saying what it is and what a tap will do.
 
-Hovering the door names what's open — "Saloon Lanai Door — open" — and lists
-all of them when more than one is; clicking opens the first. Closed, it says
-how many sensors it's watching.
+Hovering the door names the sensors in a sentence — "Jordan Bedroom violated.",
+"Saloon Lanai Door and Kitchen Lanai Door closed." — listing the violated ones
+when any are, and all of them when none are. Clicking a red door opens the
+first violated one.
+
+These aren't all binary sensors: the Elk zones are plain `sensor` entities
+reading `Normal` or `Violated`. The check treats `violated`, `on`, `open` and
+`opening` as violated, whatever the domain, so a zone and a cover and a
+binary_sensor can sit in the same `alert_sensors` list.
 
 The header redraws when the states behind it change, guarded by a signature of
 just those entities, so an active house doesn't rebuild it on every tick.

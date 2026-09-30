@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.28.1";
+const VERSION = "4.28.2";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -876,6 +876,15 @@ const POPUP_CSS = `
 }
 `;
 
+/* "Saloon Lanai Door and Kitchen Lanai Door", not "2 sensors" — the names are
+ * the useful part and there are never many of them in one room. */
+function listNames(rows) {
+  const n = (rows || []).map((r) => r.name);
+  if (!n.length) return "No sensors";
+  if (n.length === 1) return n[0];
+  return `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+}
+
 /* The same chips the room tile shows, described in one place so the pop-up
  * header and the tile can't drift apart on colour or meaning. Each is only
  * produced when it has something to say, and carries what a tap should do. */
@@ -1102,19 +1111,15 @@ class RoomPopup {
     // the door lives beside the room icon and is always there once a room
     // watches anything: grey while everything's shut, red the moment it isn't
     if ((this.room.alert_sensors || []).length) {
-      const open = this._openSensors();
+      const { all, bad } = this._sensorState();
       const d = document.createElement("ha-icon");
-      d.className = open.length ? "door open" : "door";
-      d.icon = open.length ? "mdi:door-open" : "mdi:door-closed";
-      if (open.length) {
-        const names = open.map((o) => `${o.name} — ${o.state}`).join("\n");
-        d.title = open.length === 1 ? names : `${open.length} open:\n${names}`;
-        d.addEventListener("click", () => this._moreInfo(open[0].entity));
-      } else {
-        const n = this.room.alert_sensors.length;
-        d.title = `All ${n} sensor${n > 1 ? "s" : ""} closed`;
-      }
-      d.setAttribute("aria-label", d.title.replace(/\n/g, ", "));
+      d.className = bad.length ? "door open" : "door";
+      d.icon = bad.length ? "mdi:door-open" : "mdi:door-closed";
+      d.title = bad.length
+        ? `${listNames(bad)} violated.`
+        : `${listNames(all)} closed.`;
+      if (bad.length) d.addEventListener("click", () => this._moreInfo(bad[0].entity));
+      d.setAttribute("aria-label", d.title);
       lead.appendChild(d);
     }
 
@@ -1188,26 +1193,28 @@ class RoomPopup {
     (this.el || document.querySelector("home-assistant")).dispatchEvent(ev);
   }
 
-  /* Anything the room watches that isn't closed, with the friendly name so
-   * the tooltip says which door rather than just that one is open. */
-  _openSensors() {
+  /* The alert sensors here aren't binary_sensors — the Elk zones are plain
+   * sensors reading "Normal" or "Violated", so testing for "on" called a
+   * violated zone closed. Take every shape these come in. */
+  _sensorState() {
     const hass = this._hass;
-    if (!hass || !hass.states) return [];
-    const out = [];
+    const all = [], bad = [];
+    if (!hass || !hass.states) return { all, bad };
     for (const e of this.room.alert_sensors || []) {
       const st = hass.states[e];
-      if (!st || st.state !== "on") continue;
+      if (!st) continue;
       const a = st.attributes || {};
       const reg = hass.entities && hass.entities[e];
-      out.push({
+      const s = String(st.state).toLowerCase();
+      const row = {
         entity: e,
         name: (reg && (reg.name || reg.original_name)) || a.friendly_name || e,
-        state: a.device_class === "garage_door" ? "open"
-             : a.device_class === "motion" ? "motion"
-             : a.device_class === "window" ? "open" : "open",
-      });
+        violated: s === "violated" || s === "on" || s === "open" || s === "opening",
+      };
+      all.push(row);
+      if (row.violated) bad.push(row);
     }
-    return out;
+    return { all, bad };
   }
 
   /* Width follows the content. A single-column room stays narrow however big
