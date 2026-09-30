@@ -449,6 +449,26 @@ just those entities, so an active house doesn't rebuild it on every tick.
 Chip colours live in one place in the code, shared by this header, so the tile
 and the pop-up can't drift apart.
 
+### The editor
+
+Four columns in a fixed-height workspace, each scrolling on its own: the room
+list, the form and its panels, the layout, and the preview. Reaching row 30 of
+a layout no longer scrolls the form and the preview off the top — which is
+also what used to make the card editor look broken, since its panel opened
+below the fold.
+
+The room list replaces the dropdown: all 21 rooms visible, current one
+highlighted, one click to switch. The action bar sticks to the top.
+
+**Autosave is on** and writes 1.5 seconds after you stop changing things. Turn
+it off with the switch in the bar and the choice is remembered in that
+browser. A save in flight blocks another from starting, and nothing is written
+unless the room actually differs from the file.
+
+**Revert goes back to the file as it was when you opened the room**, not to the
+last autosave — so autosave can't strand you. Below 1280px the preview is
+hidden and below 820px the columns stack.
+
 ### Editing a room
 
 Everything in a room file is reachable from the rooms editor. The form covers

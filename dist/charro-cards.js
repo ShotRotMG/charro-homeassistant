@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.46.0";
+const VERSION = "4.47.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3750,15 +3750,65 @@ h4{
   color:var(--secondary-text-color); border-bottom:1px solid var(--divider-color);
   padding-bottom:6px;
 }
+/* Each column scrolls on its own inside a fixed-height workspace, so
+ * reaching the bottom of the layout doesn't take the form and the preview
+ * with it. Height is the viewport minus HA's header and this card's chrome. */
 .grid2{
-  display:grid; gap:22px; align-items:start;
-  grid-template-columns:minmax(240px,.72fr) minmax(330px,.95fr) minmax(300px,.5fr);
+  display:grid; gap:18px; align-items:stretch;
+  grid-template-columns:170px minmax(240px,.72fr) minmax(330px,.95fr) minmax(300px,.5fr);
+  height:calc(100vh - 210px); min-height:420px;
 }
-.grid2.pop{ grid-template-columns:minmax(220px,.6fr) minmax(300px,.8fr) minmax(430px,1.4fr); }
+.grid2.pop{
+  grid-template-columns:170px minmax(220px,.6fr) minmax(280px,.8fr) minmax(430px,1.4fr);
+}
+.colscroll{ overflow-y:auto; overflow-x:hidden; padding-right:6px; min-height:0; }
+.colscroll::-webkit-scrollbar{ width:8px; }
+.colscroll::-webkit-scrollbar-thumb{
+  background:rgba(127,127,127,.34); border-radius:4px;
+}
+.h4row.sticky, .colscroll > h4:first-child{
+  position:sticky; top:0; z-index:2; margin-top:0;
+  background:var(--ha-card-background, var(--card-background-color, #fff));
+}
+/* the room list: what exists, and which one you're in */
+.rail{
+  overflow-y:auto; min-height:0; display:flex; flex-direction:column; gap:2px;
+  border-right:1px solid var(--divider-color); padding-right:8px;
+}
+.railhd{
+  position:sticky; top:0; z-index:2; padding:2px 2px 6px;
+  background:var(--ha-card-background, var(--card-background-color, #fff));
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--secondary-text-color);
+}
+.railit{
+  text-align:left; background:transparent; border:none; cursor:pointer;
+  padding:6px 9px; border-radius:7px; font-size:13px; font-weight:500;
+  color:var(--primary-text-color); white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis;
+}
+.railit:hover{ background:rgba(127,127,127,.14); }
+.railit.on{ background:var(--primary-color); color:var(--text-primary-color,#fff);
+  font-weight:600; }
+/* the bar follows you down the page */
+.bar{
+  position:sticky; top:0; z-index:5; padding:4px 0 10px;
+  background:var(--ha-card-background, var(--card-background-color, #fff));
+  border-bottom:1px solid var(--divider-color);
+}
+.autow{ display:inline-flex; align-items:center; gap:6px; font-size:13px;
+  color:var(--secondary-text-color); cursor:pointer; }
 @media (max-width:1280px){
-  .grid2, .grid2.pop{ grid-template-columns:minmax(0,1fr) minmax(300px,.8fr); }
+  .grid2, .grid2.pop{ grid-template-columns:150px minmax(0,1fr) minmax(300px,.8fr); }
+  .preview{ display:none; }
 }
-@media (max-width:820px){ .grid2, .grid2.pop{ grid-template-columns:1fr; } }
+@media (max-width:820px){
+  .grid2, .grid2.pop{ grid-template-columns:1fr; height:auto; }
+  .colscroll{ overflow:visible; }
+  .rail{ flex-direction:row; flex-wrap:wrap; border-right:none;
+    border-bottom:1px solid var(--divider-color); padding:0 0 8px; }
+  .railhd{ display:none; }
+}
 .ttl{ font-size:16px; font-weight:600; letter-spacing:-.01em; margin-right:4px; }
 .seg{ display:inline-flex; border:1px solid var(--divider-color); border-radius:8px; overflow:hidden; }
 .seg button{
@@ -3828,20 +3878,68 @@ class CharroRoomsEditor extends HTMLElement {
     return !!(s && s[SAVE_SERVICE[0]] && s[SAVE_SERVICE[0]][SAVE_SERVICE[1]]);
   }
 
+  /* ---------------------------------------------------------- workspace -- */
+  _autoOn() {
+    if (this._autoMem !== undefined) return this._autoMem;
+    try {
+      const v = localStorage.getItem("charro-autosave");
+      return v === null ? true : v === "1";       // on unless turned off
+    } catch (e) { return true; }
+  }
+
+  _dirty() {
+    if (!this._room) return false;
+    const save = { ...this._room };
+    delete save._remotes;
+    return JSON.stringify(save) !== JSON.stringify(this._orig || {});
+  }
+
+  /* Wait for the typing to stop before writing — a keystroke per save would
+   * hammer the shell command and race itself. */
+  _queueSave() {
+    if (!this._autoOn() || !this._canWrite() || !this._key) return;
+    clearTimeout(this._autoT);
+    this._autoT = setTimeout(() => {
+      if (this._autoOn() && this._dirty() && !this._saving) this._doSave(true);
+    }, 1500);
+  }
+
+  /* The room list as a rail, so switching is one click and you can see what
+   * exists — the dropdown hid 20 rooms behind a chevron. */
+  _renderRail() {
+    if (!this._rail) return;
+    this._rail.innerHTML = "";
+    const h = document.createElement("div");
+    h.className = "railhd"; h.textContent = "Rooms";
+    this._rail.appendChild(h);
+    for (const k of this._keys || []) {
+      const b = document.createElement("button");
+      b.className = "railit" + (k === this._key ? " on" : "");
+      b.textContent = k;
+      b.title = k;
+      b.addEventListener("click", () => { if (k !== this._key) this._load(k); });
+      this._rail.appendChild(b);
+    }
+  }
+
   /* ------------------------------------------------------------ chrome -- */
   _build() {
     const root = this.shadowRoot || this.attachShadow({ mode: "open" });
     const style = document.createElement("style"); style.textContent = RE_CSS;
     const card = document.createElement("ha-card");
 
+    /* The bar stays put: on a long room the save button used to be a
+     * thousand pixels below whatever you were editing. */
     const bar = document.createElement("div"); bar.className = "bar";
     if (this._config.title) {
       const t = document.createElement("div");
       t.className = "ttl"; t.textContent = this._config.title;
       bar.appendChild(t);
     }
-    this._sel = document.createElement("select");
-    this._sel.addEventListener("change", () => this._load(this._sel.value));
+    this._crumb = document.createElement("div");
+    this._crumb.className = "ttl";
+    bar.appendChild(this._crumb);
+
     const add = document.createElement("button");
     add.textContent = "Open / new";
     add.title = "Type a room key — opens its file if there is one, otherwise starts a new room";
@@ -3854,22 +3952,43 @@ class CharroRoomsEditor extends HTMLElement {
       this._exp.textContent = this._expanded ? "Collapse all" : "Expand all";
       if (this._form) this._form.schema = this._schema();
     });
-    bar.appendChild(this._exp);
+    bar.append(add, this._exp);
 
     const sp = document.createElement("div"); sp.className = "sp";
+
+    /* Autosave is on unless you turn it off, and the choice is remembered
+     * per browser. Revert still goes back to the file as it was when the
+     * room was opened, not to the last autosave. */
+    const auto = document.createElement("label");
+    auto.className = "autow";
+    const asw = document.createElement("ha-switch");
+    asw.checked = this._autoOn();
+    asw.addEventListener("change", () => {
+      try { localStorage.setItem("charro-autosave", asw.checked ? "1" : "0"); }
+      catch (e) { this._autoMem = asw.checked; }
+      this._autoMem = asw.checked;
+      this._saveLabel();
+      if (asw.checked && this._dirty()) this._queueSave();
+    });
+    const at = document.createElement("span"); at.textContent = "Autosave";
+    auto.append(asw, at);
+
     this._revert = document.createElement("button");
     this._revert.textContent = "Revert";
     this._revert.addEventListener("click", () => this._load(this._key, true));
     this._save = document.createElement("button");
     this._save.className = "primary";
     this._save.addEventListener("click", () => this._doSave());
-    bar.append(this._sel, add, sp, this._revert, this._save);
+    bar.append(sp, auto, this._revert, this._save);
 
+    /* Three columns that scroll on their own. Reaching row 30 of the layout
+     * shouldn't scroll the form and the preview off the top. */
     const cols = document.createElement("div"); cols.className = "grid2";
-    this._left = document.createElement("div");
-    this._mid = document.createElement("div");
-    const right = document.createElement("div"); right.className = "preview";
-    const prow = document.createElement("div"); prow.className = "h4row";
+    this._rail = document.createElement("div"); this._rail.className = "rail";
+    this._left = document.createElement("div"); this._left.className = "colscroll";
+    this._mid = document.createElement("div"); this._mid.className = "colscroll";
+    const right = document.createElement("div"); right.className = "preview colscroll";
+    const prow = document.createElement("div"); prow.className = "h4row sticky";
     const ph = document.createElement("h4"); ph.textContent = "Preview";
     const seg = document.createElement("div"); seg.className = "seg";
     seg.style.marginLeft = "auto";
@@ -3890,7 +4009,7 @@ class CharroRoomsEditor extends HTMLElement {
     prow.append(ph, seg);
     this._prevWrap = document.createElement("div");
     right.append(prow, this._prevWrap);
-    cols.append(this._left, this._mid, right);
+    cols.append(this._rail, this._left, this._mid, right);
 
     this._status = document.createElement("div"); this._status.className = "status";
     this._foot = document.createElement("div"); this._foot.className = "foot";
@@ -3908,7 +4027,7 @@ class CharroRoomsEditor extends HTMLElement {
       this._say("Finding rooms…");
       this._keys = await this._discover();
     }
-    this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+    this._renderRail();
     if (!this._keys.length) {
       this._say("No rooms found yet — nothing on a dashboard uses `room:` and there's " +
                 "no _index.json. Use Open / new and type a key: if the file already " +
@@ -3956,7 +4075,8 @@ class CharroRoomsEditor extends HTMLElement {
 
   _saveLabel() {
     const w = this._canWrite();
-    this._save.textContent = w ? "Save" : "Copy JSON";
+    const auto = w && this._autoOn();
+    this._save.textContent = w ? (auto ? "Save now" : "Save") : "Copy JSON";
     this._save.title = w
       ? `Writes ${this._key ? this._path(this._key) : "the room file"}`
       : "shell_command.charro_write_room isn't configured — this copies instead";
@@ -3975,7 +4095,9 @@ class CharroRoomsEditor extends HTMLElement {
   /* -------------------------------------------------------------- load -- */
   async _load(key, quiet) {
     if (!key) return;
-    this._key = key; this._sel.value = key;
+    this._key = key;
+    if (this._crumb) this._crumb.textContent = key;
+    this._renderRail();
     this._saveLabel();
     try {
       const url = `${this._dir()}${key}.json?t=${Date.now()}`;
@@ -4004,9 +4126,11 @@ class CharroRoomsEditor extends HTMLElement {
     this._keys = this._keys || [];
     if (!this._keys.includes(key)) {
       this._keys.push(key); this._keys.sort();
-      this._sel.innerHTML = this._keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+      this._renderRail();
     }
-    this._key = key; this._sel.value = key;
+    this._key = key;
+    if (this._crumb) this._crumb.textContent = key;
+    this._renderRail();
     this._saveLabel();
 
     // opening beats clobbering: if the file is already there, load it
@@ -4874,6 +4998,7 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   async _renderPreview() {
+    this._queueSave();
     if (!this._room) return;
     try {
       const helpers = await window.loadCardHelpers();
@@ -4911,8 +5036,13 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   /* -------------------------------------------------------------- save -- */
-  async _doSave() {
-    if (!this._room || !this._key) return;
+  async _doSave(quiet) {
+    if (!this._room || !this._key || this._saving) return;
+    this._saving = true;
+    try { await this._writeRoom(quiet); } finally { this._saving = false; }
+  }
+
+  async _writeRoom(quiet) {
     const save = { ...this._room };
     delete save._remotes;                       // fetched, not part of the file
     const json = JSON.stringify(save, null, 2);
@@ -4925,7 +5055,9 @@ class CharroRoomsEditor extends HTMLElement {
         this._orig = JSON.parse(json);
         _roomFiles.clear();               // the revision moved; drop the old URLs
         _indexP = null;                   // and re-read it
-        this._say(`Saved to ${this._path(this._key)} — hard-refresh to see it elsewhere.`, "ok");
+        this._say(quiet
+          ? `Autosaved ${this._key}.json`
+          : `Saved to ${this._path(this._key)} — hard-refresh to see it elsewhere.`, "ok");
       } catch (err) {
         this._say(`Save failed: ${err.message}`, "err");
       }
