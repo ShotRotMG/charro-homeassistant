@@ -456,12 +456,22 @@ the scalars and the entity lists; six collapsible panels cover the rest:
 
 | panel | what it edits |
 | --- | --- |
-| Video / remotes | the `video` block — screens, their sources, the templates |
-| Remotes | `remotes`, for a room with no screen picker |
-| Music zone inputs | `zone_players` |
-| Pool & spa actions | `water_actions` — script, colour, and both conditions |
-| Door labels & buttons | per-sensor `label`, `icon`, `toggle_button`, `vehicle_entity` |
+| Video / remotes | the `video` block, and `remotes` for a room with no screen picker |
+| Music | `music_powers`, `music_player`, `zone_players` |
+| Pool & water | the pumps, their names and heaters, `fountain_entities`, `water_actions` |
+| Door / motion alert | `alert_sensors` and `confirm_sensor` — which sensors, and for each one its label, icon, opener, garage flag and guard |
+| Gates | `gates` |
 | Advanced | `sections`, `media_card`, and the raw `cards` slots |
+
+Each panel is one subject. Picking the entities and configuring them used to
+be split — the simple fields in an `ha-form` group, the lists of objects in a
+panel below — which put the same subject in two places. The `ha-form` groups
+that had a partner were folded into it, so Music, Pool & water, Video /
+remotes and Door / motion alert are each a single place. Lights, Fans, Climate
+and Media stay in the form, having nothing to merge with.
+
+In Door / motion alert each sensor is a collapsed row you open for its
+details.
 
 The layout builder owns arrangement, and the per-light table covers name,
 icon, render, dimming and counting for rooms that never take their layout over.

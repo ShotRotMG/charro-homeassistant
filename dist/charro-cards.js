@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.44.1";
+const VERSION = "4.46.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1871,27 +1871,10 @@ const ROOM_SCHEMA = [
   { type: "expandable", name: "", title: "Climate", icon: "mdi:thermostat", schema: [
     { name: "climate_entity", selector: ent(["climate"]) },
   ]},
-  { type: "expandable", name: "", title: "Pool & water", icon: "mdi:pool", schema: [
-    { name: "pool_switch", selector: ent(["switch"]) },
-    { name: "pool_name", selector: { text: {} } },
-    { name: "pool_heater", selector: ent(["water_heater", "climate"]) },
-    { name: "spa_switch", selector: ent(["switch"]) },
-    { name: "spa_name", selector: { text: {} } },
-    { name: "spa_heater", selector: ent(["water_heater", "climate"]) },
-    { name: "fountain_entities", selector: ent(["switch", "light"], true) },
-  ]},
-  { type: "expandable", name: "", title: "Music", icon: "mdi:music", schema: [
-    { name: "music_powers", selector: ent(["switch"], true) },
-    { name: "music_player", selector: ent(["media_player"]) },
-  ]},
   { type: "expandable", name: "", title: "Media", icon: "mdi:television", schema: [
     { name: "tv_entity", selector: ent(["media_player"]) },
     { name: "projector_entity", selector: ent(["switch", "media_player", "light"]) },
     { name: "receiver_entity", selector: ent(["media_player"]) },
-  ]},
-  { type: "expandable", name: "", title: "Door / motion alert", icon: "mdi:door-open", schema: [
-    { name: "alert_sensors", selector: ent(["sensor", "binary_sensor", "cover"], true) },
-    { name: "confirm_sensor", selector: ent(["sensor", "binary_sensor"]) },
   ]},
 ];
 const ROOM_LABELS = {
@@ -1904,25 +1887,14 @@ const ROOM_LABELS = {
   popup_hash: "Pop-up hash (blank = from the name)",
   page_path: "Full-page path",
   popup_width: "Pop-up width",
-  pool_name: "Pool tile name",
-  spa_name: "Spa tile name",
   light_entities: "Lights",
   landscape_entities: "Landscape lights (own chip)",
   fan_entities: "Ceiling fans",
   bath_fan_entities: "Other fans",
   climate_entity: "Thermostat",
-  pool_switch: "Pool pump",
-  pool_heater: "Pool heater",
-  spa_switch: "Spa pump",
-  spa_heater: "Spa heater",
-  fountain_entities: "Water features",
-  music_powers: "Music zone power switches",
-  music_player: "Media player (hold the chip)",
   tv_entity: "TV",
   projector_entity: "Projector",
   receiver_entity: "AV receiver",
-  alert_sensors: "Door / window / motion / garage sensors",
-  confirm_sensor: "Only alert when this is also open",
 };
 const ROOM_HELPERS = {
   tile_size: 'Ignored if the card in the view sets its own grid_options.',
@@ -1932,7 +1904,6 @@ const ROOM_HELPERS = {
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
   fan_entities: "The Lutron fan dimmers. Gets the ceiling-fan chip.",
   bath_fan_entities: "Everything else that moves air \u2014 exhaust fans, air purifiers, tower fans. Gets its own chip. A fan. entity gets fan controls, a light-domain dimmer gets a speed slider.",
-  music_powers: "The chip shows how many of these are on.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
   pool_switch: "The pool chip appears only while this is on.",
   pool_heater: "Supplies the temperature and the warming/at-temp colour.",
@@ -4107,23 +4078,22 @@ class CharroRoomsEditor extends HTMLElement {
     // than sprawl open under them. Each list-of-objects gets its own group,
     // so the left column reads as sections rather than one long form.
     this._videoBox = document.createElement("div");
-    this._remotesBox = document.createElement("div");
     this._zoneBox = document.createElement("div");
     this._waterBox = document.createElement("div");
     this._doorsBox = document.createElement("div");
     this._gatesBox = document.createElement("div");
 
     const videoHost = this._panel("Video / remotes",
-      "Screens, their sources, one remote", "mdi:remote-tv", "_videoOpen", this._videoBox);
-    const remotesHost = this._panel("Remotes",
-      "For a room with no screen picker", "mdi:remote", "_remotesOpen", this._remotesBox);
-    const zoneHost = this._panel("Music zone inputs",
-      "Which player each amplifier input carries", "mdi:speaker-multiple",
+      "Screens, their sources, and every remote", "mdi:remote-tv",
+      "_videoOpen", this._videoBox);
+    const zoneHost = this._panel("Music",
+      "Zones, the player, and what each input carries", "mdi:music",
       "_zoneOpen", this._zoneBox);
-    const waterHost = this._panel("Pool & spa actions",
-      "Scripts the switches can't express", "mdi:pool", "_waterOpen", this._waterBox);
-    const doorsHost = this._panel("Door labels & buttons",
-      "Name a door and say what opens it", "mdi:door-closed",
+    const waterHost = this._panel("Pool & water",
+      "Pumps, heaters, water features and their scripts", "mdi:pool",
+      "_waterOpen", this._waterBox);
+    const doorsHost = this._panel("Door / motion alert",
+      "Doors, windows, motion, garages — and what opens them", "mdi:door-open",
       "_doorsOpen", this._doorsBox);
     const gatesHost = this._panel("Gates",
       "What opens each one, and whether to ask first", "mdi:gate",
@@ -4153,10 +4123,9 @@ class CharroRoomsEditor extends HTMLElement {
       "Section order, the media card override, and raw cards", "mdi:tune",
       "_advOpen", advBody);
 
-    this._left.append(videoHost, remotesHost, zoneHost, waterHost, doorsHost,
+    this._left.append(videoHost, zoneHost, waterHost, doorsHost,
                      gatesHost, advanced);
     this._renderVideo();
-    this._renderRemotes();
     this._renderZonePlayers();
     this._renderWaterActions();
     this._renderDoors();
@@ -4193,11 +4162,11 @@ class CharroRoomsEditor extends HTMLElement {
 
   /* Remotes that aren't behind a video switcher — a room with one TV and one
    * box. Same specs the `remotes` list takes. */
-  _renderRemotes() {
-    const box = this._remotesBox;
-    if (!box) return;
-    box.innerHTML = "";
-    const f = this._fields(() => { this._renderRemotes(); this._renderPreview(); });
+
+
+  /* Which player each amplifier input is carrying. */
+  _remotesInto(box) {
+    const f = this._fields(() => { this._renderVideo(); this._renderPreview(); });
     const list = this._room.remotes || [];
     const tpls = Object.keys(this._room._remotes || {});
 
@@ -4215,7 +4184,7 @@ class CharroRoomsEditor extends HTMLElement {
       }
       dd.addEventListener("change", () => {
         if (dd.value) spec.use = dd.value; else delete spec.use;
-        this._renderRemotes(); this._renderPreview();
+        this._renderVideo(); this._renderPreview();
       });
       sel.append(t, dd);
       row.appendChild(sel);
@@ -4244,36 +4213,48 @@ class CharroRoomsEditor extends HTMLElement {
     }));
   }
 
-  /* Which player each amplifier input is carrying. */
+  /* The zones, the player, and which player each amplifier input carries —
+   * one subject, so one panel. */
   _renderZonePlayers() {
     const box = this._zoneBox;
     if (!box) return;
     box.innerHTML = "";
-    const f = this._fields(() => { this._renderZonePlayers(); this._renderPreview(); });
-    const map = this._room.zone_players || {};
+    const redraw = () => { this._renderZonePlayers(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    const r = this._room;
 
+    box.appendChild(f.many("Music zone power switches", (r.music_powers || [])
+      .map((z) => (typeof z === "string" ? z : (z && (z.entity || z.power)))), ["switch"],
+      (v) => { if (v.length) r.music_powers = v; else delete r.music_powers; }));
+    const n1 = document.createElement("div");
+    n1.className = "vnote";
+    n1.textContent = "The chip shows how many of these are on.";
+    box.appendChild(n1);
+
+    box.appendChild(f.ent("Media player (hold the chip)", r.music_player,
+      ["media_player"], (v) => { if (v) r.music_player = v; else delete r.music_player; }));
+
+    box.appendChild(f.cap("What each amplifier input is carrying"));
+    const map = r.zone_players || {};
     for (const [value, entity] of Object.entries(map)) {
       const row = f.rowBox();
       row.appendChild(f.text("Source value", value, (v) => {
         if (!v || v === value) return;
         const next = {};
-        for (const [k, e] of Object.entries(this._room.zone_players))
-          next[k === value ? v : k] = e;
-        this._room.zone_players = next;
+        for (const [kk, e] of Object.entries(r.zone_players)) next[kk === value ? v : kk] = e;
+        r.zone_players = next;
       }, "1"));
       row.appendChild(f.ent("Player on that input", entity, ["media_player"], (v) => {
-        if (v) this._room.zone_players[value] = v;
-        else delete this._room.zone_players[value];
+        if (v) r.zone_players[value] = v; else delete r.zone_players[value];
       }));
       row.appendChild(f.del("Remove input", () => {
-        delete this._room.zone_players[value];
-        if (!Object.keys(this._room.zone_players).length) delete this._room.zone_players;
+        delete r.zone_players[value];
+        if (!Object.keys(r.zone_players).length) delete r.zone_players;
       }));
       box.appendChild(row);
     }
-
     box.appendChild(f.add("+ Input", () => {
-      const m = this._room.zone_players = this._room.zone_players || {};
+      const m = r.zone_players = r.zone_players || {};
       let n = 1;
       while (m[String(n)]) n++;
       m[String(n)] = "";
@@ -4281,36 +4262,65 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   /* The scripts a Pentair needs that its switches can't express. */
+  /* The pumps, their heaters, the water features, and the scripts a Pentair
+   * needs that its switches can't express. */
   _renderWaterActions() {
     const box = this._waterBox;
     if (!box) return;
     box.innerHTML = "";
-    const f = this._fields(() => { this._renderWaterActions(); this._renderPreview(); });
-    const list = this._room.water_actions || [];
+    const redraw = () => { this._renderWaterActions(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    const r = this._room;
+    const set = (k) => (v) => { if (v) r[k] = v; else delete r[k]; };
 
+    for (const [cap, sw, nm, ht] of [
+      ["Pool", "pool_switch", "pool_name", "pool_heater"],
+      ["Spa", "spa_switch", "spa_name", "spa_heater"],
+    ]) {
+      const row = f.rowBox();
+      row.appendChild(f.ent(`${cap} pump`, r[sw], ["switch"], set(sw)));
+      row.appendChild(f.text(`${cap} tile name`, r[nm], set(nm), cap));
+      row.appendChild(f.ent(`${cap} heater`, r[ht], ["water_heater", "climate"], set(ht)));
+      box.appendChild(row);
+    }
+    const n1 = document.createElement("div");
+    n1.className = "vnote";
+    n1.textContent = "The heater only shows while its pump is on. "
+      + "The chip takes its temperature and warming colour from the heater.";
+    box.appendChild(n1);
+
+    box.appendChild(f.many("Water features", lightIds(r.fountain_entities),
+      ["switch", "light", "valve"], (v) => this._setLightList("fountain_entities", v)));
+    const n2 = document.createElement("div");
+    n2.className = "vnote";
+    n2.textContent = "Fountain, spill, water wall. One chip with a count; "
+      + "tapping turns them all off.";
+    box.appendChild(n2);
+
+    box.appendChild(f.cap("Scripts the switches can't express"));
+    const list = r.water_actions || [];
     list.forEach((a, i) => {
       const row = f.rowBox();
-      const set = (k) => (v) => { if (v) a[k] = v; else delete a[k]; };
-      row.appendChild(f.text("Name", a.name, set("name"), "Turn Spa On"));
-      row.appendChild(f.icon("Icon", a.icon, set("icon")));
+      const sa = (k) => (v) => { if (v) a[k] = v; else delete a[k]; };
+      row.appendChild(f.text("Name", a.name, sa("name"), "Turn Spa On"));
+      row.appendChild(f.icon("Icon", a.icon, sa("icon")));
       row.appendChild(f.ent("Tapping it runs", a.script,
-        ["script", "scene", "button", "automation"], set("script")));
-      row.appendChild(f.text("Colour", a.color, set("color"), "light-green"));
+        ["script", "scene", "button", "automation"], sa("script")));
+      row.appendChild(f.text("Colour", a.color, sa("color"), "light-green"));
       row.appendChild(f.ent("Show while this is off", a.when_off,
-        ["switch", "light", "water_heater", "binary_sensor"], set("when_off")));
+        ["switch", "light", "water_heater", "binary_sensor"], sa("when_off")));
       row.appendChild(f.many("Show while any of these is on", a.when_on,
         ["switch", "light", "water_heater", "binary_sensor"], (v) => {
           if (v.length) a.when_on = v; else delete a.when_on;
         }));
       row.appendChild(f.del("Remove action", () => {
-        this._room.water_actions.splice(i, 1);
-        if (!this._room.water_actions.length) delete this._room.water_actions;
+        r.water_actions.splice(i, 1);
+        if (!r.water_actions.length) delete r.water_actions;
       }));
       box.appendChild(row);
     });
-
     box.appendChild(f.add("+ Action", () => {
-      (this._room.water_actions = this._room.water_actions || []).push({ name: "" });
+      (r.water_actions = r.water_actions || []).push({ name: "" });
     }));
   }
 
@@ -4362,47 +4372,55 @@ class CharroRoomsEditor extends HTMLElement {
 
   /* A door's label and the button that operates it, for rooms that never
    * take their layout over — where the layout row would be the only way. */
+  /* Picking the sensors and setting them up were two panels for no reason
+   * other than one being an ha-form field. One list: each sensor is a row
+   * you can swap, remove, and open for its label, its opener and its guard. */
   _renderDoors() {
     const box = this._doorsBox;
     if (!box) return;
     box.innerHTML = "";
-    const f = this._fields(() => { this._renderDoors(); this._renderPreview(); });
-    const list = this._room.alert_sensors || [];
-    if (!list.length) {
-      const n = document.createElement("div");
-      n.className = "vnote";
-      n.textContent = "Add sensors under Door / motion alert above, then name them here.";
-      box.appendChild(n);
-      return;
-    }
+    const redraw = () => { this._renderDoors(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    const r = this._room;
+    const list = r.alert_sensors || [];
+
+    const idOf = (x) => (typeof x === "string" ? x : (x && x.entity) || "");
+    const objAt = (i) => {
+      if (typeof r.alert_sensors[i] === "string")
+        r.alert_sensors[i] = { entity: r.alert_sensors[i] };
+      return r.alert_sensors[i];
+    };
+
+    box.appendChild(f.cap("Door / window / motion / garage sensors"));
 
     list.forEach((sRaw, i) => {
-      const id = typeof sRaw === "string" ? sRaw : sRaw.entity;
+      const id = idOf(sRaw);
       const o = typeof sRaw === "object" ? sRaw : {};
-      const obj = () => {
-        if (typeof this._room.alert_sensors[i] === "string")
-          this._room.alert_sensors[i] = { entity: id };
-        return this._room.alert_sensors[i];
-      };
+      const st = this._hass.states[id];
+      const reg = this._hass.entities && this._hass.entities[id];
+      const shown = o.label || (reg && (reg.name || reg.original_name))
+                    || (st && st.attributes.friendly_name) || id;
       const set = (k) => (v) => {
-        if (v) obj()[k] = v;
-        else if (typeof this._room.alert_sensors[i] === "object")
-          delete this._room.alert_sensors[i][k];
+        if (v) objAt(i)[k] = v;
+        else if (typeof r.alert_sensors[i] === "object") delete r.alert_sensors[i][k];
       };
-      const row = f.rowBox();
-      const cap = document.createElement("div");
-      cap.className = "vcap"; cap.textContent = id;
-      row.appendChild(cap);
-      row.appendChild(f.text("Label", o.label, set("label"), "Door 3"));
-      row.appendChild(f.icon("Icon", o.icon, set("icon")));
-      row.appendChild(f.ent("Button that opens it", o.toggle_button,
+
+      const body = document.createElement("div");
+      body.appendChild(f.ent("Sensor", id, ["sensor", "binary_sensor", "cover"], (v) => {
+        if (!v) r.alert_sensors.splice(i, 1);
+        else if (typeof r.alert_sensors[i] === "object") r.alert_sensors[i].entity = v;
+        else r.alert_sensors[i] = v;
+        if (!r.alert_sensors.length) delete r.alert_sensors;
+      }));
+      body.appendChild(f.text("Label", o.label, set("label"), "Door 1"));
+      body.appendChild(f.icon("Icon", o.icon, set("icon")));
+      body.appendChild(f.ent("Button that opens it", o.toggle_button,
         ["button", "switch", "script", "cover"], set("toggle_button")));
-      row.appendChild(f.ent("Vehicle sensor", o.vehicle_entity, ["binary_sensor"],
+      body.appendChild(f.ent("Vehicle sensor", o.vehicle_entity, ["binary_sensor"],
         set("vehicle_entity")));
 
-      /* A garage door gets its own chip, and the room's guard is for the
-       * garage circuit — an entry door beside them is on neither. Both are
-       * three-state: inherit, or say yes/no for this one. */
+      /* Both of these are three-state: inherit, or say yes/no for this one.
+       * A switch couldn't tell "use the room's guard" from "no guard". */
       const tri = (label, value, onPick, options) => {
         const w = document.createElement("div");
         w.className = "vfield";
@@ -4414,46 +4432,74 @@ class CharroRoomsEditor extends HTMLElement {
           if (String(value) === v) op.selected = true;
           dd.appendChild(op);
         }
-        dd.addEventListener("change", () => {
-          onPick(dd.value);
-          this._renderDoors(); this._renderPreview();
-        });
+        dd.addEventListener("change", () => { onPick(dd.value); redraw(); });
         w.append(t, dd);
         return w;
       };
 
-      const isAuto = o.garage === undefined;
-      row.appendChild(tri("Counts as a garage door",
-        isAuto ? "auto" : String(!!o.garage),
+      body.appendChild(tri("Counts as a garage door",
+        o.garage === undefined ? "auto" : String(!!o.garage),
         (v) => {
-          if (v === "auto") { if (typeof this._room.alert_sensors[i] === "object")
-            delete this._room.alert_sensors[i].garage; }
-          else obj().garage = v === "true";
+          if (v === "auto") {
+            if (typeof r.alert_sensors[i] === "object") delete r.alert_sensors[i].garage;
+          } else objAt(i).garage = v === "true";
         },
         [["auto", "Work it out from the entity"], ["true", "Yes"], ["false", "No"]]));
 
       const guard = o.confirm_sensor === false ? "off"
                   : o.confirm_sensor ? "own" : "room";
-      row.appendChild(tri("Only alert when also open",
-        guard,
-        (v) => {
-          const o2 = obj();
-          if (v === "room") delete o2.confirm_sensor;
-          else if (v === "off") o2.confirm_sensor = false;
-          else if (typeof o2.confirm_sensor !== "string") o2.confirm_sensor = "";
-        },
-        [["room", "Use the room's sensor"], ["off", "No guard for this one"],
-         ["own", "Its own sensor"]]));
+      body.appendChild(tri("Only alert when also open", guard, (v) => {
+        const t = objAt(i);
+        if (v === "room") delete t.confirm_sensor;
+        else if (v === "off") t.confirm_sensor = false;
+        else if (typeof t.confirm_sensor !== "string") t.confirm_sensor = "";
+      }, [["room", "Use the room's sensor"], ["off", "No guard for this one"],
+          ["own", "Its own sensor"]]));
+
       if (guard === "own") {
-        row.appendChild(f.ent("Its guard sensor",
+        body.appendChild(f.ent("Its guard sensor",
           typeof o.confirm_sensor === "string" ? o.confirm_sensor : "",
-          ["sensor", "binary_sensor"], (v) => {
-            if (v) obj().confirm_sensor = v; else obj().confirm_sensor = "";
-          }));
+          ["sensor", "binary_sensor"], (v) => { objAt(i).confirm_sensor = v || ""; }));
       }
 
-      box.appendChild(row);
+      body.appendChild(f.del("Remove sensor", () => {
+        r.alert_sensors.splice(i, 1);
+        if (!r.alert_sensors.length) delete r.alert_sensors;
+      }));
+
+      // one collapsed row per sensor, so the list stays a list
+      const sub = isGarage(sRaw, this._hass) ? "garage door"
+                : (st ? `${id}` : "not found");
+      box.appendChild(this._panel(shown, sub,
+        isGarage(sRaw, this._hass) ? "mdi:garage" : "mdi:door-closed",
+        `_door${i}Open`, body));
     });
+
+    box.appendChild(f.add("+ Sensor", () => {
+      (r.alert_sensors = r.alert_sensors || []).push("");
+    }));
+
+    box.appendChild(f.cap("Only alert when this is also open"));
+    box.appendChild(f.ent("The room's guard sensor", r.confirm_sensor,
+      ["sensor", "binary_sensor"], (v) => {
+        if (v) r.confirm_sensor = v; else delete r.confirm_sensor;
+      }));
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "Guards the garages against a false ratgdo Opening. "
+      + "A sensor can opt out above.";
+    box.appendChild(note);
+  }
+
+  /* A light list's entries may be objects carrying name, icon, dim and count.
+   * Editing which entities are in the list must not flatten those, so match
+   * the new ids back to whatever the room already knew about them. */
+  _setLightList(key, ids) {
+    const keep = {};
+    for (const l of this._room[key] || [])
+      if (l && typeof l === "object" && l.entity) keep[l.entity] = l;
+    const next = ids.map((e) => keep[e] || e);
+    if (next.length) this._room[key] = next; else delete this._room[key];
   }
 
   /* Every one of these panels edits a list of objects, which `ha-form` has no
@@ -4564,6 +4610,7 @@ class CharroRoomsEditor extends HTMLElement {
         this._renderVideo(); this._renderPreview();
       });
       box.appendChild(b);
+      this._plainRemotes(box);
       return;
     }
 
@@ -4679,6 +4726,17 @@ class CharroRoomsEditor extends HTMLElement {
     rm.textContent = "Remove video switching";
     rm.addEventListener("click", () => { delete this._room.video; changed(); });
     box.append(addS, rm);
+    this._plainRemotes(box);
+  }
+
+  /* A room with one screen and one box needs no switcher — its remotes live
+   * in the same panel rather than a second one about the same subject. */
+  _plainRemotes(box) {
+    const cap = document.createElement("div");
+    cap.className = "vcap";
+    cap.textContent = "Remotes with no screen picker";
+    box.appendChild(cap);
+    this._remotesInto(box);
   }
 
   _schema() {
