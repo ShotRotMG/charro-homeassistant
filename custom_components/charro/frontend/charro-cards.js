@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.57.0";
+const VERSION = "4.58.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3831,6 +3831,20 @@ const LayoutUI = {
 };
 
 
+/* "22 minutes ago" beats a timestamp when you are trying to remember what
+ * you broke and roughly when. */
+function ago(ts) {
+  const sec = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (sec < 45) return "just now";
+  const mins = Math.round(sec / 60);
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.round(hrs / 24);
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
 const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
                         "bath_fan_entities", "fountain_entities"];
 /* How a save gets to disk, best available first:
@@ -3841,6 +3855,8 @@ const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
  */
 const SAVE_SERVICE = ["shell_command", "charro_write_room"];
 const WS_SAVE = "charro/save_room";
+const WS_SNAPS = "charro/list_snapshots";
+const WS_SNAP = "charro/get_snapshot";
 const WS_LIST = "charro/list_rooms";
 
 const RE_CSS = `
@@ -3912,6 +3928,22 @@ h4{
   background:var(--ha-card-background, var(--card-background-color, #fff));
   border-bottom:1px solid var(--divider-color);
 }
+.histwrap{ position:relative; display:inline-block; }
+.histbox{
+  position:absolute; right:0; top:calc(100% + 6px); z-index:20; min-width:240px;
+  max-height:320px; overflow-y:auto; padding:6px;
+  background:var(--card-background-color); border:1px solid var(--divider-color);
+  border-radius:10px; box-shadow:0 8px 28px rgba(0,0,0,.28);
+}
+.histhd{ font-size:11px; color:var(--secondary-text-color); padding:4px 8px 6px; }
+.histrow{
+  display:flex; width:100%; gap:10px; justify-content:space-between;
+  align-items:center; background:none; border-radius:6px; padding:7px 8px;
+  font-size:13px; font-weight:500; text-align:left;
+}
+button.histrow:hover{ background:rgba(127,127,127,.16); }
+.histsz{ font-size:11px; color:var(--secondary-text-color);
+  font-variant-numeric:tabular-nums; }
 .autow{ display:inline-flex; align-items:center; gap:6px; font-size:13px;
   color:var(--secondary-text-color); cursor:pointer; }
 @media (max-width:1280px){
@@ -4186,10 +4218,27 @@ class CharroRoomsEditor extends HTMLElement {
     this._revert = document.createElement("button");
     this._revert.textContent = "Revert";
     this._revert.addEventListener("click", () => this._load(this._key, true));
+    /* Autosave writes over the file 1.5s after you stop typing, so the only
+     * thing standing between a mis-click and losing a room is this. Every
+     * save keeps the version it replaced. */
+    this._hist = document.createElement("button");
+    this._hist.textContent = "History";
+    this._hist.title = "Earlier versions of this room";
+    this._hist.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this._toggleHistory();
+    });
+    this._histBox = document.createElement("div");
+    this._histBox.className = "histbox";
+    this._histBox.hidden = true;
+    const histWrap = document.createElement("div");
+    histWrap.className = "histwrap";
+    histWrap.append(this._hist, this._histBox);
+
     this._save = document.createElement("button");
     this._save.className = "primary";
     this._save.addEventListener("click", () => this._doSave());
-    bar.append(sp, auto, this._revert, this._save);
+    bar.append(sp, auto, histWrap, this._revert, this._save);
 
     /* Three columns that scroll on their own. Reaching row 30 of the layout
      * shouldn't scroll the form and the preview off the top. */
@@ -5260,6 +5309,94 @@ class CharroRoomsEditor extends HTMLElement {
       this._prev = el;
     } catch (err) {
       this._prevWrap.textContent = String(err && err.message ? err.message : err);
+    }
+  }
+
+  /* ----------------------------------------------------------- history -- */
+  _toggleHistory() {
+    if (!this._histBox.hidden) return this._closeHistory();
+    this._openHistory();
+  }
+
+  _closeHistory() {
+    this._histBox.hidden = true;
+    if (this._histAway) {
+      document.removeEventListener("click", this._histAway);
+      this._histAway = null;
+    }
+  }
+
+  async _openHistory() {
+    const box = this._histBox;
+    box.innerHTML = "";
+    box.hidden = false;
+    this._histAway = () => this._closeHistory();
+    document.addEventListener("click", this._histAway);
+
+    if (this._saveMode() !== "ws" || !this._key) {
+      box.textContent = "History needs the Charro Cards integration.";
+      return;
+    }
+    const wait = document.createElement("div");
+    wait.className = "histrow"; wait.textContent = "Loading…";
+    box.appendChild(wait);
+
+    let rows;
+    try {
+      const r = await this._hass.callWS({ type: WS_SNAPS, key: this._key });
+      rows = (r && r.snapshots) || [];
+    } catch (err) {
+      box.innerHTML = "";
+      const e = document.createElement("div");
+      e.className = "histrow"; e.textContent = `Couldn't read history: ${err.message}`;
+      box.appendChild(e);
+      return;
+    }
+
+    box.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "histhd";
+    head.textContent = rows.length
+      ? "Loads it into the editor — nothing is lost either way"
+      : "No earlier versions yet";
+    box.appendChild(head);
+
+    for (const row of rows) {
+      const b = document.createElement("button");
+      b.className = "histrow";
+      const when = document.createElement("span");
+      when.textContent = ago(row.ts);
+      const size = document.createElement("span");
+      size.className = "histsz";
+      size.textContent = `${Math.max(1, Math.round(row.bytes / 1024))} KB`;
+      b.append(when, size);
+      b.title = new Date(row.ts * 1000).toLocaleString();
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this._closeHistory();
+        this._restoreSnap(row.ts);
+      });
+      box.appendChild(b);
+    }
+  }
+
+  async _restoreSnap(ts) {
+    try {
+      const r = await this._hass.callWS({ type: WS_SNAP, key: this._key, ts });
+      const cfg = r && r.config;
+      if (!cfg || typeof cfg !== "object") throw new Error("not a room");
+      const remotes = this._room && this._room._remotes;
+      this._room = cfg;
+      if (remotes) this._room._remotes = remotes;
+      this._renderForm();
+      /* Saving this is itself snapshotted, so the version being replaced is
+       * kept too - going back and forth costs nothing. */
+      this._say(`Restored the version from ${ago(ts)}. ` +
+                (this._autoOn() ? "Saving now — what you had is kept in history."
+                                : "Press Save to keep it, or Revert to undo."), "ok");
+      if (this._autoOn()) this._queueSave();
+    } catch (err) {
+      this._say(`Couldn't restore: ${err.message}`, "err");
     }
   }
 

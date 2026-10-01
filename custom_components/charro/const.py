@@ -22,3 +22,15 @@ REMOTES_FILE = "_remotes.json"
 
 # Where they used to live, so an existing install can be moved across once.
 LEGACY_SUBDIR = ("www", "rooms")
+
+# Every save copies the file it is about to replace into here first, so an
+# autosave you didn't mean is recoverable. Thinned on each write so the list
+# stays short enough to actually read: roughly 25 per room, never past the
+# hard cap. Widen SNAP_KEEP_DAYS or narrow SNAP_FINE_EVERY if you want more.
+SNAP_DIR = ".snapshots"
+SNAP_FINE_EVERY = 600     # one per 10 min, for the first hour        -> ~6
+SNAP_MID_EVERY = 14400    # then one per 4 hours, for the first day   -> ~6
+SNAP_DAY = 86400          # then one per day                         -> ~13
+SNAP_KEEP_DAYS = 14
+SNAP_HOUR = 3600          # boundary between the fine and mid tiers
+SNAP_MAX = 30             # belt and braces, whatever the arithmetic does

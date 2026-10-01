@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -42,6 +43,13 @@ from .const import (
     PANEL_URL,
     REMOTES_FILE,
     ROOMS_DIR,
+    SNAP_DAY,
+    SNAP_DIR,
+    SNAP_FINE_EVERY,
+    SNAP_HOUR,
+    SNAP_KEEP_DAYS,
+    SNAP_MAX,
+    SNAP_MID_EVERY,
     STATIC_URL,
 )
 
@@ -141,6 +149,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_delete_room)
+    websocket_api.async_register_command(hass, ws_list_snapshots)
+    websocket_api.async_register_command(hass, ws_get_snapshot)
 
     store[entry.entry_id] = {"url": url}
     _LOGGER.debug("Charro Cards %s ready at %s", integration.version, url)
@@ -276,9 +286,107 @@ def _migrate_rooms(private: str, legacy: str) -> list[str]:
     return moved
 
 
+def _snap_dir(path: str, key: str) -> str:
+    return os.path.join(path, SNAP_DIR, key)
+
+
+def _snapshot(path: str, key: str) -> None:
+    """Keep the version we are about to overwrite, then thin the history."""
+    target = os.path.join(path, f"{key}.json")
+    if not os.path.isfile(target):
+        return                                   # nothing to preserve yet
+    into = _snap_dir(path, key)
+    os.makedirs(into, exist_ok=True)
+    stamp = int(time.time())
+    dest = os.path.join(into, f"{stamp}.json")
+    if os.path.exists(dest):
+        return               # already snapshotted this second; one is enough
+    shutil.copy2(target, dest)
+    _prune_snaps(into, stamp)
+
+
+def _bucket(ts: int, now: int) -> tuple[str, int] | None:
+    """Which slot a snapshot competes for. None means it has aged out."""
+    age = now - ts
+    if age < SNAP_HOUR:
+        return ("f", ts // SNAP_FINE_EVERY)
+    if age < SNAP_DAY:
+        return ("h", ts // SNAP_MID_EVERY)
+    if age < SNAP_KEEP_DAYS * SNAP_DAY:
+        return ("d", ts // SNAP_DAY)
+    return None
+
+
+def _prune_snaps(into: str, now: int) -> None:
+    """One snapshot per slot - the OLDEST, which is the important one.
+
+    Within a slot the oldest copy is the state furthest from whatever just
+    went wrong. Keeping the newest instead would mean a bad edit, autosaved
+    twice inside five minutes, quietly overwrites the good version with the
+    broken one. The most recent snapshot overall is always kept as well, so
+    undoing the last save never depends on bucket boundaries.
+    """
+    stamps = sorted(_snap_stamps(into))
+    if not stamps:
+        return
+    keep = {stamps[-1]}
+    seen: dict[tuple[str, int], int] = {}
+    for ts in stamps:                                   # ascending: oldest wins
+        slot = _bucket(ts, now)
+        if slot is None:
+            continue
+        if slot not in seen:
+            seen[slot] = ts
+            keep.add(ts)
+    # whatever the arithmetic produced, never leave more than the cap; the
+    # newest are the ones worth keeping when something has to go
+    if len(keep) > SNAP_MAX:
+        keep = set(sorted(keep, reverse=True)[:SNAP_MAX])
+
+    for ts in stamps:
+        if ts not in keep:
+            try:
+                os.remove(os.path.join(into, f"{ts}.json"))
+            except OSError:
+                pass
+
+
+def _snap_stamps(into: str) -> list[int]:
+    if not os.path.isdir(into):
+        return []
+    out = []
+    for name in os.listdir(into):
+        if name.endswith(".json"):
+            try:
+                out.append(int(name[:-5]))
+            except ValueError:
+                continue
+    return out
+
+
+def _list_snaps(path: str, key: str) -> list[dict[str, Any]]:
+    into = _snap_dir(path, key)
+    rows = []
+    for ts in sorted(_snap_stamps(into), reverse=True):
+        try:
+            rows.append({"ts": ts, "bytes": os.path.getsize(os.path.join(into, f"{ts}.json"))})
+        except OSError:
+            continue
+    return rows
+
+
+def _read_snap(path: str, key: str, ts: int) -> dict[str, Any]:
+    f = os.path.join(_snap_dir(path, key), f"{ts}.json")
+    if not os.path.isfile(f):
+        raise HomeAssistantError(f"no snapshot {ts} for {key}")
+    with open(f, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _write_room(path: str, key: str, config: dict[str, Any]) -> None:
-    """Write one room file, then rebuild the index the cards read."""
+    """Snapshot what is there, then write the new version over it."""
     os.makedirs(path, exist_ok=True)
+    _snapshot(path, key)
     target = os.path.join(path, f"{key}.json")
     tmp = f"{target}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -393,6 +501,52 @@ async def ws_save_room(hass, connection, msg):
         connection.send_error(msg["id"], "write_failed", str(err))
         return
     connection.send_result(msg["id"], {"path": os.path.join(path, f"{key}.json")})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/list_snapshots",
+        vol.Required("key"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_list_snapshots(hass, connection, msg):
+    """Earlier versions of one room, newest first."""
+    key = msg["key"]
+    if not KEY_RE.match(key):
+        connection.send_error(msg["id"], "invalid_key", "bad room key")
+        return
+    path = _rooms_dir(hass)
+    rows = await hass.async_add_executor_job(_list_snaps, path, key)
+    connection.send_result(msg["id"], {"snapshots": rows})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/get_snapshot",
+        vol.Required("key"): cv.string,
+        vol.Required("ts"): int,
+    }
+)
+@websocket_api.async_response
+async def ws_get_snapshot(hass, connection, msg):
+    """One earlier version, for the editor to load as unsaved changes."""
+    key = msg["key"]
+    if not KEY_RE.match(key):
+        connection.send_error(msg["id"], "invalid_key", "bad room key")
+        return
+    path = _rooms_dir(hass)
+    try:
+        cfg = await hass.async_add_executor_job(_read_snap, path, key, int(msg["ts"]))
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "not_found", str(err))
+        return
+    except (OSError, ValueError) as err:
+        connection.send_error(msg["id"], "unreadable", str(err))
+        return
+    connection.send_result(msg["id"], {"config": cfg})
 
 
 @websocket_api.require_admin
