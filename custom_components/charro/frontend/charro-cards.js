@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.53.0";
+const VERSION = "4.54.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -340,14 +340,33 @@ const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style" };
  * the light domain, but a real fan, a plain switch or a valve can sit in the
  * same list — so pick the card by domain rather than by which list it came
  * from, and a `fan.` entity dropped into Fans behaves like the rest. */
-function lightCard(l, noDim) {
+/* Which entities this room treats as fans, whatever domain they live in.
+ * A Lutron ceiling fan is a dimmer in the light domain, so it renders as a
+ * light and takes the light's amber - while its chip is green, because the
+ * chip goes by the list it came from. The body should agree with the chip. */
+function fanIdSet(r) {
+  return new Set([
+    ...lightIds((r && r.fan_entities) || []),
+    ...lightIds((r && r.bath_fan_entities) || []),
+  ]);
+}
+
+/* Mushroom's own name for the colour its fan card and the fan chip use. It
+ * only lands while the entity is on: shape-icon switches to its disabled
+ * palette otherwise, so an off fan stays grey with no state handling here. */
+const FAN_COLOR = "green";
+
+function lightCard(l, noDim, fans) {
   const id = lightId(l);
   const o = typeof l === "object" && l ? l : {};
   const dims = o.dim !== undefined ? o.dim : !(noDim || []).includes(id);
   const domain = String(id || "").split(".")[0];
+  // an explicit colour on the entry wins; otherwise fans go green
+  const color = o.color || ((fans && fans.has(id)) ? FAN_COLOR : null);
 
   if (o.render === "tile") {
     const card = { type: "tile", entity: id, vertical: false };
+    if (color) card.color = color;
     if (o.name) card.name = o.name;
     if (o.icon) card.icon = o.icon;
     const feat = domain === "fan" ? "fan-speed"
@@ -380,6 +399,9 @@ function lightCard(l, noDim) {
     card = { type: "custom:mushroom-entity-card", entity: id,
              tap_action: { action: "toggle" }, layout: "horizontal" };
   }
+  // mushroom-fan-card is already this colour; the light and entity cards
+  // need telling, and neither shows it while the entity is off
+  if (color && card.type !== "custom:mushroom-fan-card") card.icon_color = color;
   if (o.name) card.name = o.name;
   if (o.icon) card.icon = o.icon;
   return card;
@@ -864,6 +886,7 @@ const LIGHT_GROUPS = [
 /* The default: blocks in order, lights grouped by the list they came from. */
 function autoBody(r, hass) {
   const order = sectionOrder(r);
+  const fans = fanIdSet(r);
   const extra = r.cards || {};
   const out = [];
   const push = (c) => { if (c) out.push(c); };
@@ -878,7 +901,7 @@ function autoBody(r, hass) {
         if (groups.length > 1)
           push({ type: "heading", heading: label, heading_style: "subtitle" });
         push({ type: "grid", columns: 2, square: false,
-               cards: list.map((l) => lightCard(l, r.no_dim)) });
+               cards: list.map((l) => lightCard(l, r.no_dim, fans)) });
       }
     } else {
       for (const c of blockCards(name, r, hass)) push(c);
@@ -904,6 +927,7 @@ function groupNode(g, r, hass) {
 
 function layoutBody(r, hass) {
   const out = [];
+  const fans = fanIdSet(r);
   let run = [];
   const flush = () => {
     if (!run.length) return;
@@ -922,9 +946,10 @@ function layoutBody(r, hass) {
       // a full-width item breaks the two-up run and takes the row to itself
       if (it.width === "full") {
         flush();
-        out.push({ type: "grid", columns: 1, square: false, cards: [lightCard(it, r.no_dim)] });
+        out.push({ type: "grid", columns: 1, square: false,
+                   cards: [lightCard(it, r.no_dim, fans)] });
       } else {
-        run.push(lightCard(it, r.no_dim));
+        run.push(lightCard(it, r.no_dim, fans));
       }
     } else if (it.gate) {
       const c = gateCard(gateAt(r, it.gate), r);
