@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.51.0";
+const VERSION = "4.53.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -303,7 +303,36 @@ const lightIds = (list) => (list || []).map(lightId).filter(Boolean);
  * `count: false` keeps a light controllable but out of the arithmetic — it
  * still renders, it just isn't represented in the chip. */
 const counted = (l) => !(l && typeof l === "object" && l.count === false);
-const countedIds = (list) => (list || []).filter(counted).map(lightId).filter(Boolean);
+/* There are two places a light can be told not to count, because there are
+ * two objects describing it: the entity-list entry (`count: false` in
+ * light_entities) and the layout item the editor's counter button writes to.
+ * They are different objects, so for a room with a custom layout the button
+ * in the tray had no effect on the chip at all. Both are honoured here
+ * rather than kept in step, which would only have been one more thing to
+ * drift. */
+function uncountedIds(r) {
+  const out = new Set();
+  const walk = (items) => {
+    for (const it of items || []) {
+      if (!it || typeof it !== "object") continue;
+      if (it.group !== undefined) { walk(it.items); continue; }
+      if (it.entity && it.count === false) out.add(it.entity);
+    }
+  };
+  walk(r && r.layout);
+  walk(r && r.hidden);
+  return out;
+}
+
+/* The entries of r[key] that the chip should count. Pass `skip` when doing
+ * several lists at once so the layout is only walked once. */
+function countedList(r, key, skip) {
+  const s = skip || uncountedIds(r);
+  return ((r && r[key]) || []).filter((e) => counted(e) && !s.has(lightId(e)));
+}
+
+const countedIds = (r, key, skip) =>
+  countedList(r, key, skip).map(lightId).filter(Boolean);
 
 const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style" };
 
@@ -1258,6 +1287,20 @@ const onCount = (hass, list) =>
   (list || []).map(lightId).filter((e) => e && hass.states[e]
                                        && hass.states[e].state === "on").length;
 
+/* The name to show a human. An entry can carry its own; failing that the
+ * entity registry has the unprefixed one, and friendly_name is the last
+ * resort because Home Assistant prefixes it with the device. */
+function entLabel(e, hass, key) {
+  const o = typeof e === "object" && e ? e : {};
+  const id = lightId(e);
+  if (key && o[key]) return o[key];
+  if (o.name) return o.name;
+  const reg = hass.entities && hass.entities[id];
+  if (reg && (reg.name || reg.original_name)) return reg.name || reg.original_name;
+  const st = hass.states[id];
+  return (st && st.attributes && st.attributes.friendly_name) || id;
+}
+
 /* what the thermostat is doing beats what it is set to */
 function climateChip(hass, id) {
   const st = hass.states[id];
@@ -1284,15 +1327,24 @@ function climateChip(hass, id) {
 function roomChips(r, hass) {
   if (!hass || !hass.states) return [];
   const out = [];
+  const skip = uncountedIds(r);
 
   for (const [key, icon, col, domain, label] of CHIP_GROUPS) {
     const list = r[key] || [];
     if (!list.length) continue;
-    const real = list.filter(counted);
-    const n = onCount(hass, real);
+    const real = countedList(r, key, skip);
+    const on = real.filter((e) => {
+      const st = hass.states[lightId(e)];
+      return st && st.state === "on";
+    });
+    const n = on.length;
     if (!n) continue;
+    /* Naming them is what makes a surprising count answerable: a light the
+     * layout never placed still counts, and before this the chip gave you
+     * no way to tell which one it meant. */
+    const names = on.map((e) => ({ name: entLabel(e, hass) }));
     out.push({ key, icon, col, text: String(n),
-               title: `${label} — ${n} on. Tap to turn them off.`,
+               title: `${label} — ${listNames(names)} on. Tap to turn them off.`,
                tap: { kind: "off", domain, entities: lightIds(real) } });
   }
 
@@ -1493,9 +1545,10 @@ class RoomPopup {
       const i = document.createElement("ha-icon");
       i.icon = this.room.room_icon;
       // amber whenever anything in the room is lit, exactly as on the tile
+      const skip = uncountedIds(this.room);
       const lit = onCount(this._hass,
-        [].concat(this.room.light_entities || [],
-                  this.room.landscape_entities || []).filter(counted));
+        [].concat(countedList(this.room, "light_entities", skip),
+                  countedList(this.room, "landscape_entities", skip)));
       if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
       mid.appendChild(i);
     }
@@ -1867,7 +1920,8 @@ class CharroRoomCard extends CharroBase {
     };
     // a light may be {entity, name, dim} in rooms.json; the tile wants ids
     // the tile's chips both count and switch off, so both skip the doubles
-    for (const k of ROOM_LISTS) v[k] = countedIds(c[k]);
+    const skip = uncountedIds(c);
+    for (const k of ROOM_LISTS) v[k] = countedIds(c, k, skip);
     if (c.fountain_entity && !v.fountain_entities.includes(c.fountain_entity)) {
       v.fountain_entities = [c.fountain_entity, ...v.fountain_entities];
     }
