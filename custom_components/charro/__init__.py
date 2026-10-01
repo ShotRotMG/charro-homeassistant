@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import re
-import time
+import shutil
 from typing import Any
 
 import voluptuous as vol
@@ -35,11 +35,13 @@ from homeassistant.loader import async_get_integration
 from .const import (
     BUNDLE,
     DOMAIN,
+    LEGACY_SUBDIR,
     PANEL_ELEMENT,
     PANEL_ICON,
     PANEL_TITLE,
     PANEL_URL,
-    ROOMS_SUBDIR,
+    REMOTES_FILE,
+    ROOMS_DIR,
     STATIC_URL,
 )
 
@@ -51,9 +53,6 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # No dots, no slashes, so "../../configuration" can't be spelled at all.
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-# The editor may carry a non-default rooms_dir from its card config. Only
-# /local/... is accepted, and only with plain path segments.
-DIR_RE = re.compile(r"^/local/(?:[a-z0-9][a-z0-9_-]*/)*$")
 
 
 # --------------------------------------------------------------- setup --
@@ -73,6 +72,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # aiohttp's router refuses a second route on the same prefix, and the
     # prefix never changes — only the query does — so this happens once per
     # Home Assistant run rather than once per setup.
+    rooms = _rooms_dir(hass)
+    legacy = hass.config.path(*LEGACY_SUBDIR)
+    moved = await hass.async_add_executor_job(_migrate_rooms, rooms, legacy)
+    if moved:
+        _LOGGER.warning(
+            "Copied %d room file(s) from %s to %s. The originals are still "
+            "there and still served publicly at /local/rooms/ - delete that "
+            "folder once you are happy: %s",
+            len(moved), legacy, rooms, ", ".join(moved),
+        )
+
     store = hass.data.setdefault(DOMAIN, {})
     if not store.get("static"):
         await _register_static(hass, STATIC_URL, web)
@@ -127,6 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         require_admin=True,
     )
 
+    websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_delete_room)
@@ -235,14 +246,34 @@ async def _register_static(hass: HomeAssistant, url: str, path: str) -> None:
 # ----------------------------------------------------------- room files --
 
 
-def _rooms_dir(hass: HomeAssistant, local_dir: str | None) -> str:
-    """Map a /local/... directory to its path under /config/www."""
-    if not local_dir:
-        return hass.config.path("www", ROOMS_SUBDIR)
-    if not DIR_RE.match(local_dir):
-        raise HomeAssistantError(f"rooms_dir must look like /local/rooms/, got {local_dir!r}")
-    rel = local_dir[len("/local/") :].strip("/")
-    return hass.config.path("www", *rel.split("/")) if rel else hass.config.path("www")
+def _rooms_dir(hass: HomeAssistant) -> str:
+    """Where room files live: /config/charro_rooms, never under www."""
+    return hass.config.path(ROOMS_DIR)
+
+
+def _migrate_rooms(private: str, legacy: str) -> list[str]:
+    """Copy rooms out of /config/www/rooms the first time, and only then.
+
+    The originals are left where they are. They are the user's files and
+    deleting them automatically is not this integration's call - but they are
+    also still world-readable at /local, so setup logs a line saying so.
+    """
+    if not os.path.isdir(legacy):
+        return []
+    os.makedirs(private, exist_ok=True)
+    if any(f.endswith(".json") for f in os.listdir(private)):
+        return []                                  # already moved, or in use
+    moved = []
+    for name in sorted(os.listdir(legacy)):
+        # _index.json only ever existed to bust an HTTP cache; nothing reads
+        # it now, so it is not worth carrying across
+        if not name.endswith(".json") or name == "_index.json":
+            continue
+        src_path = os.path.join(legacy, name)
+        if os.path.isfile(src_path):
+            shutil.copy2(src_path, os.path.join(private, name))
+            moved.append(name)
+    return moved
 
 
 def _write_room(path: str, key: str, config: dict[str, Any]) -> None:
@@ -254,28 +285,38 @@ def _write_room(path: str, key: str, config: dict[str, Any]) -> None:
         json.dump(config, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     os.replace(tmp, target)  # so a reader never sees a half-written file
-    _write_index(path)
 
 
-def _write_index(path: str) -> list[str]:
-    """Rebuild _index.json: the room list, plus the revision that busts cache.
+def _read_all(path: str) -> dict[str, Any]:
+    """Every room file, plus the shared remote templates, in one go.
 
-    Room files are served from /local with a 31-day max-age. Every other fetch
-    is stamped with this revision, so bumping it here is what makes an edit
-    visible on the next page load.
+    One websocket message replaces one uncached index fetch plus one fetch per
+    room. A file that doesn't parse is skipped rather than failing the lot, so
+    one bad edit costs you that room and not the dashboard.
     """
-    keys = sorted(
-        f[:-5]
-        for f in os.listdir(path)
-        if f.endswith(".json") and not f.startswith("_") and not f.endswith(".tmp.json")
-    )
-    index = os.path.join(path, "_index.json")
-    tmp = f"{index}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"rooms": keys, "rev": str(int(time.time()))}, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, index)
-    return keys
+    rooms: dict[str, Any] = {}
+    remotes: dict[str, Any] = {}
+    bad: list[str] = []
+    if not os.path.isdir(path):
+        return {"rooms": rooms, "remotes": remotes, "bad": bad}
+    for name in sorted(os.listdir(path)):
+        if not name.endswith(".json") or name.endswith(".tmp.json"):
+            continue
+        try:
+            with open(os.path.join(path, name), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            bad.append(name)
+            continue
+        if name == REMOTES_FILE:
+            remotes = data if isinstance(data, dict) else {}
+        elif not name.startswith("_") and isinstance(data, dict):
+            key = name[:-5]
+            # tolerate a file that wraps the room in its own key
+            if "room_name" not in data and isinstance(data.get(key), dict):
+                data = data[key]
+            rooms[key] = data
+    return {"rooms": rooms, "remotes": remotes, "bad": bad}
 
 
 def _list_rooms(path: str) -> list[str]:
@@ -293,28 +334,38 @@ def _delete_room(path: str, key: str) -> None:
     if not os.path.isfile(target):
         raise HomeAssistantError(f"{key}.json doesn't exist")
     os.remove(target)
-    _write_index(path)
 
 
 # ------------------------------------------------------------ websocket --
+
+
+@websocket_api.websocket_command({vol.Required("type"): "charro/get_rooms"})
+@websocket_api.async_response
+async def ws_get_rooms(hass, connection, msg):
+    """Every room in one authenticated message.
+
+    Deliberately NOT admin-only: any signed-in user who can open a dashboard
+    needs this, exactly as they needed to fetch the files before. Writing
+    still is admin-only.
+    """
+    path = _rooms_dir(hass)
+    data = await hass.async_add_executor_job(_read_all, path)
+    if data["bad"]:
+        _LOGGER.warning("skipped unreadable room files: %s", ", ".join(data["bad"]))
+    connection.send_result(msg["id"], data)
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "charro/list_rooms",
-        vol.Optional("dir"): cv.string,
     }
 )
 @websocket_api.async_response
 async def ws_list_rooms(hass, connection, msg):
     """List the room keys on disk, so the editor doesn't have to guess."""
-    try:
-        path = _rooms_dir(hass, msg.get("dir"))
-        rooms = await hass.async_add_executor_job(_list_rooms, path)
-    except HomeAssistantError as err:
-        connection.send_error(msg["id"], "invalid_dir", str(err))
-        return
+    path = _rooms_dir(hass)
+    rooms = await hass.async_add_executor_job(_list_rooms, path)
     connection.send_result(msg["id"], {"rooms": rooms, "path": path})
 
 
@@ -324,7 +375,6 @@ async def ws_list_rooms(hass, connection, msg):
         vol.Required("type"): "charro/save_room",
         vol.Required("key"): cv.string,
         vol.Required("config"): dict,
-        vol.Optional("dir"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -336,12 +386,9 @@ async def ws_save_room(hass, connection, msg):
             msg["id"], "invalid_key", "a room key is lowercase letters, digits, - and _"
         )
         return
+    path = _rooms_dir(hass)
     try:
-        path = _rooms_dir(hass, msg.get("dir"))
         await hass.async_add_executor_job(_write_room, path, key, msg["config"])
-    except HomeAssistantError as err:
-        connection.send_error(msg["id"], "invalid_dir", str(err))
-        return
     except OSError as err:
         connection.send_error(msg["id"], "write_failed", str(err))
         return
@@ -353,7 +400,6 @@ async def ws_save_room(hass, connection, msg):
     {
         vol.Required("type"): "charro/delete_room",
         vol.Required("key"): cv.string,
-        vol.Optional("dir"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -365,8 +411,8 @@ async def ws_delete_room(hass, connection, msg):
             msg["id"], "invalid_key", "a room key is lowercase letters, digits, - and _"
         )
         return
+    path = _rooms_dir(hass)
     try:
-        path = _rooms_dir(hass, msg.get("dir"))
         await hass.async_add_executor_job(_delete_room, path, key)
     except HomeAssistantError as err:
         connection.send_error(msg["id"], "not_found", str(err))

@@ -36,8 +36,12 @@ That is the whole setup. Adding the integration does three things:
 - exposes `charro/save_room`, so the editor writes room files without the
   `shell_command` that used to go in `configuration.yaml`
 
-Room files don't move: they stay at `/config/www/rooms/*.json`, served at
-`/local/rooms/`, and a dashboard loads a room exactly as before.
+Room files live at `/config/charro_rooms/*.json` and are read over the
+websocket. An existing install is copied across from `/config/www/rooms/` the
+first time the integration starts; the originals are left alone, and the log
+says so, because **`/config/www` is served at `/local/` with no
+authentication** — a room file there is readable by anyone who can reach the
+instance. Delete that folder once you're happy the move took.
 
 ### Coming from the Dashboard version
 
@@ -98,73 +102,19 @@ mode: page
 room: master
 ```
 
-`room: master` reads `/local/rooms/master.json` — on disk that is
-`/config/www/rooms/master.json`. One file per room. Keep them there and **not**
-in this repo: HACS replaces `dist/` on every update, and your rooms are your
-data. `rooms_dir` moves the folder, `room_url` points at one exact file.
+`room: master` reads `/config/charro_rooms/master.json`. One file per room.
+Keep them there and **not** in this repo: HACS replaces `dist/` on every
+update, and your rooms are your data.
 
-### Caching
+Every room arrives in a single authenticated websocket message
+(`charro/get_rooms`) the first time any card asks, and every other card on the
+page shares it. Saving in the editor drops that copy so the next read is
+fresh; other open tabs pick the change up on a refresh.
 
-Home Assistant serves `/local` with a 31-day `max-age`, so room files are
-fetched with a revision on the URL — `master.json?v=1790664723` — and read
-from cache between edits. `_index.json` is the one file fetched uncached; it
-carries that revision alongside the room list:
-
-```json
-{ "rev": "1790664723", "rooms": ["master", "javon"] }
-```
-
-Saving through the editor bumps the revision, every room URL changes, and the
-browser refetches on the next load. No hard refresh, no restart, and twenty
-rooms cost one real request instead of twenty.
-
-Editing a room file by hand doesn't bump anything, so either save once through
-the editor afterwards or bump `rev` yourself — any different string will do.
-A plain-array `_index.json` (no revision) still works: those rooms fall back
-to always-fresh fetches, exactly as before.
-
-> Home Assistant serves `/config/www` at `/local/` **without authentication**.
-> A room file holds entity ids, names and layout — no tokens, and entity ids
-> alone grant no control, since the APIs still require one. But if your
-> instance is reachable from the internet, treat these files as public and
-> never put a secret or a credentialled URL in one.
-
-Each file is the room object on its own. Keys are the card's own option names,
-so anything set on the card wins over the file:
-
-```json
-{
-  "room_name": "Master",
-  "room_icon": "mdi:chess-king",
-  "climate_entity": "climate.master_bed",
-  "music_powers": ["switch.rti_ad_8x_amp1_master_bath_power"],
-  "alert_sensors": ["sensor.elkm1_master_bedroom"],
-  "light_entities": [
-    "light.master_cans",
-    { "entity": "light.master_bath_shower_fans", "name": "Bathroom Fans", "dim": false }
-  ],
-  "fan_entities": ["light.master_fan"],
-  "sections": ["media", "climate", "lights", "security"],
-  "cards": { "start": [ { "type": "custom:universal-remote-card" } ] }
-}
-```
-
-A file that wraps the object in its own key (`{"master": { ... }}`) is read
-too, so a room lifted out of a combined file works unchanged.
-
-A light is an id, or an object with `name`, `icon`, `dim` and `count`. Set
-`dim: false` on a Lutron relay or wall switch — Home Assistant reports
-brightness support for those, which is wrong.
-
-Set `count: false` on a group whose members are also in the list. A Lutron
-group and its members are the same bulbs twice, so counting both makes the
-chip read high and "turn them all off" do the same work twice. The light still
-renders and still works; it just isn't represented in the chip, and isn't
-included when the chip switches the room off. Hiding a light in the layout is
-a separate thing — hidden lights still count unless you also turn this off.
-
-Both are toggles in the rooms editor: the **Counts** column in the per-light
-table, and a counter button on each layout row.
+> They are deliberately not under `/config/www`. Home Assistant serves that
+> at `/local/` **without authentication** — no token, no cookie, nothing. The
+> room files are entity ids and layout rather than secrets, but they are also
+> a room-by-room map of the house, and they used to be public.
 
 ### What the pop-up and page contain
 
@@ -900,27 +850,13 @@ cards:
 |---|---|
 | `rooms` | Pin the list to these keys. Leave it out and the card finds them |
 | `title` | Shown beside the room picker |
-| `rooms_dir` | Where the files live. Default `/local/rooms/` |
 
 ### Finding the rooms
 
-With the integration installed the folder is simply listed over the
-websocket, and that's the end of it — every room file shows up, including one
-that is on disk but not on any dashboard yet.
-
-Without it, a browser cannot list a folder, so the card works it out two ways
-and merges the results: it reads every dashboard's config over the websocket
-and collects each `room:` already placed on a `charro-room-card`, and it reads
-`_index.json` from the rooms folder, which the save script rewrites on every
-save. Between them a room shows up whether it has been put on a dashboard yet
-or not, and nothing has to be listed by hand.
-
-`_index.json` only exists once you've saved a room through the script. Until
-then the card falls back to what's on your dashboards — so a room file that is
-on disk but not yet on a card and not yet in the index is invisible. **Open /
-new** covers that case: type the key and the card opens the file if it finds
-one, and only starts a blank room if it doesn't. Writing `_index.json` by hand
-works too — it's a plain array, `["master", "lanai"]`.
+The integration lists the folder over the websocket, so every room file shows
+up — including one that is on disk but not on any dashboard yet. The editor
+also scans your dashboards for `room:` keys already in use and merges the two,
+which costs nothing and catches a room whose file has gone missing.
 
 Three columns: the room's settings, the per-light table, and a live preview.
 **Open / new** takes a room key and opens that file if it exists, otherwise
@@ -959,32 +895,14 @@ A browser cannot write to `/config`, so Save takes the best route it can find
 and tells you which one in the footer under the form.
 
 **The integration.** Nothing to set up — `charro/save_room` writes
-`/config/www/rooms/<key>.json` and rebuilds `_index.json`, so the revision
-every other fetch is stamped with moves and the change shows up on the next
-load. The command is admin-only; the room key has to match
-`^[a-z0-9][a-z0-9_-]*$`, so it can't name a file outside that folder; and the
-file is written to a temp name and moved into place, so a reader never sees
-half of one.
+`/config/charro_rooms/<key>.json`. The command is admin-only; the room key has
+to match `^[a-z0-9][a-z0-9_-]*$`, so it can't name a file outside that folder;
+and the file is written to a temp name and moved into place, so a reader never
+sees half of one. Saving also drops the copy the cards on this page are
+holding, so the next one to ask gets the new version.
 
-**Copy JSON.** Neither route available: the button puts the finished file on
+**Copy JSON.** No way to write from here: the button puts the finished file on
 your clipboard and names the path to paste it into.
-
-**`shell_command`.** The pre-integration route, still honoured if the
-integration isn't there:
-
-```yaml
-# configuration.yaml
-shell_command:
-  charro_write_room: "sh /config/scripts/charro_write_room.sh {{ name }} {{ payload }}"
-```
-
-with `charro_write_room.sh` at `/config/scripts/` — anywhere under `/config`
-works, as long as the two paths agree. No execute bit needed, since the
-command invokes `sh` directly. The card base64-encodes the body,
-so nothing with a shell metacharacter in it ever reaches the command line; the
-script sanitises the room name again, writes to a temp file, refuses to
-install anything that doesn't parse as JSON, and only then moves it into
-place. The card notices the service by itself — no option to set.
 
 Whichever route ran, the other cards pick the change up on a hard refresh.
 

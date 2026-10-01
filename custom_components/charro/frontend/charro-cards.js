@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.55.0";
+const VERSION = "4.57.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -202,14 +202,16 @@ function makeEditor(tag, schema, labels, helpers) {
  * times across the tile, the pop-up and the subview page:
  *
  *   type: custom:charro-room-card      # the tile, and it owns pop-up #master
- *   room: master                     # -> /local/rooms/master.json
+ *   room: master                     # -> /config/charro_rooms/master.json
  *
  *   type: custom:charro-room-card      # the same room as a full page
  *   mode: page
  *   room: master
  *
- * One file per room, under /config/www/rooms/ — not in this repo, since HACS
- * replaces dist/ on every update and your rooms are your data. Keys match the
+ * One file per room, under /config/charro_rooms/ — not in this repo, since
+ * HACS replaces dist/ on every update and your rooms are your data. They are
+ * deliberately not under www: that is served at /local with no auth at all.
+ * The cards read them over the websocket instead. Keys match the
  * card's own option names, so anything set on the card overrides the file.
  *
  * Note that /local/ is served without authentication. A room file holds entity
@@ -225,67 +227,42 @@ function def(tag, cls) {
   customElements.define(tag, cls);
 }
 
-const ROOMS_DIR_DEFAULT = "/local/rooms/";
-const _roomFiles = new Map();
-let _indexP = null;
+/* Every room, fetched once per page over the websocket.
+ *
+ * These files used to live in /config/www and be fetched from /local, which
+ * Home Assistant serves with no authentication whatsoever - a map of the
+ * house, entity by entity, to anyone who could reach the instance. They now
+ * come over the connection the dashboard already has open and already
+ * authenticated, in a single message, which also retires the index fetch,
+ * the per-room fetch and the whole revision-stamping scheme that existed
+ * only to make an aggressively cached /local look fresh.
+ */
 
-function roomsDir(cfg) {
-  return ((cfg && cfg.rooms_dir) || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/");
-}
+let _allP = null;
 
-/* _index.json is the only file fetched uncached. It is tiny, and it carries
- * the revision every other room fetch is stamped with — which is what lets
- * those be cached hard (Home Assistant serves /local with a 31-day max-age)
- * while an edit still shows up on the next load. Saving bumps the revision,
- * the URLs change, and the browser refetches exactly what changed.
- * An older plain-array index has no revision, so those fall back to
- * always-fresh fetches. */
-function loadIndex(cfg) {
-  if (!_indexP) {
-    const u = roomsDir(cfg) + "_index.json";
-    _indexP = fetch(`${u}?t=${Date.now()}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => (Array.isArray(j) ? { rooms: j, rev: null }
-                                     : { rooms: (j && j.rooms) || [], rev: (j && j.rev) || null }))
-      .catch(() => ({ rooms: [], rev: null }));
+function loadAll(hass) {
+  if (!_allP) {
+    _allP = hass.callWS({ type: "charro/get_rooms" })
+      .then((d) => ({ rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} }))
+      .catch((err) => { _allP = null; throw err; });   // let the next card retry
   }
-  return _indexP;
+  return _allP;
 }
 
-function roomUrl(key, cfg) {
-  if (cfg && cfg.room_url) return cfg.room_url;
-  return roomsDir(cfg) + key + ".json";
-}
+/* After a save: the next card to ask gets the new copy. */
+function invalidateRooms() { _allP = null; }
 
-function stamped(url, rev) {
-  const sep = url.includes("?") ? "&" : "?";
-  return rev ? `${url}${sep}v=${encodeURIComponent(rev)}`
-             : `${url}${sep}t=${Date.now()}`;
-}
-
-function fetchStamped(base, cfg, transform) {
-  return loadIndex(cfg).then(({ rev }) => {
-    const url = stamped(base, rev);
-    if (!_roomFiles.has(url)) {
-      const p = fetch(url, rev ? {} : { cache: "no-store" })
-        .then((r) => {
-          if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${base}`);
-          return r.json();
-        })
-        .then((j) => (transform ? transform(j) : j))
-        .catch((err) => { _roomFiles.delete(url); throw err; });
-      _roomFiles.set(url, p);
-    }
-    return _roomFiles.get(url);
+function loadRoom(key, hass) {
+  return loadAll(hass).then(({ rooms }) => {
+    const r = rooms[key];
+    if (!r || typeof r !== "object")
+      throw new Error(`no room "${key}" — add it in the Rooms sidebar`);
+    return r;
   });
 }
 
-function loadRoom(key, cfg) {
-  return fetchStamped(roomUrl(key, cfg), cfg, (j) => {
-    // tolerate a file that wraps the room in its own key
-    if (j && !j.room_name && j[key] && typeof j[key] === "object") return j[key];
-    return j;
-  });
+function loadRemotes(hass) {
+  return loadAll(hass).then(({ remotes }) => remotes).catch(() => ({}));
 }
 
 const roomHash = (c) => {
@@ -448,14 +425,11 @@ function isMassPlayer(hass, id) {
  *                 "media_player": "media_player.javon_samsung_70",
  *                 "remote": "remote.javon_samsung_70" }]
  *
- * Templates live beside the rooms, in _remotes.json. {{key}} inside a template
- * is replaced from the room's entry; a string that is exactly {{key}} takes
- * the value's own type, so numbers and lists survive.
+ * Templates live beside the rooms, in _remotes.json, and arrive with them in
+ * the same websocket message - see loadRemotes up top. {{key}} inside a
+ * template is replaced from the room's entry; a string that is exactly
+ * {{key}} takes the value's own type, so numbers and lists survive.
  */
-function loadRemotes(cfg) {
-  const u = (cfg && cfg.remotes_url) || roomsDir(cfg) + "_remotes.json";
-  return fetchStamped(u, cfg).catch(() => ({}));
-}
 
 function fillTemplate(node, vars) {
   if (typeof node === "string") {
@@ -1773,13 +1747,9 @@ class CharroRoomCard extends CharroBase {
     this._building = false;
     this._merged = null;
     this._tplP = this._loadTpl(config);
-    this._roomP = config.room
-      ? loadRoom(config.room, config).then((r) => {
-          if (!r || typeof r !== "object")
-            throw new Error(`${roomUrl(config.room, config)} is not a room`);
-          return r;
-        })
-      : Promise.resolve({});
+    // the room arrives over the websocket, so it can't start until `hass`
+    // does - _resolve kicks it off, which is the first thing _build awaits
+    this._roomP = null;
     this.innerHTML = "";
     if (this._hass) this._build();
   }
@@ -1821,9 +1791,14 @@ class CharroRoomCard extends CharroBase {
   /* anything set on the card wins over the shared file */
   async _resolve() {
     if (this._merged) return this._merged;
+    if (!this._roomP) {
+      this._roomP = this._config.room
+        ? loadRoom(this._config.room, this._hass)
+        : Promise.resolve({});
+    }
     const room = await this._roomP;
     if ((room.remotes || this._config.remotes || []).length || room.video)
-      room._remotes = await loadRemotes(this._config);
+      room._remotes = await loadRemotes(this._hass);
     const m = { ...room, ...this._config };
     for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
     if (!m.room_name) m.room_name = room.room_name || this._config.room || "";
@@ -2008,7 +1983,6 @@ const ROOM_LABELS = {
   room_name: "Room name",
   room_icon: "Room icon",
   tile_size: "Tile width on the rooms view",
-  rooms_dir: "Folder holding the room files",
   popup_hash: "Pop-up hash (blank = from the name)",
   page_path: "Full-page path",
   popup_width: "Pop-up width",
@@ -3373,14 +3347,16 @@ const LayoutUI = {
         // a Lutron group and its members are the same bulbs twice
         const cnt = document.createElement("button");
         cnt.className = "btn";
-        cnt.title = it.count === false
-          ? "Not counted in the chip — click to count it"
-          : "Counted in the chip — click to leave it out (for groups and duplicates)";
-        cnt.innerHTML = `<ha-icon icon="${it.count === false
-          ? "mdi:numeric-0-box-multiple-outline" : "mdi:counter"}"></ha-icon>`;
-        if (it.count === false) cnt.style.color = "var(--primary-color)";
+        const on = this._counted(it.entity);
+        cnt.title = on
+          ? "Counted in the chip — click to leave it out (for groups and duplicates)"
+          : "Not counted in the chip — click to count it";
+        cnt.innerHTML = `<ha-icon icon="${on
+          ? "mdi:counter" : "mdi:numeric-0-box-multiple-outline"}"></ha-icon>`;
+        if (!on) cnt.style.color = "var(--primary-color)";
         cnt.addEventListener("click", () => {
-          if (it.count === false) delete it.count; else it.count = false;
+          this._setCounted(it.entity, !on);
+          delete it.count;                 // the placement no longer holds it
           this._lbRender(); this._lbChanged();
         });
 
@@ -4024,8 +4000,7 @@ class CharroRoomsEditor extends HTMLElement {
   }
   getCardSize() { return 12; }
 
-  _dir() { return (this._config.rooms_dir || ROOMS_DIR_DEFAULT).replace(/\/*$/, "/"); }
-  _path(k) { return `/config/www/${this._dir().replace(/^\/local\//, "")}${k}.json`; }
+  _path(k) { return `/config/charro_rooms/${k}.json`; }
   _canWrite() { return this._saveMode() !== "copy"; }
 
   _saveMode() {
@@ -4063,6 +4038,80 @@ class CharroRoomsEditor extends HTMLElement {
     this._autoT = setTimeout(() => {
       if (this._autoOn() && this._dirty() && !this._saving) this._doSave(true);
     }, 1500);
+  }
+
+  /* The "don't count" flag belongs to the light, not to where it happens to
+   * sit. It used to be written on the layout item, which is a different
+   * object from the entity-list entry the chips actually count — so the
+   * button did nothing at all, and even once that was honoured, dragging an
+   * item out and back would have dropped the flag silently. These read and
+   * write the entity list, and _migrateCounts moves any old ones across. */
+  _countEntry(entity) {
+    for (const key of RE_LIGHT_LISTS) {
+      const list = this._room && this._room[key];
+      if (!Array.isArray(list)) continue;
+      const i = list.findIndex((e) => lightId(e) === entity);
+      if (i >= 0) return { list, i };
+    }
+    return null;
+  }
+
+  _counted(entity) {
+    const at = this._countEntry(entity);
+    const e = at && at.list[at.i];
+    if (e && typeof e === "object" && e.count === false) return false;
+    // an older file may still carry it on the placement
+    return !(this._layoutFlagged(entity));
+  }
+
+  _layoutFlagged(entity) {
+    let hit = false;
+    const walk = (items) => {
+      for (const it of items || []) {
+        if (!it || typeof it !== "object" || hit) continue;
+        if (it.group !== undefined) { walk(it.items); continue; }
+        if (it.entity === entity && it.count === false) hit = true;
+      }
+    };
+    walk(this._room && this._room.layout);
+    walk(this._room && this._room.hidden);
+    return hit;
+  }
+
+  _setCounted(entity, on) {
+    const at = this._countEntry(entity);
+    if (!at) return false;
+    const cur = at.list[at.i];
+    if (on) {
+      if (cur && typeof cur === "object") {
+        delete cur.count;
+        const keys = Object.keys(cur);
+        if (keys.length === 1 && keys[0] === "entity") at.list[at.i] = cur.entity;
+      }
+    } else {
+      at.list[at.i] = cur && typeof cur === "object"
+        ? { ...cur, count: false } : { entity, count: false };
+    }
+    return true;
+  }
+
+  /* Move any flag an older file kept on its layout item onto the light, so
+   * there is one place it lives. Returns how many moved. */
+  _migrateCounts() {
+    let moved = 0;
+    const walk = (items) => {
+      for (const it of items || []) {
+        if (!it || typeof it !== "object") continue;
+        if (it.group !== undefined) { walk(it.items); continue; }
+        if (it.entity && it.count === false) {
+          if (this._setCounted(it.entity, false)) moved++;
+          delete it.count;
+        }
+      }
+    };
+    walk(this._room && this._room.layout);
+    walk(this._room && this._room.hidden);
+    return moved;
   }
 
   /* The room list as a rail, so switching is one click and you can see what
@@ -4209,7 +4258,7 @@ class CharroRoomsEditor extends HTMLElement {
      * is the only source here that sees a room nothing references yet. */
     if (this._saveMode() === "ws") {
       try {
-        const r = await this._hass.callWS({ type: WS_LIST, dir: this._dir() });
+        const r = await this._hass.callWS({ type: WS_LIST });
         for (const k of (r && r.rooms) || []) keys.add(k);
       } catch (err) { /* older integration, or not admin */ }
     }
@@ -4233,13 +4282,9 @@ class CharroRoomsEditor extends HTMLElement {
     } catch (err) { /* older core, or no lovelace access */ }
 
     try {
-      const r = await fetch(`${this._dir()}_index.json?t=${Date.now()}`, { cache: "no-store" });
-      if (r.ok) {
-        const j = await r.json();
-        for (const k of (Array.isArray(j) ? j : (j && j.rooms) || []))
-          if (k && !k.startsWith("_")) keys.add(k);
-      }
-    } catch (err) { /* no index yet */ }
+      const { rooms } = await loadAll(this._hass);
+      for (const k of Object.keys(rooms)) keys.add(k);
+    } catch (err) { /* integration not answering; the dashboard scan stands */ }
 
     return [...keys].sort();
   }
@@ -4253,7 +4298,7 @@ class CharroRoomsEditor extends HTMLElement {
       ? `Writes ${this._key ? this._path(this._key) : "the room file"}`
       : "No way to write the file from here — this copies the JSON instead";
     if (!this._foot) return;
-    const path = this._key ? this._path(this._key) : `${this._dir()}&lt;room&gt;.json`;
+    const path = this._key ? this._path(this._key) : "/config/charro_rooms/&lt;room&gt;.json";
     const via = mode === "ws"
       ? "the <code>Charro Cards</code> integration"
       : "<code>shell_command.charro_write_room</code>";
@@ -4274,20 +4319,28 @@ class CharroRoomsEditor extends HTMLElement {
     this._renderRail();
     this._saveLabel();
     try {
-      const url = `${this._dir()}${key}.json?t=${Date.now()}`;
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      let j = await r.json();
-      if (j && !j.room_name && j[key] && typeof j[key] === "object") j = j[key];
+      // always from the server, never the copy the cards are holding
+      invalidateRooms();
+      const { rooms, remotes } = await loadAll(this._hass);
+      const j = JSON.parse(JSON.stringify(rooms[key] || {}));
+      if (!rooms[key]) throw new Error("no such room");
       // the editor always wants the template list, so the source dropdown
       // can offer them before a room has any remotes of its own
-      j._remotes = await loadRemotes(this._config);
+      j._remotes = remotes;
       this._room = j; this._orig = JSON.parse(JSON.stringify(j));
-      if (!quiet) this._say("");
+      // after _orig, so the room reads as changed and the move gets saved
+      const moved = this._migrateCounts();
+      if (!quiet) {
+        this._say(moved
+          ? `Moved ${moved} "don't count" flag${moved > 1 ? "s" : ""} onto the ` +
+            `lights themselves — save to keep it.`
+          : "");
+      }
       this._renderForm();
+      if (moved) this._queueSave();
     } catch (err) {
       this._room = null;
-      this._say(`Could not read ${this._dir()}${key}.json — ${err.message}`, "err");
+      this._say(`Could not read ${this._path(key)} — ${err.message}`, "err");
       this._left.innerHTML = ""; this._prevWrap.innerHTML = "";
     }
   }
@@ -4309,12 +4362,13 @@ class CharroRoomsEditor extends HTMLElement {
 
     // opening beats clobbering: if the file is already there, load it
     try {
-      const r = await fetch(`${this._dir()}${key}.json?t=${Date.now()}`, { cache: "no-store" });
-      if (r.ok) {
+      invalidateRooms();
+      const { rooms } = await loadAll(this._hass);
+      if (rooms[key]) {
         this._say(`${key}.json already exists — opened it.`);
         return this._load(key, true);
       }
-    } catch (err) { /* not there, fall through to a new one */ }
+    } catch (err) { /* can't ask; fall through and start a new one */ }
 
     this._room = { room_name: key.charAt(0).toUpperCase() + key.slice(1),
                    room_icon: "mdi:home", light_entities: [] };
@@ -5226,15 +5280,14 @@ class CharroRoomsEditor extends HTMLElement {
       try {
         if (mode === "ws") {
           await this._hass.callWS({
-            type: WS_SAVE, key: this._key, config: save, dir: this._dir() });
+            type: WS_SAVE, key: this._key, config: save });
         } else {
           const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
           await this._hass.callService(SAVE_SERVICE[0], SAVE_SERVICE[1],
                                        { name: this._key, payload: b64 });
         }
         this._orig = JSON.parse(json);
-        _roomFiles.clear();               // the revision moved; drop the old URLs
-        _indexP = null;                   // and re-read it
+        invalidateRooms();   // every card shares one copy; make them re-ask
         this._say(quiet
           ? `Autosaved ${this._key}.json`
           : `Saved to ${this._path(this._key)} — hard-refresh to see it elsewhere.`, "ok");

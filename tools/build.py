@@ -40,11 +40,18 @@ def precompress(path: pathlib.Path) -> str:
     gz.write_bytes(gzip.compress(raw, compresslevel=9, mtime=0))
     out.append(f"{gz.stat().st_size / 1024:.0f}K gz")
 
+    br = path.with_suffix(path.suffix + ".br")
     try:
         import brotli  # type: ignore
     except ImportError:
+        # aiohttp prefers .br over .gz over the raw file, so a leftover .br
+        # from a machine that HAD brotli would be served in place of this
+        # freshly built bundle - stale code, and nothing to show for it.
+        # Better no brotli than the wrong brotli.
+        if br.exists():
+            br.unlink()
+            out.append("br removed (brotli not installed)")
         return ", ".join(out)
-    br = path.with_suffix(path.suffix + ".br")
     br.write_bytes(brotli.compress(raw, quality=11))
     out.append(f"{br.stat().st_size / 1024:.0f}K br")
     return ", ".join(out)
