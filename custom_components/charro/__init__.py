@@ -96,9 +96,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     url = f"{STATIC_URL}/{BUNDLE}?v={await hass.async_add_executor_job(_rev)}"
 
-    # This is what replaces the Lovelace resource entry: every frontend load
-    # pulls the bundle in, so the cards are defined before a dashboard renders.
-    frontend.add_extra_js_url(hass, url)
+    # How the cards reach a dashboard. Preferred is a Lovelace resource:
+    # Lovelace fetches that list live over the websocket every time a
+    # dashboard opens, so it cannot go stale. add_extra_js_url instead bakes
+    # the URL into the frontend's app shell, which the service worker
+    # precaches - a shell cached before this integration existed carries no
+    # reference to the bundle at all, the cards never register, and every one
+    # of them renders as "Configuration error" until that cache is cleared.
+    # So the resource is the real path, and the extra module is only the
+    # fallback for a Lovelace running YAML-mode resources, where a resource
+    # can't be added.
+    if await _sync_resource(hass, url):
+        # upgrading from a version that used the shell: take the old entry
+        # back out so a cached shell stops pulling in a stale copy
+        _drop_extra_js(hass, store.pop("extra_js", None))
+    else:
+        frontend.add_extra_js_url(hass, url)
+        store["extra_js"] = url
 
     await panel_custom.async_register_panel(
         hass,
@@ -133,16 +147,74 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     The static route stays: aiohttp can't unregister one, and it doesn't need
     to — the path is stable and setup skips re-adding it.
+
+    The Lovelace resource stays too, and setup rewrites its URL rather than
+    adding another. Removing it here would make a reload a window in which
+    every dashboard has no cards; it is cleaned up when the integration is
+    deleted instead.
     """
+    store = hass.data.get(DOMAIN, {})
     frontend.async_remove_panel(hass, PANEL_URL)
-    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    if data and data.get("url"):
-        try:
-            frontend.remove_extra_js_url(hass, data["url"])
-        except (KeyError, ValueError, AttributeError):
-            # older core without the remover, or it was never added
-            _LOGGER.debug("couldn't drop %s from the frontend", data["url"])
+    store.pop(entry.entry_id, None)
+    _drop_extra_js(hass, store.pop("extra_js", None))
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Integration deleted: take the resource out so it stops 404ing."""
+    res = _lovelace_resources(hass)
+    if res is None:
+        return
+    prefix = f"{STATIC_URL}/{BUNDLE}"
+    try:
+        await res.async_get_info()
+        for item in [r for r in (res.async_items() or [])
+                     if str(r.get("url", "")).startswith(prefix)]:
+            await res.async_delete_item(item["id"])
+    except Exception:  # noqa: BLE001 - deletion is best effort
+        _LOGGER.exception("couldn't remove the Lovelace resource")
+
+
+def _lovelace_resources(hass: HomeAssistant):
+    """The Lovelace resource collection, if one can be written to."""
+    data = hass.data.get("lovelace")
+    res = getattr(data, "resources", None)
+    if res is None and isinstance(data, dict):
+        res = data.get("resources")          # cores before the dataclass
+    # ResourceYAMLCollection has no create/update: YAML mode owns the list
+    return res if hasattr(res, "async_create_item") else None
+
+
+async def _sync_resource(hass: HomeAssistant, url: str) -> bool:
+    """Point Lovelace's resource list at this bundle. True if it took."""
+    res = _lovelace_resources(hass)
+    if res is None:
+        return False
+    prefix = f"{STATIC_URL}/{BUNDLE}"
+    try:
+        await res.async_get_info()                 # loads the collection
+        mine = [r for r in (res.async_items() or [])
+                if str(r.get("url", "")).startswith(prefix)]
+        if not mine:
+            await res.async_create_item({"res_type": "module", "url": url})
+        else:
+            if mine[0].get("url") != url:
+                await res.async_update_item(mine[0]["id"], {"url": url})
+            for dupe in mine[1:]:                  # only ever one of ours
+                await res.async_delete_item(dupe["id"])
+    except Exception:  # noqa: BLE001 - a nicety; never fail setup over it
+        _LOGGER.exception("couldn't register the Lovelace resource for %s", url)
+        return False
+    return True
+
+
+def _drop_extra_js(hass: HomeAssistant, url: str | None) -> None:
+    if not url:
+        return
+    try:
+        frontend.remove_extra_js_url(hass, url)
+    except (KeyError, ValueError, AttributeError):
+        pass
 
 
 async def _register_static(hass: HomeAssistant, url: str, path: str) -> None:
