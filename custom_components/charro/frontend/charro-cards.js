@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.66.0";
+const VERSION = "4.67.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5816,14 +5816,14 @@ const TAB_CSS = `
  * looking identical (its own background is near-transparent on a glass
  * theme, so without the blur the action icons would sit raw on the photo)
  * while letting the dock below escape to the viewport. */
-.header { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-.header::before {
+:host(:not([charro-edit])) .header { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+:host(:not([charro-edit])) .header::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   -webkit-backdrop-filter: blur(20px) saturate(1.3);
   backdrop-filter: blur(20px) saturate(1.3);
 }
 
-ha-tab-group {
+:host(:not([charro-edit])) ha-tab-group {
   --ha-tab-track-color: transparent;
   --ha-tab-indicator-color: transparent;
   --track-width: 0px;
@@ -5851,10 +5851,10 @@ ha-tab-group {
   :host { --charro-dock-x: 50vw; }
 }
 
-ha-tab-group::part(base) { height: auto; }
-ha-tab-group::part(body) { display: none; }   /* the empty tab panel */
-ha-tab-group::part(nav) { border: none; }
-ha-tab-group::part(tabs) {
+:host(:not([charro-edit])) ha-tab-group::part(base) { height: auto; }
+:host(:not([charro-edit])) ha-tab-group::part(body) { display: none; }   /* the empty tab panel */
+:host(:not([charro-edit])) ha-tab-group::part(nav) { border: none; }
+:host(:not([charro-edit])) ha-tab-group::part(tabs) {
   gap: 2px;
   padding: 5px;
   border-radius: 999px;
@@ -5865,7 +5865,7 @@ ha-tab-group::part(tabs) {
   box-shadow: 0 6px 24px rgba(0,0,0,0.38);
 }
 
-ha-tab-group-tab::part(base) {
+:host(:not([charro-edit])) ha-tab-group-tab::part(base) {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -5882,29 +5882,29 @@ ha-tab-group-tab::part(base) {
   color: var(--secondary-text-color);
   transition: background 200ms ease, color 200ms ease;
 }
-ha-tab-group-tab ha-icon { --mdc-icon-size: 22px; }
-ha-tab-group-tab:not([aria-selected="true"]):hover::part(base) {
+:host(:not([charro-edit])) ha-tab-group-tab ha-icon { --mdc-icon-size: 22px; }
+:host(:not([charro-edit])) ha-tab-group-tab:not([aria-selected="true"]):hover::part(base) {
   background: color-mix(in srgb, var(--primary-text-color, #fff) 9%, transparent);
   color: var(--primary-text-color);
 }
-ha-tab-group-tab[aria-selected="true"]::part(base) {
+:host(:not([charro-edit])) ha-tab-group-tab[aria-selected="true"]::part(base) {
   background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
   color: var(--primary-text-color);
   font-weight: 600;
 }
 /* Desktop and iPad have the room for a bigger target and bigger glyphs. */
 @media (min-width: 870px) {
-  ha-tab-group-tab::part(base) { height: 58px; min-width: 84px; font-size: 11px; gap: 4px; }
-  ha-tab-group-tab ha-icon { --mdc-icon-size: 27px; }
+  :host(:not([charro-edit])) ha-tab-group-tab::part(base) { height: 58px; min-width: 84px; font-size: 11px; gap: 4px; }
+  :host(:not([charro-edit])) ha-tab-group-tab ha-icon { --mdc-icon-size: 27px; }
 }
 
 /* Only tabs Home Assistant rendered icon-only get a label added; a view with
  * no icon already shows its title as text and must not get it twice. */
-ha-tab-group-tab.icon-only::part(base)::after { content: var(--charro-tab-label, ""); }
+:host(:not([charro-edit])) ha-tab-group-tab.icon-only::part(base)::after { content: var(--charro-tab-label, ""); }
 
 /* So the last row of cards can be scrolled clear of a dock that floats over
  * them: 68px of dock, 18px of gap, and room to breathe. */
-hui-view-container { padding-bottom: 110px; }
+:host(:not([charro-edit])) hui-view-container { padding-bottom: 110px; }
 
 
 /* ---- the top bar, and the dots that bring it back ---------------------
@@ -5966,7 +5966,7 @@ hui-view-container { padding-bottom: 110px; }
   align-items: center;
 }
 
-#charro-extras-btn {
+:host(:not([charro-edit])) #charro-extras-btn {
   position: fixed;
   z-index: 7;
   width: 44px;
@@ -5989,7 +5989,7 @@ hui-view-container { padding-bottom: 110px; }
   bottom: calc(18px + (var(--charro-dock-h, 68px) - 44px) / 2 + env(safe-area-inset-bottom, 0px));
   left: calc(var(--charro-dock-x) + var(--charro-dock-half, 170px) + 10px);
 }
-#charro-extras-btn:hover { color: var(--primary-text-color); }
+:host(:not([charro-edit])) #charro-extras-btn:hover { color: var(--primary-text-color); }
 :host([charro-extras]) #charro-extras-btn {
   background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
   color: var(--primary-text-color);
