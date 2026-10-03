@@ -188,10 +188,30 @@ def c_json_files() -> None:
     check("config JSON is valid", not bad, "; ".join(bad))
 
 
+def c_manifest_order() -> None:
+    """hassfest wants domain, then name, then every other key alphabetically.
+
+    It is a trivial rule and a confusing failure: the manifest is valid JSON,
+    the integration loads fine locally, and the only symptom is a red CI run
+    saying "keys are not sorted correctly". Catching it here means the fix
+    happens before the push rather than after.
+    """
+    try:
+        keys = list(json.loads(MANIFEST.read_text(encoding="utf-8")))
+    except Exception as err:  # noqa: BLE001
+        check("manifest keys are ordered", False, f"unreadable: {err}")
+        return
+    head = ["domain", "name"]
+    want = [k for k in head if k in keys] + sorted(k for k in keys if k not in head)
+    check("manifest keys are ordered", keys == want,
+          f"expected {', '.join(want)}")
+
+
 def main() -> int:
     print(f"charro checks - {ROOT}")
     for fn in (c_parses, c_methods, c_defines, c_templates,
-               c_built, c_version, c_precompressed, c_python, c_json_files):
+               c_built, c_version, c_precompressed, c_python, c_json_files,
+               c_manifest_order):
         try:
             fn()
         except Exception as err:  # noqa: BLE001

@@ -1,22 +1,22 @@
 {
   "domain": "charro",
   "name": "Charro Cards",
-  "version": "4.64.0",
-  "documentation": "https://github.com/ShotRotMG/charro-homeassistant",
-  "issue_tracker": "https://github.com/ShotRotMG/charro-homeassistant/issues",
+  "after_dependencies": [
+    "lovelace"
+  ],
   "codeowners": [
     "@ShotRotMG"
   ],
   "config_flow": true,
-  "single_config_entry": true,
   "dependencies": [
     "http",
     "frontend",
     "panel_custom",
     "websocket_api"
   ],
+  "documentation": "https://github.com/ShotRotMG/charro-homeassistant",
   "iot_class": "local_push",
-  "after_dependencies": [
-    "lovelace"
-  ]
+  "issue_tracker": "https://github.com/ShotRotMG/charro-homeassistant/issues",
+  "single_config_entry": true,
+  "version": "4.64.0"
 }
