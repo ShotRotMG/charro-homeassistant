@@ -1,0 +1,60 @@
+# Runs tools/check.py on every push, so a broken commit can't sit in the repo
+# waiting for HACS to hand it to Home Assistant.
+#
+# Node is pinned to 22 deliberately: `node --check` only treats a .mjs file as
+# an ES module from 21 onwards. On older Node the check falls back to stubbing
+# `import.meta` out, which still works but parses something very slightly
+# different from what ships. CI should check the file as written.
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: tools/check.py
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # so the precompressed check can verify a .br, not just note it exists
+      - name: Install brotli
+        run: python -m pip install --quiet brotli
+
+      - name: Run checks
+        run: python tools/check.py
+
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          category: integration
+          # `brands` checks the domain is registered in home-assistant/brands,
+          # which is for integrations submitted to core. This one is personal
+          # and never will be, so that check can only ever fail.
+          ignore: brands

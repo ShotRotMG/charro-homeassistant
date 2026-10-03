@@ -1,5 +1,7 @@
 # Charro Home Assistant
 
+[![checks](https://github.com/ShotRotMG/charro-homeassistant/actions/workflows/checks.yml/badge.svg)](https://github.com/ShotRotMG/charro-homeassistant/actions/workflows/checks.yml)
+
 Lovelace cards for the Charro dashboard. One HACS install gives you six cards,
 each with a visual editor.
 
