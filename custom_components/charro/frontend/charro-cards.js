@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.59.0";
+const VERSION = "4.60.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -239,11 +239,36 @@ function def(tag, cls) {
  */
 
 let _allP = null;
+let _versionTold = false;
+
+/* A browser can end up running an older bundle than the one installed - Home
+ * Assistant precaches its app shell, and a shell cached before an update
+ * keeps pointing at the copy it knew about. That used to be invisible: the
+ * cards were simply the wrong ones, or missing, with nothing anywhere saying
+ * why. The server states which version it expects, so say so plainly once.
+ */
+function checkVersion(server, hass) {
+  if (_versionTold || !server || server === VERSION) return;
+  _versionTold = true;
+  const msg = `Charro Cards: this browser is running ${VERSION}, but ` +
+    `${server} is installed. Hard-refresh the page — or reset the frontend ` +
+    `cache in the companion app — to pick it up.`;
+  console.warn(`%c CHARRO CARDS %c stale `,
+               "color:#fff;background:#ff9800;font-weight:700",
+               "color:#ff9800;background:#fff", msg);
+  try {
+    const ha = document.querySelector("home-assistant");
+    if (ha) fireEvent(ha, "hass-notification", { message: msg });
+  } catch (err) { /* a toast is a nicety; the console line is the record */ }
+}
 
 function loadAll(hass) {
   if (!_allP) {
     _allP = hass.callWS({ type: "charro/get_rooms" })
-      .then((d) => ({ rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} }))
+      .then((d) => {
+        checkVersion(d && d.version, hass);
+        return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} };
+      })
       .catch((err) => { _allP = null; throw err; });   // let the next card retry
   }
   return _allP;

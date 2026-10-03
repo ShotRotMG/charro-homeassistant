@@ -152,6 +152,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_list_snapshots)
     websocket_api.async_register_command(hass, ws_get_snapshot)
 
+    # the version a browser should be running; get_rooms hands it over so a
+    # page serving a cached older bundle can notice and say so
+    store["version"] = str(integration.version)
     store[entry.entry_id] = {"url": url}
     _LOGGER.debug("Charro Cards %s ready at %s", integration.version, url)
     return True
@@ -460,6 +463,7 @@ async def ws_get_rooms(hass, connection, msg):
     data = await hass.async_add_executor_job(_read_all, path)
     if data["bad"]:
         _LOGGER.warning("skipped unreadable room files: %s", ", ".join(data["bad"]))
+    data["version"] = hass.data.get(DOMAIN, {}).get("version")
     connection.send_result(msg["id"], data)
 
 
