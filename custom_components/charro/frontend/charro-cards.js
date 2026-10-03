@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.62.0";
+const VERSION = "4.63.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1320,6 +1320,45 @@ const CHIP_PAL = {
 
 const pal = (name) => [CHIP_PAL[name].bg, CHIP_PAL[name].fg];
 
+/* Card surfaces. Every other template leaves the outer `ha-card` alone, so
+ * it picks up whatever the active theme paints — which is the only way a
+ * card reads correctly under a theme nobody here has seen. zone-card.json
+ * was the exception: it painted its own
+ *
+ *     background: rgba(var(--rgb-primary-text-color), 0.02)
+ *
+ * which is a 2% wash of the *text* colour. Under a glass theme that lands
+ * on top of the theme's own frosted panel and looks deliberate; under a
+ * plain theme there is no panel underneath, so a zone row is a 2% tint over
+ * the dashboard's background photo and the labels sit straight on the
+ * picture. Dad's complaint, exactly.
+ *
+ * So the surface is a setting now, and it defaults to deferring to the
+ * theme: HA's own card variables, each with the fallback chain that holds
+ * when a theme defines none of them. `none` is the old painted-by-hand
+ * look, kept so a dashboard that liked it can ask for it back. */
+const CARD_SURFACES = {
+  card: {
+    bg: "var(--ha-card-background, var(--card-background-color, rgba(127,127,127,0.18)))",
+    border: "var(--ha-card-border-width, 1px) solid " +
+            "var(--ha-card-border-color, var(--divider-color, rgba(127,127,127,0.22)))",
+    radius: "var(--ha-card-border-radius, 14px)",
+    // not a core variable — glass themes that define it get matched, the
+    // rest fall through to none, which is what they already had
+    blur: "var(--ha-card-backdrop-filter, none)",
+    shadow: "var(--ha-card-box-shadow, none)",
+  },
+  none: {
+    bg: "rgba(var(--rgb-primary-text-color), 0.02)",
+    border: "none",
+    radius: "14px",
+    blur: "none",
+    shadow: "none",
+  },
+};
+
+const cardSurface = (name) => CARD_SURFACES[name] || CARD_SURFACES.card;
+
 const CHIP_AMBER  = pal("amber");
 const CHIP_GREEN  = pal("green");
 const CHIP_BLUE   = pal("blue");
@@ -2156,6 +2195,7 @@ class CharroZoneCard extends CharroBase {
       amp_key: c.amp_key || "",
       zone_num: c.zone_num || 0,
       volume_step: c.volume_step || 1,
+      surface: cardSurface(c.surface),
     };
   }
 
@@ -2395,15 +2435,22 @@ makeEditor("charro-zone-card-editor", [
   { name: "source_entity", selector: ent(["select", "input_select"]) },
   { name: "volume_entity", selector: ent(["number", "input_number"]) },
   { name: "volume_step", selector: { number: { min: 1, max: 10, mode: "box" } } },
+  { name: "surface", selector: { select: { mode: "dropdown", options: [
+      { value: "card", label: "Theme card (reads on any theme)" },
+      { value: "none", label: "Faint tint (the old look)" }] } } },
 ], {
   entity: "Zone power switch",
   zone_name: "Zone name",
   source_entity: "Source select",
   volume_entity: "Volume number",
   volume_step: "Volume step",
+  surface: "Row background",
 }, {
   entity: "e.g. switch.rti_ad_8x_amp2_saloon_bar_power",
   volume_step: "How much one tap of +/- moves the volume. Hold to repeat.",
+  surface: "Theme card borrows the colour, border and shadow the active theme " +
+           "gives every other card. Faint tint is the 2% wash this card used to " +
+           "paint itself, which disappears on a theme with no panel behind it.",
 });
 
 /* ========================================================= ALL-OFF CARD == */

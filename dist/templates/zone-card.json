@@ -5,7 +5,14 @@
     "volume_entity": "",
     "amp_key": "",
     "zone_num": 0,
-    "volume_step": 1
+    "volume_step": 1,
+    "surface": {
+      "bg": "var(--ha-card-background, var(--card-background-color, rgba(127,127,127,0.18)))",
+      "border": "var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color, rgba(127,127,127,0.22)))",
+      "radius": "var(--ha-card-border-radius, 14px)",
+      "blur": "var(--ha-card-backdrop-filter, none)",
+      "shadow": "var(--ha-card-box-shadow, none)"
+    }
   },
   "show_name": false,
   "show_icon": false,
@@ -18,13 +25,22 @@
         "padding": "8px"
       },
       {
-        "border-radius": "14px"
+        "border-radius": "[[[ return variables.surface.radius; ]]]"
       },
       {
-        "box-shadow": "none"
+        "background": "[[[ return variables.surface.bg; ]]]"
       },
       {
-        "background": "rgba(var(--rgb-primary-text-color), 0.02)"
+        "border": "[[[ return variables.surface.border; ]]]"
+      },
+      {
+        "box-shadow": "[[[ return variables.surface.shadow; ]]]"
+      },
+      {
+        "backdrop-filter": "[[[ return variables.surface.blur; ]]]"
+      },
+      {
+        "-webkit-backdrop-filter": "[[[ return variables.surface.blur; ]]]"
       }
     ],
     "grid": [
