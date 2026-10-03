@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.58.0";
+const VERSION = "4.59.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3831,6 +3831,67 @@ const LayoutUI = {
 };
 
 
+/* Entity ids that Home Assistant doesn't have.
+ *
+ * A renamed or deleted entity leaves a tile that renders and does nothing,
+ * and nothing anywhere says so - you find out when you press it. Rather than
+ * enumerate the thirty-odd keys a room can hang an entity on, this walks the
+ * whole config and treats anything shaped like an entity id as one.
+ *
+ * `{{var}}` and button-card's `[[[ ]]]` are skipped: in a remote template
+ * those are blanks a room fills in, not references. So is _remotes itself,
+ * which is the shared template library rather than this room's wiring.
+ */
+const ENTITY_RE = /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/;
+
+/* A domain is believable if the instance has one, or if it is a core domain
+ * that happens to have no entities right now. Anything else - "foo.bar" in a
+ * heading, say - isn't an entity reference and isn't worth a warning. */
+const CORE_DOMAINS = new Set([
+  "light", "switch", "cover", "sensor", "binary_sensor", "climate", "fan",
+  "media_player", "remote", "script", "scene", "button", "select", "number",
+  "text", "lock", "camera", "vacuum", "valve", "humidifier", "water_heater",
+  "automation", "person", "device_tracker", "update", "event", "siren",
+  "alarm_control_panel", "input_select", "input_boolean", "input_number",
+  "input_text", "input_datetime", "todo", "timer", "counter", "group",
+]);
+
+function entityRefs(node, out, path) {
+  if (typeof node === "string") {
+    if (node.includes("{{") || node.includes("[[[")) return;
+    if (ENTITY_RE.test(node)) {
+      if (!out.has(node)) out.set(node, new Set());
+      out.get(node).add(path || "room");
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((v, i) => entityRefs(v, out, `${path}[${i}]`));
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "_remotes") continue;            // the shared template library
+    entityRefs(v, out, path ? `${path}.${k}` : k);
+  }
+}
+
+function unknownEntities(room, hass) {
+  if (!room || !hass || !hass.states) return [];
+  const refs = new Map();
+  entityRefs(room, refs, "");
+  const live = hass.states;
+  const seenDomains = new Set(Object.keys(live).map((id) => id.split(".")[0]));
+  const out = [];
+  for (const [id, paths] of refs) {
+    const domain = id.split(".")[0];
+    if (!seenDomains.has(domain) && !CORE_DOMAINS.has(domain)) continue;
+    if (live[id]) continue;
+    out.push({ id, paths: [...paths].sort() });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /* "22 minutes ago" beats a timestamp when you are trying to remember what
  * you broke and roughly when. */
 function ago(ts) {
@@ -3928,6 +3989,24 @@ h4{
   background:var(--ha-card-background, var(--card-background-color, #fff));
   border-bottom:1px solid var(--divider-color);
 }
+.warnbox{
+  margin:0 0 12px; padding:9px 12px; border-radius:10px; font-size:12.5px;
+  background:rgba(255,152,0,.12); border:1px solid rgba(255,152,0,.42);
+  max-height:150px; overflow-y:auto;
+}
+.warnhd{ font-weight:600; margin-bottom:5px; color:var(--primary-text-color); }
+.warnrow{ display:flex; gap:10px; align-items:baseline; padding:1px 0; }
+.warnrow code{
+  font-family:ui-monospace,Menlo,monospace; font-size:11.5px;
+  background:rgba(127,127,127,.16); padding:1px 5px; border-radius:4px;
+}
+.warnwhere{ font-size:11px; color:var(--secondary-text-color); }
+.railbad{
+  margin-left:auto; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
+  border-radius:9px; background:rgba(255,152,0,.9); color:#000;
+  font-size:10.5px; font-weight:700; line-height:17px; text-align:center;
+}
+.railit{ display:flex; align-items:center; gap:6px; }
 .histwrap{ position:relative; display:inline-block; }
 .histbox{
   position:absolute; right:0; top:calc(100% + 6px); z-index:20; min-width:240px;
@@ -4157,7 +4236,17 @@ class CharroRoomsEditor extends HTMLElement {
     for (const k of this._keys || []) {
       const b = document.createElement("button");
       b.className = "railit" + (k === this._key ? " on" : "");
-      b.textContent = k;
+      const name = document.createElement("span");
+      name.textContent = k;
+      b.appendChild(name);
+      const bad = (this._unknownCounts || {})[k];
+      if (bad) {
+        const n = document.createElement("span");
+        n.className = "railbad";
+        n.textContent = String(bad);
+        n.title = `${bad} entity id${bad > 1 ? "s" : ""} Home Assistant doesn't have`;
+        b.appendChild(n);
+      }
       b.title = k;
       b.addEventListener("click", () => { if (k !== this._key) this._load(k); });
       this._rail.appendChild(b);
@@ -4270,10 +4359,13 @@ class CharroRoomsEditor extends HTMLElement {
     right.append(prow, this._prevWrap);
     cols.append(this._rail, this._left, this._mid, right);
 
+    this._warn = document.createElement("div");
+    this._warn.className = "warnbox";
+    this._warn.hidden = true;
     this._status = document.createElement("div"); this._status.className = "status";
     this._foot = document.createElement("div"); this._foot.className = "foot";
 
-    card.append(bar, cols, this._status, this._foot);
+    card.append(bar, this._warn, cols, this._status, this._foot);
     root.innerHTML = ""; root.append(style, card);
     this._built = true;
 
@@ -4333,6 +4425,14 @@ class CharroRoomsEditor extends HTMLElement {
     try {
       const { rooms } = await loadAll(this._hass);
       for (const k of Object.keys(rooms)) keys.add(k);
+      // every room is in hand here, so count the dead ids for all of them at
+      // once rather than only noticing when you happen to open one
+      const counts = {};
+      for (const [k, r] of Object.entries(rooms)) {
+        const n = unknownEntities(r, this._hass).length;
+        if (n) counts[k] = n;
+      }
+      this._unknownCounts = counts;
     } catch (err) { /* integration not answering; the dashboard scan stands */ }
 
     return [...keys].sort();
@@ -4429,6 +4529,8 @@ class CharroRoomsEditor extends HTMLElement {
   /* -------------------------------------------------------------- form -- */
   _renderForm() {
     if (!this._room) return;
+    this._renderUnknowns();
+    this._renderRail();        // the rail's badge follows what you just fixed
     this._left.innerHTML = "";
 
     // ha-form handles everything except per-light overrides
@@ -5309,6 +5411,38 @@ class CharroRoomsEditor extends HTMLElement {
       this._prev = el;
     } catch (err) {
       this._prevWrap.textContent = String(err && err.message ? err.message : err);
+    }
+  }
+
+  /* --------------------------------------------------------- unknowns -- */
+  _renderUnknowns() {
+    if (!this._warn) return;
+    this._warn.innerHTML = "";
+    const bad = unknownEntities(this._room, this._hass);
+    if (this._key) {
+      this._unknownCounts = this._unknownCounts || {};
+      if (bad.length) this._unknownCounts[this._key] = bad.length;
+      else delete this._unknownCounts[this._key];
+    }
+    this._warn.hidden = !bad.length;
+    if (!bad.length) return;
+
+    const head = document.createElement("div");
+    head.className = "warnhd";
+    head.textContent = `${bad.length} entity id${bad.length > 1 ? "s" : ""} ` +
+      `Home Assistant doesn't have — renamed, removed, or a typo`;
+    this._warn.appendChild(head);
+
+    for (const row of bad) {
+      const line = document.createElement("div");
+      line.className = "warnrow";
+      const id = document.createElement("code");
+      id.textContent = row.id;
+      const where = document.createElement("span");
+      where.className = "warnwhere";
+      where.textContent = row.paths.join(", ");
+      line.append(id, where);
+      this._warn.appendChild(line);
     }
   }
 
