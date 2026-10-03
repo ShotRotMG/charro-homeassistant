@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.72.0";
+const VERSION = "4.73.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -739,6 +739,14 @@ function isGarage(entry, hass) {
   return !!(st && st.attributes && st.attributes.device_class === "garage");
 }
 
+/* The garages are a subset of alert_sensors, not a list of their own — which
+ * is why the room tile used to show an open garage twice: once as its own
+ * chip in the row, and again in the corner icon, which reads the whole of
+ * alert_sensors and draws a garage glyph for any open cover. The chip is
+ * gone from room-card.json for that reason, and because the subset relation
+ * holds by construction, the corner cannot miss anything the chip showed.
+ * The pop-up header keeps its garage chip: there is no corner icon there,
+ * so it is the only thing saying a door is open. */
 const garageSensors = (r, hass) =>
   (r.alert_sensors || []).filter((e) => isGarage(e, hass));
 const plainSensors = (r, hass) =>
