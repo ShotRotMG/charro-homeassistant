@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.70.0";
+const VERSION = "4.71.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5893,6 +5893,13 @@ const TAB_CSS = `
   --charro-surface-border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
   --charro-surface-blur: blur(24px) saturate(1.3);
   --charro-surface-radius: 14px;
+  /* The selected tab used to be a tint of --primary-color, which on this
+   * theme is indigo and read as a purple chip stuck to the bar. A darker,
+   * more solid version of the bar itself says "you are here" without
+   * introducing a colour the dashboard doesn't otherwise use. Mixing toward
+   * black rather than hard-coding a dark value keeps it right on a light
+   * theme too: 30% toward black still leaves dark label text readable. */
+  --charro-active-bg: color-mix(in srgb, var(--card-background-color, #1e1e1e) 70%, #000);
 }
 @media (max-width: 869px) {
   :host { --charro-dock-x: 50vw; }
@@ -5910,7 +5917,14 @@ const TAB_CSS = `
   backdrop-filter: var(--charro-surface-blur);
   border: var(--charro-surface-border);
   box-shadow: none;
+  /* a dashboard can outgrow the screen's width; the row scrolls rather than
+   * overflowing the dock or squashing the labels */
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+:host(:not([charro-edit])) ha-tab-group::part(tabs)::-webkit-scrollbar { display: none; }
+:host(:not([charro-edit])) ha-tab-group-tab { flex: 0 0 auto; }
 
 :host(:not([charro-edit])) ha-tab-group-tab::part(base) {
   display: flex;
@@ -5935,7 +5949,7 @@ const TAB_CSS = `
   color: var(--primary-text-color);
 }
 :host(:not([charro-edit])) ha-tab-group-tab[aria-selected="true"]::part(base) {
-  background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
+  background: var(--charro-active-bg);
   color: var(--primary-text-color);
   font-weight: 600;
 }
@@ -6040,19 +6054,22 @@ const TAB_CSS = `
   border: var(--charro-surface-border);
   box-shadow: none;
   transition: background 200ms ease, color 200ms ease;
-  /* sits off the dock's right edge, centred against its height; both are
-   * measured and published as custom properties because the dock's width
-   * depends on how many views the dashboard has */
-  bottom: calc(18px + (var(--charro-dock-h, 68px) - 44px) / 2 + env(safe-area-inset-bottom, 0px));
-  left: calc(var(--charro-dock-x) + var(--charro-dock-half, 170px) + 10px);
+  /* parked in the corner of the screen rather than tethered to the dock,
+   * so it stays put however many views the dashboard grows */
+  right: 12px;
+  left: auto;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 :host(:not([charro-edit])) #charro-extras-btn:hover { color: var(--primary-text-color); }
 :host([charro-extras]) #charro-extras-btn {
-  background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
+  background: var(--charro-active-bg);
   color: var(--primary-text-color);
 }
 /* While editing, the real toolbar is back; the dots would be a duplicate. */
 :host([charro-edit]) #charro-extras-btn { display: none; }
+/* Nothing behind the dots but the edit controls, so a viewer who can't edit
+ * gets a button that opens an empty row. Hidden for them instead. */
+:host([charro-noedit]) #charro-extras-btn { display: none; }
 
 
 /* ---- phones and tablets ------------------------------------------------
@@ -6089,8 +6106,12 @@ const TAB_CSS = `
     border-bottom: none;
     justify-content: space-around;
     background: var(--card-background-color, #1e1e1e);
-    /* right padding keeps the spread tabs clear of the dots */
-    padding: 4px 54px calc(4px + env(safe-area-inset-bottom, 0px)) 4px;
+    max-width: 100vw;
+    /* right padding keeps the spread tabs clear of the dots in the corner.
+     * The home-indicator inset is only partly honoured: taking all 34px of
+     * it pushed the labels noticeably up the screen, and the indicator is a
+     * thin overlay rather than something that needs full clearance. */
+    padding: 3px 54px calc(3px + env(safe-area-inset-bottom, 0px) * 0.55) 3px;
   }
   /* inside the bar now, so it carries no surface of its own */
   :host(:not([charro-edit])) #charro-extras-btn {
@@ -6105,7 +6126,10 @@ const TAB_CSS = `
   }
   /* the bar is shorter here, and sits on the edge rather than above it */
   :host(:not([charro-edit])) hui-view-container {
-    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+    /* the status bar overlays the web view, but the full inset left a band
+     * of empty photo above the first card — enough to clear it, no more */
+    padding-top: max(calc(env(safe-area-inset-top, 0px) - 14px), 0px);
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px) * 0.55);
   }
   /* the extras row clears the bar rather than the floating dock */
   :host(:not([charro-edit])[charro-extras]) .toolbar {
@@ -6168,16 +6192,16 @@ const DOTS_SVG =
 
 let _outsideHooked = false;
 
-/* The dots button's left edge is the dock's right edge, and the dock's width
- * depends on how many views the dashboard has — so it is measured rather
- * than assumed, and published for the stylesheet to position against. */
-function measureDock(sr, host) {
-  const grp = sr.querySelector("ha-tab-group");
-  if (!grp) return;
-  const b = grp.getBoundingClientRect();
-  if (!b.width) return;
-  host.style.setProperty("--charro-dock-half", b.width / 2 + "px");
-  host.style.setProperty("--charro-dock-h", b.height + "px");
+/* Home Assistant renders the edit pencil for admins only, and the row the
+ * dots reveal is that toolbar — so for anyone else the button would open an
+ * empty strip. Same condition, so the two agree. */
+function syncCanEdit(host) {
+  let admin = false;
+  try {
+    const hass = host.hass || (document.querySelector("home-assistant") || {}).hass;
+    admin = !!(hass && hass.user && hass.user.is_admin);
+  } catch (err) { admin = false; }
+  host.toggleAttribute("charro-noedit", !admin);
 }
 
 function mountExtras(sr, host) {
@@ -6191,7 +6215,6 @@ function mountExtras(sr, host) {
   const toggle = (ev) => {
     ev.stopPropagation();
     host.toggleAttribute("charro-extras");
-    if (host.hasAttribute("charro-extras")) measureDock(sr, host);
   };
   btn.addEventListener("click", toggle);
   btn.addEventListener("keydown", (ev) => {
@@ -6221,7 +6244,6 @@ function watchEditMode(sr, host) {
     const editing = wrap.classList.contains("edit-mode");
     host.toggleAttribute("charro-edit", editing);
     if (editing) host.removeAttribute("charro-extras");
-    measureDock(sr, host);
   };
   const obs = new MutationObserver(sync);
   obs.observe(wrap, { attributes: true, attributeFilter: ["class"] });
@@ -6251,7 +6273,7 @@ function paintTabs() {
    * retrigger the observer that called it. */
   const grp = sr.querySelector("ha-tab-group");
   if (grp && !grp.__charroObs) {
-    const obs = new MutationObserver(() => { stampTabLabels(sr); measureDock(sr, sr.host); });
+    const obs = new MutationObserver(() => stampTabLabels(sr));
     obs.observe(grp, {
       childList: true, subtree: true,
       attributes: true, attributeFilter: ["aria-label"],
@@ -6260,8 +6282,8 @@ function paintTabs() {
   }
 
   watchEditMode(sr, sr.host);
+  syncCanEdit(sr.host);
   mountExtras(sr, sr.host);
-  measureDock(sr, sr.host);
 }
 
 /* The bundle is evaluated in the app shell, which can be before the first
@@ -6282,18 +6304,6 @@ if (typeof window !== "undefined") {
   scheduleTabPaint();
   window.addEventListener("location-changed", scheduleTabPaint);
   window.addEventListener("popstate", scheduleTabPaint);
-  /* The 870px breakpoint changes the dock's height and width, so the dots
-   * have to be repositioned against it. Debounced, and paintTabs is a cache
-   * hit by then, so a drag costs one measurement at the end. */
-  let _rz;
-  window.addEventListener("resize", () => {
-    clearTimeout(_rz);
-    _rz = setTimeout(() => {
-      if (_huiRoot && _huiRoot.isConnected && _huiRoot.shadowRoot) {
-        measureDock(_huiRoot.shadowRoot, _huiRoot);
-      }
-    }, 150);
-  });
 }
 
 
