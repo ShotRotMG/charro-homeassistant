@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.63.0";
+const VERSION = "4.64.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5769,6 +5769,192 @@ class CharroRoomsPanel extends HTMLElement {
   }
 }
 def("charro-rooms-panel", CharroRoomsPanel);
+
+
+/* ========================================================= HEADER TABS == */
+/*
+ * Home Assistant draws the view tabs as 56px icon-only squares with a 1px
+ * underline under the active one, straight onto whatever is behind the
+ * header. On a dashboard with a background photo that means four grey icons
+ * floating on the picture and an active marker you have to look for. On a
+ * theme with no frosted panel behind the header it is worse still, which is
+ * where this started.
+ *
+ * What follows turns them into a floating glass capsule: a label under each
+ * icon, a filled pill on the active one, and a blurred surface so the strip
+ * reads against any photo. Three things make it safe to ship rather than a
+ * standing maintenance cost:
+ *
+ *   - It styles through `::part(nav)`, `::part(tabs)`, `::part(base)` and the
+ *     `--ha-tab-*` custom properties. Those are the component's public
+ *     styling API, not selectors scraped out of its shadow DOM.
+ *   - It is purely additive. If a future core renames `hui-root` or
+ *     `ha-tab-group`, findHuiRoot returns nothing, no style is injected, and
+ *     the tabs render exactly as they ship. The failure mode is "looks like
+ *     it used to", never a broken header.
+ *   - It touches nothing functional: routing, the menu button, the action
+ *     items and the hidden-view class are all left alone.
+ *
+ * Deliberately NOT built on the `--rgb-*` theme variables, which look like
+ * the obvious source and are a trap. Frosted Glass Dark reports
+ * `--rgb-primary-text-color: 33,33,33` while `--primary-text-color` is
+ * near-white, and `--rgb-primary-color` teal while `--primary-color` is
+ * indigo — they are copies a theme can forget to update, so a nav built on
+ * them is wrong on this theme and differently wrong on the next one.
+ * Everything below reads the plain variables and thins them with color-mix().
+ */
+
+const TAB_STYLE_ID = "charro-tabs";
+
+const TAB_CSS = `
+ha-tab-group {
+  --ha-tab-track-color: transparent;
+  --ha-tab-indicator-color: transparent;
+  --track-width: 0px;
+  --padding: 0px;
+  flex: 0 1 auto;
+  margin-inline-start: 8px;
+}
+ha-tab-group::part(nav) { border: none; }
+ha-tab-group::part(tabs) {
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 72%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
+  box-shadow: 0 2px 14px rgba(0,0,0,0.28);
+}
+ha-tab-group-tab::part(base) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 46px;
+  min-width: 66px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  line-height: 1;
+  color: var(--secondary-text-color);
+  transition: background 200ms ease, color 200ms ease;
+}
+ha-tab-group-tab ha-icon { --mdc-icon-size: 21px; }
+ha-tab-group-tab:not([aria-selected="true"]):hover::part(base) {
+  background: color-mix(in srgb, var(--primary-text-color, #fff) 9%, transparent);
+  color: var(--primary-text-color);
+}
+ha-tab-group-tab[aria-selected="true"]::part(base) {
+  background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
+  color: var(--primary-text-color);
+  font-weight: 600;
+}
+@media (max-width: 500px) {
+  ha-tab-group-tab::part(base) { min-width: 54px; padding: 0 6px; font-size: 9px; }
+  ha-tab-group-tab ha-icon { --mdc-icon-size: 19px; }
+}
+/* Only tabs Home Assistant rendered icon-only get a label added; a view with
+ * no icon already shows its title as text and must not get it twice. */
+ha-tab-group-tab.icon-only::part(base)::after { content: var(--charro-tab-label, ""); }
+`;
+
+let _huiRoot = null;
+
+/* hui-root sits several shadow roots down and the path to it is not stable
+ * enough to hard-code, so it is searched for — but only once per dashboard:
+ * it survives view changes, so the cache hits on every navigation inside a
+ * dashboard and the walk runs again only when one is torn down. The node
+ * budget is there so a panel that has no hui-root at all (Settings, HACS)
+ * costs a bounded scan rather than a full-document crawl. */
+function findHuiRoot() {
+  if (_huiRoot && _huiRoot.isConnected) return _huiRoot;
+  _huiRoot = null;
+  const seen = new Set();
+  const stack = [document];
+  let budget = 3000;
+  while (stack.length && budget > 0) {
+    const root = stack.pop();
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    const hit = root.querySelector && root.querySelector("hui-root");
+    if (hit) { _huiRoot = hit; return hit; }
+    if (!root.querySelectorAll) continue;
+    for (const el of root.querySelectorAll("*")) {
+      if (--budget <= 0) break;
+      if (el.shadowRoot) stack.push(el.shadowRoot);
+    }
+  }
+  return _huiRoot;
+}
+
+/* A ::part pseudo-element can't read an attribute off the host, so each tab
+ * is stamped with its own title as a custom property and the pseudo reads
+ * that back. Custom properties inherit through the shadow boundary, which is
+ * what makes this work without knowing anything about the tab's internals —
+ * and it means a view added or renamed later labels itself. */
+function stampTabLabels(sr) {
+  for (const t of sr.querySelectorAll("ha-tab-group-tab")) {
+    const want = JSON.stringify(t.getAttribute("aria-label") || "");
+    if (t.style.getPropertyValue("--charro-tab-label") !== want) {
+      t.style.setProperty("--charro-tab-label", want);
+    }
+  }
+}
+
+function paintTabs() {
+  if (window.CHARRO_NO_TAB_STYLE) return;
+  let sr;
+  try {
+    const root = findHuiRoot();
+    sr = root && root.shadowRoot;
+  } catch (err) { return; }
+  if (!sr) return;
+
+  if (!sr.getElementById(TAB_STYLE_ID)) {
+    const st = document.createElement("style");
+    st.id = TAB_STYLE_ID;
+    st.textContent = TAB_CSS;
+    sr.appendChild(st);
+  }
+  stampTabLabels(sr);
+
+  /* Views can be added, renamed or reordered without a navigation, so the
+   * group is watched. `style` is not in the filter, so the stamp below can't
+   * retrigger the observer that called it. */
+  const grp = sr.querySelector("ha-tab-group");
+  if (grp && !grp.__charroObs) {
+    const obs = new MutationObserver(() => stampTabLabels(sr));
+    obs.observe(grp, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: ["aria-label"],
+    });
+    grp.__charroObs = obs;
+  }
+}
+
+/* The bundle is evaluated in the app shell, which can be before the first
+ * dashboard has rendered — so a few backoff attempts, stopping as soon as
+ * hui-root is in hand. */
+function scheduleTabPaint() {
+  let tries = 0;
+  const tick = () => {
+    paintTabs();
+    if (++tries < 4 && !(_huiRoot && _huiRoot.isConnected)) {
+      setTimeout(tick, 300 * tries);
+    }
+  };
+  tick();
+}
+
+if (typeof window !== "undefined") {
+  scheduleTabPaint();
+  window.addEventListener("location-changed", scheduleTabPaint);
+  window.addEventListener("popstate", scheduleTabPaint);
+}
 
 
 /* ------------------------------------------------------------ registry -- */
