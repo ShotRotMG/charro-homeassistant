@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.61.0";
+const VERSION = "4.62.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -108,10 +108,18 @@ class CharroBase extends HTMLElement {
    * `hass` first arrives — starting it here overlaps the fetch with the rest
    * of the dashboard coming up instead of queueing behind it. */
   _loadTpl(config) {
+    /* Home Assistant calls setConfig before it sets hass, so a card whose
+     * template depends on entity state can't choose one yet. Returning null
+     * defers to _build, which runs with hass and picks correctly - starting
+     * the fetch early is only worth it when the answer can't change. */
+    if (!this._hass && this.templateNeedsHass()) return null;
     const name = this.templateName();
     if (!name && !(config && config.template_url)) return null;
     return loadTemplate(name, config && config.template_url).catch(() => null);
   }
+
+  /* Subclasses override when templateName() reads hass. */
+  templateNeedsHass() { return false; }
 
   // subclasses override
   templateName() { return ""; }
@@ -2082,6 +2090,13 @@ class CharroSecurityCard extends CharroBase {
     if (c.toggle_button) return "garage-card.json";
     if (c.garage !== undefined) return c.garage ? "garage-card.json" : "security-card.json";
     return isGarage(c, this._hass) ? "garage-card.json" : "security-card.json";
+  }
+
+  /* Only the last branch above looks at the entity's device_class; the other
+   * two are answerable from the config alone, so those keep the early fetch. */
+  templateNeedsHass() {
+    const c = this._config || {};
+    return !c.toggle_button && c.garage === undefined;
   }
 
   variables() {
