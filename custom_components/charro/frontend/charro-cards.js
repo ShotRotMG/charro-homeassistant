@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.65.0";
+const VERSION = "4.66.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5841,13 +5841,14 @@ ha-tab-group {
    * 128px apart. --ha-sidebar-width is Home Assistant's own variable for the
    * offset it gives the content area, so the dock tracks the sidebar being
    * expanded or collapsed. */
-  left: calc(var(--ha-sidebar-width, 0px) + (100vw - var(--ha-sidebar-width, 0px)) / 2);
+  left: var(--charro-dock-x);
   transform: translateX(-50%);
 }
 /* Below the sidebar's breakpoint it is an overlay rather than a column, so
  * the variable stops describing an offset and the window is the content. */
+:host { --charro-dock-x: calc(var(--ha-sidebar-width, 0px) + (100vw - var(--ha-sidebar-width, 0px)) / 2); }
 @media (max-width: 869px) {
-  ha-tab-group { left: 50%; }
+  :host { --charro-dock-x: 50vw; }
 }
 
 ha-tab-group::part(base) { height: auto; }
@@ -5904,6 +5905,97 @@ ha-tab-group-tab.icon-only::part(base)::after { content: var(--charro-tab-label,
 /* So the last row of cards can be scrolled clear of a dock that floats over
  * them: 68px of dock, 18px of gap, and room to breathe. */
 hui-view-container { padding-bottom: 110px; }
+
+
+/* ---- the top bar, and the dots that bring it back ---------------------
+ *
+ * The dock lives inside .header, so the bar can't simply be display:none —
+ * that would take the dock with it. Instead the header is emptied: nothing
+ * of it paints, and it stops catching clicks so the cards underneath are
+ * reachable through where it used to be. The box stays, holding the dock.
+ *
+ * Everything here is switched off while the dashboard is in edit mode. The
+ * edit toolbar is the same .action-items row, so hiding it there would take
+ * the Save button with it.
+ */
+:host(:not([charro-edit])) .header { background: none !important; pointer-events: none; }
+:host(:not([charro-edit])) .header::before { display: none !important; }
+:host(:not([charro-edit])) .toolbar > ha-menu-button,
+:host(:not([charro-edit])) .toolbar .main-title { display: none !important; }
+:host(:not([charro-edit])) .toolbar .action-items { display: none !important; }
+:host(:not([charro-edit])) ha-tab-group { pointer-events: auto; }
+
+/* Tapping the dots floats the real controls — Home Assistant's own add,
+ * search, assist and edit buttons, plus its overflow menu — just above the
+ * dock. Nothing is reimplemented and nothing is moved in the DOM; the row
+ * is simply positioned somewhere else. */
+:host(:not([charro-edit])[charro-extras]) .toolbar {
+  position: fixed;
+  top: auto;
+  z-index: 7;
+  height: 52px;
+  width: fit-content;
+  padding: 0 4px;
+  border-radius: 999px;
+  pointer-events: auto;
+  bottom: calc(102px + env(safe-area-inset-bottom, 0px));
+  /* centred with auto margins rather than translateX: a transform on this
+   * element would make it the containing block for the fixed dock nested
+   * inside it, and the dock would fly off to sit in this capsule */
+  left: var(--ha-sidebar-width, 0px);
+  right: 0;
+  margin-inline: auto;
+  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
+  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
+  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
+}
+@media (max-width: 869px) {
+  :host(:not([charro-edit])[charro-extras]) .toolbar { left: 0; }
+}
+:host(:not([charro-edit])[charro-extras]) .toolbar::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: 999px; pointer-events: none;
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+}
+/* Home Assistant only fills the menu button in when the sidebar is hidden,
+ * so on a phone this is the one way back to it. */
+:host(:not([charro-edit])[charro-extras]) .toolbar > ha-menu-button { display: block !important; }
+:host(:not([charro-edit])[charro-extras]) .toolbar .action-items {
+  display: flex !important;
+  align-items: center;
+}
+
+#charro-extras-btn {
+  position: fixed;
+  z-index: 7;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--secondary-text-color);
+  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
+  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
+  transition: background 200ms ease, color 200ms ease;
+  /* sits off the dock's right edge, centred against its height; both are
+   * measured and published as custom properties because the dock's width
+   * depends on how many views the dashboard has */
+  bottom: calc(18px + (var(--charro-dock-h, 68px) - 44px) / 2 + env(safe-area-inset-bottom, 0px));
+  left: calc(var(--charro-dock-x) + var(--charro-dock-half, 170px) + 10px);
+}
+#charro-extras-btn:hover { color: var(--primary-text-color); }
+:host([charro-extras]) #charro-extras-btn {
+  background: color-mix(in srgb, var(--primary-color, #6a74d3) 32%, transparent);
+  color: var(--primary-text-color);
+}
+/* While editing, the real toolbar is back; the dots would be a duplicate. */
+:host([charro-edit]) #charro-extras-btn { display: none; }
 `;
 
 let _huiRoot = null;
@@ -5949,6 +6041,78 @@ function stampTabLabels(sr) {
   }
 }
 
+const EXTRAS_BTN_ID = "charro-extras-btn";
+
+/* mdi:dots-vertical, inlined — the dock shouldn't wait on the icon set */
+const DOTS_SVG =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" ' +
+  'd="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 ' +
+  '14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 ' +
+  '0 0,1 10,6A2,2 0 0,1 12,4Z"/></svg>';
+
+let _outsideHooked = false;
+
+/* The dots button's left edge is the dock's right edge, and the dock's width
+ * depends on how many views the dashboard has — so it is measured rather
+ * than assumed, and published for the stylesheet to position against. */
+function measureDock(sr, host) {
+  const grp = sr.querySelector("ha-tab-group");
+  if (!grp) return;
+  const b = grp.getBoundingClientRect();
+  if (!b.width) return;
+  host.style.setProperty("--charro-dock-half", b.width / 2 + "px");
+  host.style.setProperty("--charro-dock-h", b.height + "px");
+}
+
+function mountExtras(sr, host) {
+  if (sr.getElementById(EXTRAS_BTN_ID)) return;
+  const btn = document.createElement("div");
+  btn.id = EXTRAS_BTN_ID;
+  btn.setAttribute("role", "button");
+  btn.setAttribute("tabindex", "0");
+  btn.setAttribute("aria-label", "More");
+  btn.innerHTML = DOTS_SVG;
+  const toggle = (ev) => {
+    ev.stopPropagation();
+    host.toggleAttribute("charro-extras");
+    if (host.hasAttribute("charro-extras")) measureDock(sr, host);
+  };
+  btn.addEventListener("click", toggle);
+  btn.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(ev); }
+  });
+  sr.appendChild(btn);
+
+  /* Anything else tapped — a card, one of the buttons that just floated up,
+   * the background — puts the row away again. The dots stop propagation, so
+   * they toggle rather than close-then-open. Hooked once per page, not per
+   * dashboard, or switching dashboards would stack listeners. */
+  if (!_outsideHooked) {
+    _outsideHooked = true;
+    document.addEventListener("click", () => {
+      if (_huiRoot && _huiRoot.isConnected) _huiRoot.removeAttribute("charro-extras");
+    });
+  }
+}
+
+/* Edit mode puts the real toolbar back. It is the same .action-items row
+ * this hides, so leaving it hidden there would hide the Save button with
+ * it — everything above switches off while the wrapper carries .edit-mode. */
+function watchEditMode(sr, host) {
+  const wrap = sr.querySelector("div");
+  if (!wrap || wrap.__charroEdit) return;
+  const sync = () => {
+    const editing = wrap.classList.contains("edit-mode");
+    host.toggleAttribute("charro-edit", editing);
+    if (editing) host.removeAttribute("charro-extras");
+    measureDock(sr, host);
+  };
+  const obs = new MutationObserver(sync);
+  obs.observe(wrap, { attributes: true, attributeFilter: ["class"] });
+  wrap.__charroEdit = obs;
+  sync();
+}
+
 function paintTabs() {
   if (window.CHARRO_NO_TAB_STYLE) return;
   let sr;
@@ -5971,13 +6135,17 @@ function paintTabs() {
    * retrigger the observer that called it. */
   const grp = sr.querySelector("ha-tab-group");
   if (grp && !grp.__charroObs) {
-    const obs = new MutationObserver(() => stampTabLabels(sr));
+    const obs = new MutationObserver(() => { stampTabLabels(sr); measureDock(sr, sr.host); });
     obs.observe(grp, {
       childList: true, subtree: true,
       attributes: true, attributeFilter: ["aria-label"],
     });
     grp.__charroObs = obs;
   }
+
+  watchEditMode(sr, sr.host);
+  mountExtras(sr, sr.host);
+  measureDock(sr, sr.host);
 }
 
 /* The bundle is evaluated in the app shell, which can be before the first
@@ -5998,6 +6166,18 @@ if (typeof window !== "undefined") {
   scheduleTabPaint();
   window.addEventListener("location-changed", scheduleTabPaint);
   window.addEventListener("popstate", scheduleTabPaint);
+  /* The 870px breakpoint changes the dock's height and width, so the dots
+   * have to be repositioned against it. Debounced, and paintTabs is a cache
+   * hit by then, so a drag costs one measurement at the end. */
+  let _rz;
+  window.addEventListener("resize", () => {
+    clearTimeout(_rz);
+    _rz = setTimeout(() => {
+      if (_huiRoot && _huiRoot.isConnected && _huiRoot.shadowRoot) {
+        measureDock(_huiRoot.shadowRoot, _huiRoot);
+      }
+    }, 150);
+  });
 }
 
 
