@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.73.0";
+const VERSION = "4.74.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5994,7 +5994,17 @@ const TAB_CSS = `
  * edit toolbar is the same .action-items row, so hiding it there would take
  * the Save button with it.
  */
-:host(:not([charro-edit])) .header { background: none !important; pointer-events: none; }
+:host(:not([charro-edit])) .header {
+  background: none !important;
+  pointer-events: none;
+  /* Home Assistant gives the header a drop shadow once content scrolls
+   * under it (:host([scrolled]) .header). The bar itself is invisible, so
+   * all that lands on screen is the shadow: a hairline across the top at
+   * the header's lower edge — which on a phone is 56px plus the status-bar
+   * inset, not 56px. This theme happens to define --bar-box-shadow as
+   * transparent, so it costs nothing here, but another theme's wouldn't. */
+  box-shadow: none !important;
+}
 :host(:not([charro-edit])) .header::before { display: none !important; }
 :host(:not([charro-edit])) .toolbar > ha-menu-button,
 :host(:not([charro-edit])) .toolbar .main-title { display: none !important; }
@@ -6012,24 +6022,25 @@ const TAB_CSS = `
   position: fixed;
   top: auto;
   z-index: 7;
-  height: 52px;
-  width: fit-content;
-  padding: 0 4px;
+  height: auto;
+  width: auto;
+  padding: 4px;
   border-radius: var(--charro-surface-radius);
   pointer-events: auto;
-  bottom: calc(102px + env(safe-area-inset-bottom, 0px));
-  /* centred with auto margins rather than translateX: a transform on this
-   * element would make it the containing block for the fixed dock nested
-   * inside it, and the dock would fly off to sit in this capsule */
-  left: var(--ha-sidebar-width, 0px);
-  right: 0;
-  margin-inline: auto;
+  /* Opens upward out of the dots rather than floating over the middle of
+   * the dashboard: stacked, right edges aligned with the button, sitting
+   * just above it, so it reads as that button's menu.
+   * Still no transform — one here would make this the containing block for
+   * the fixed dock nested inside it, and the dock would fly up into it. */
+  left: auto;
+  right: 12px;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 2px;
   background: var(--charro-surface-bg);
   border: var(--charro-surface-border);
   box-shadow: none;
-}
-@media (max-width: 869px) {
-  :host(:not([charro-edit])[charro-extras]) .toolbar { left: 0; }
 }
 :host(:not([charro-edit])[charro-extras]) .toolbar::before {
   content: ""; position: absolute; inset: 0; z-index: -1;
@@ -6042,7 +6053,9 @@ const TAB_CSS = `
 :host(:not([charro-edit])[charro-extras]) .toolbar > ha-menu-button { display: block !important; }
 :host(:not([charro-edit])[charro-extras]) .toolbar .action-items {
   display: flex !important;
+  flex-direction: column-reverse;
   align-items: center;
+  gap: 2px;
 }
 
 :host(:not([charro-edit])) #charro-extras-btn {
@@ -6136,10 +6149,6 @@ const TAB_CSS = `
      * of empty photo above the first card — enough to clear it, no more */
     padding-top: max(calc(env(safe-area-inset-top, 0px) - 14px), 0px);
     padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px) * 0.55);
-  }
-  /* the extras row clears the bar rather than the floating dock */
-  :host(:not([charro-edit])[charro-extras]) .toolbar {
-    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
   }
 }
 `;
