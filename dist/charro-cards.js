@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.67.0";
+const VERSION = "4.68.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1760,10 +1760,27 @@ class RoomPopup {
     this.el.style.setProperty("--charro-pop-w", px);
   }
 
+  /* Closing is normally a history.back(), so the close button and the
+   * browser's back button agree and the hash stays the thing in charge.
+   *
+   * That assumes something is behind the pop-up, which is false whenever the
+   * app is opened straight onto one — reopen Home Assistant while a room was
+   * showing and it restores the URL hash and all. There the back entry
+   * either doesn't exist, so back() silently does nothing and the pop-up
+   * can't be closed at all, or it belongs to whatever the tab was showing
+   * beforehand, so back() leaves Home Assistant entirely. Both have been
+   * seen; the first is what made a reopened pop-up a dead end.
+   *
+   * _hashDepth counts the pop-up entries this session actually pushed, so
+   * back() is only used when there is one of ours to unwind. With none, the
+   * hash is dropped where it stands: the pop-up closes, the dashboard is
+   * underneath, and nothing navigates. Opening straight to a pop-up keeps
+   * working — that is the point — it just stops being a one-way door. */
   dismiss() {
-    // let the hash drive it, so the back button and the close button agree
-    if (location.hash === this.hash) history.back();
-    else this.close();
+    if (location.hash !== this.hash) { this.close(); return; }
+    if (_hashDepth > 0) { history.back(); return; }
+    history.replaceState(null, "", location.pathname + location.search);
+    _syncHash();
   }
   close() {
     if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
@@ -1780,6 +1797,11 @@ class RoomPopup {
 
 let _hashWired = false;
 let _syncHash = () => {};
+
+/* How many pop-up history entries this page pushed and hasn't walked back
+ * out of yet. Only our own pushes count: an entry that was already there
+ * when the page loaded is not ours to unwind. */
+let _hashDepth = 0;
 function wireRoomHash() {
   if (_hashWired) return;
   _hashWired = true;
@@ -1794,6 +1816,15 @@ function wireRoomHash() {
   for (const ev of ["hashchange", "location-changed", "popstate"])
     window.addEventListener(ev, sync);
 
+  /* A popstate means one entry was walked back out of — ours or the user's
+   * own back button, which should both decrement. It floors at zero so that
+   * a forward navigation, which puts back an entry we never counted, can
+   * only ever make dismiss() too cautious: it drops the hash in place
+   * instead of stepping back. Closing still works; nothing leaves the app. */
+  window.addEventListener("popstate", () => {
+    if (_hashDepth > 0) _hashDepth--;
+  });
+
   // A tap on a room tile is history.pushState. That fires no hashchange, and
   // the location-changed event it should raise doesn't always reach window —
   // which is why the panel only appeared after a reload. Watch the call.
@@ -1801,7 +1832,10 @@ function wireRoomHash() {
     const orig = history[m];
     if (typeof orig === "function" && !orig.__charro) {
       const wrapped = function (...args) {
+        const was = location.hash;
         const out = orig.apply(this, args);
+        // replaceState swaps the current entry rather than adding one
+        if (m === "pushState" && location.hash !== was) _hashDepth++;
         setTimeout(sync, 0);
         return out;
       };
