@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.68.0";
+const VERSION = "4.69.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5881,6 +5881,19 @@ const TAB_CSS = `
 /* Below the sidebar's breakpoint it is an overlay rather than a column, so
  * the variable stops describing an offset and the window is the content. */
 :host { --charro-dock-x: calc(var(--ha-sidebar-width, 0px) + (100vw - var(--ha-sidebar-width, 0px)) / 2); }
+
+/* The dock, the dots and the extras row are the dashboard's own card
+ * surface, described once. room-card.json gives a room tile a 14px radius,
+ * no shadow and no background of its own — it just takes the theme's card
+ * colour — so these do the same and read as part of the same family rather
+ * than a control panel bolted underneath. The blur is a little heavier than
+ * a card's because these float over the photo with nothing behind them. */
+:host {
+  --charro-surface-bg: var(--ha-card-background, var(--card-background-color, #1e1e1e));
+  --charro-surface-border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
+  --charro-surface-blur: blur(24px) saturate(1.3);
+  --charro-surface-radius: 14px;
+}
 @media (max-width: 869px) {
   :host { --charro-dock-x: 50vw; }
 }
@@ -5891,12 +5904,12 @@ const TAB_CSS = `
 :host(:not([charro-edit])) ha-tab-group::part(tabs) {
   gap: 2px;
   padding: 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  backdrop-filter: blur(22px) saturate(1.4);
-  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
-  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
+  border-radius: var(--charro-surface-radius);
+  background: var(--charro-surface-bg);
+  -webkit-backdrop-filter: var(--charro-surface-blur);
+  backdrop-filter: var(--charro-surface-blur);
+  border: var(--charro-surface-border);
+  box-shadow: none;
 }
 
 :host(:not([charro-edit])) ha-tab-group-tab::part(base) {
@@ -5908,7 +5921,7 @@ const TAB_CSS = `
   height: 50px;
   min-width: 64px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: 10px;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.3px;
@@ -5938,7 +5951,14 @@ const TAB_CSS = `
 
 /* So the last row of cards can be scrolled clear of a dock that floats over
  * them: 68px of dock, 18px of gap, and room to breathe. */
-:host(:not([charro-edit])) hui-view-container { padding-bottom: 110px; }
+/* Home Assistant reserves the header's 56px at the top of the view. With
+ * the bar gone that is a blank band above the first card while the last one
+ * disappears under the dock, so the space moves to the end where the dock
+ * actually is. */
+:host(:not([charro-edit])) hui-view-container {
+  padding-top: 0;
+  padding-bottom: calc(118px + env(safe-area-inset-bottom, 0px));
+}
 
 
 /* ---- the top bar, and the dots that bring it back ---------------------
@@ -5958,6 +5978,9 @@ const TAB_CSS = `
 :host(:not([charro-edit])) .toolbar .main-title { display: none !important; }
 :host(:not([charro-edit])) .toolbar .action-items { display: none !important; }
 :host(:not([charro-edit])) ha-tab-group { pointer-events: auto; }
+/* the toolbar's divider — a thin light line straight across the top of a
+ * bar that is otherwise no longer drawn */
+:host(:not([charro-edit])) .toolbar { border-bottom: none !important; }
 
 /* Tapping the dots floats the real controls — Home Assistant's own add,
  * search, assist and edit buttons, plus its overflow menu — just above the
@@ -5970,7 +5993,7 @@ const TAB_CSS = `
   height: 52px;
   width: fit-content;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--charro-surface-radius);
   pointer-events: auto;
   bottom: calc(102px + env(safe-area-inset-bottom, 0px));
   /* centred with auto margins rather than translateX: a transform on this
@@ -5979,18 +6002,18 @@ const TAB_CSS = `
   left: var(--ha-sidebar-width, 0px);
   right: 0;
   margin-inline: auto;
-  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
-  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
-  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
+  background: var(--charro-surface-bg);
+  border: var(--charro-surface-border);
+  box-shadow: none;
 }
 @media (max-width: 869px) {
   :host(:not([charro-edit])[charro-extras]) .toolbar { left: 0; }
 }
 :host(:not([charro-edit])[charro-extras]) .toolbar::before {
   content: ""; position: absolute; inset: 0; z-index: -1;
-  border-radius: 999px; pointer-events: none;
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  backdrop-filter: blur(22px) saturate(1.4);
+  border-radius: var(--charro-surface-radius); pointer-events: none;
+  -webkit-backdrop-filter: var(--charro-surface-blur);
+  backdrop-filter: var(--charro-surface-blur);
 }
 /* Home Assistant only fills the menu button in when the sidebar is hidden,
  * so on a phone this is the one way back to it. */
@@ -6005,17 +6028,17 @@ const TAB_CSS = `
   z-index: 7;
   width: 44px;
   height: 44px;
-  border-radius: 999px;
+  border-radius: var(--charro-surface-radius);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   color: var(--secondary-text-color);
-  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  backdrop-filter: blur(22px) saturate(1.4);
-  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
-  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
+  background: var(--charro-surface-bg);
+  -webkit-backdrop-filter: var(--charro-surface-blur);
+  backdrop-filter: var(--charro-surface-blur);
+  border: var(--charro-surface-border);
+  box-shadow: none;
   transition: background 200ms ease, color 200ms ease;
   /* sits off the dock's right edge, centred against its height; both are
    * measured and published as custom properties because the dock's width
