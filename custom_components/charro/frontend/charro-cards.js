@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.69.0";
+const VERSION = "4.70.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5956,7 +5956,7 @@ const TAB_CSS = `
  * disappears under the dock, so the space moves to the end where the dock
  * actually is. */
 :host(:not([charro-edit])) hui-view-container {
-  padding-top: 0;
+  padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: calc(118px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -6053,6 +6053,65 @@ const TAB_CSS = `
 }
 /* While editing, the real toolbar is back; the dots would be a duplicate. */
 :host([charro-edit]) #charro-extras-btn { display: none; }
+
+
+/* ---- phones and tablets ------------------------------------------------
+ *
+ * A floating pill works on a desk, where there is room around it and a
+ * cursor to aim with. On a phone it sits in the middle of the screen with
+ * cards visible down both sides and sliding behind it, which reads as a
+ * card that happens to be on top rather than as the navigation — and it is
+ * a long way from the thumb.
+ *
+ * So below the breakpoint it becomes what a phone expects: a full-width bar
+ * on the bottom edge, tabs spread across it, the dots tucked into the right
+ * end rather than floating beside it. It takes --card-background-color
+ * rather than the near-transparent card surface, so content passing
+ * underneath doesn't show through it.
+ *
+ * These come last in the stylesheet on purpose: they share specificity with
+ * the desktop rules above, so order is what decides them.
+ */
+@media (max-width: 869px) {
+  :host(:not([charro-edit])) ha-tab-group {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    transform: none;
+  }
+  :host(:not([charro-edit])) ha-tab-group::part(base),
+  :host(:not([charro-edit])) ha-tab-group::part(nav) { width: 100%; }
+  :host(:not([charro-edit])) ha-tab-group::part(tabs) {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    justify-content: space-around;
+    background: var(--card-background-color, #1e1e1e);
+    /* right padding keeps the spread tabs clear of the dots */
+    padding: 4px 54px calc(4px + env(safe-area-inset-bottom, 0px)) 4px;
+  }
+  /* inside the bar now, so it carries no surface of its own */
+  :host(:not([charro-edit])) #charro-extras-btn {
+    left: auto;
+    right: 4px;
+    bottom: calc(5px + env(safe-area-inset-bottom, 0px));
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* the bar is shorter here, and sits on the edge rather than above it */
+  :host(:not([charro-edit])) hui-view-container {
+    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+  }
+  /* the extras row clears the bar rather than the floating dock */
+  :host(:not([charro-edit])[charro-extras]) .toolbar {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}
 `;
 
 let _huiRoot = null;
