@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.64.0";
+const VERSION = "4.65.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5780,10 +5780,12 @@ def("charro-rooms-panel", CharroRoomsPanel);
  * theme with no frosted panel behind the header it is worse still, which is
  * where this started.
  *
- * What follows turns them into a floating glass capsule: a label under each
- * icon, a filled pill on the active one, and a blurred surface so the strip
- * reads against any photo. Three things make it safe to ship rather than a
- * standing maintenance cost:
+ * What follows lifts them out of the header entirely and floats them as a
+ * dock along the bottom of the screen: a label under each icon, a filled
+ * pill on the active one, and a blurred surface so the strip reads against
+ * any photo. In the header the capsule read as a bar inside a bar, and the
+ * tabs are easier to hit at the bottom on a phone anyway. Three things make
+ * it safe to ship rather than a standing maintenance cost:
  *
  *   - It styles through `::part(nav)`, `::part(tabs)`, `::part(base)` and the
  *     `--ha-tab-*` custom properties. Those are the component's public
@@ -5807,34 +5809,70 @@ def("charro-rooms-panel", CharroRoomsPanel);
 const TAB_STYLE_ID = "charro-tabs";
 
 const TAB_CSS = `
+/* An element with backdrop-filter becomes the containing block for its
+ * position:fixed descendants, and .header has one — so a fixed tab strip
+ * inside it is pinned to a 56px band at the top of the screen and can never
+ * reach the bottom. Moving that blur to a pseudo-element keeps the header
+ * looking identical (its own background is near-transparent on a glass
+ * theme, so without the blur the action icons would sit raw on the photo)
+ * while letting the dock below escape to the viewport. */
+.header { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.header::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+}
+
 ha-tab-group {
   --ha-tab-track-color: transparent;
   --ha-tab-indicator-color: transparent;
   --track-width: 0px;
   --padding: 0px;
-  flex: 0 1 auto;
-  margin-inline-start: 8px;
+  position: fixed;
+  z-index: 6;
+  margin: 0;
+  /* top and height are both set by the component, and a fixed box with top
+   * AND bottom stretches between them — which made the dock the full height
+   * of the window with a 68px strip at the bottom of it. */
+  top: auto !important;
+  height: auto !important;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  /* Centred on the content, not the window: with the sidebar open those are
+   * 128px apart. --ha-sidebar-width is Home Assistant's own variable for the
+   * offset it gives the content area, so the dock tracks the sidebar being
+   * expanded or collapsed. */
+  left: calc(var(--ha-sidebar-width, 0px) + (100vw - var(--ha-sidebar-width, 0px)) / 2);
+  transform: translateX(-50%);
 }
+/* Below the sidebar's breakpoint it is an overlay rather than a column, so
+ * the variable stops describing an offset and the window is the content. */
+@media (max-width: 869px) {
+  ha-tab-group { left: 50%; }
+}
+
+ha-tab-group::part(base) { height: auto; }
+ha-tab-group::part(body) { display: none; }   /* the empty tab panel */
 ha-tab-group::part(nav) { border: none; }
 ha-tab-group::part(tabs) {
   gap: 2px;
-  padding: 4px;
+  padding: 5px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 72%, transparent);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  backdrop-filter: blur(20px) saturate(1.4);
+  background: color-mix(in srgb, var(--card-background-color, #1e1e1e) 78%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
   border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
-  box-shadow: 0 2px 14px rgba(0,0,0,0.28);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.38);
 }
+
 ha-tab-group-tab::part(base) {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  height: 46px;
-  min-width: 66px;
-  padding: 0 12px;
+  gap: 3px;
+  height: 50px;
+  min-width: 64px;
+  padding: 0 10px;
   border-radius: 999px;
   font-size: 10px;
   font-weight: 500;
@@ -5843,7 +5881,7 @@ ha-tab-group-tab::part(base) {
   color: var(--secondary-text-color);
   transition: background 200ms ease, color 200ms ease;
 }
-ha-tab-group-tab ha-icon { --mdc-icon-size: 21px; }
+ha-tab-group-tab ha-icon { --mdc-icon-size: 22px; }
 ha-tab-group-tab:not([aria-selected="true"]):hover::part(base) {
   background: color-mix(in srgb, var(--primary-text-color, #fff) 9%, transparent);
   color: var(--primary-text-color);
@@ -5853,13 +5891,19 @@ ha-tab-group-tab[aria-selected="true"]::part(base) {
   color: var(--primary-text-color);
   font-weight: 600;
 }
-@media (max-width: 500px) {
-  ha-tab-group-tab::part(base) { min-width: 54px; padding: 0 6px; font-size: 9px; }
-  ha-tab-group-tab ha-icon { --mdc-icon-size: 19px; }
+/* Desktop and iPad have the room for a bigger target and bigger glyphs. */
+@media (min-width: 870px) {
+  ha-tab-group-tab::part(base) { height: 58px; min-width: 84px; font-size: 11px; gap: 4px; }
+  ha-tab-group-tab ha-icon { --mdc-icon-size: 27px; }
 }
+
 /* Only tabs Home Assistant rendered icon-only get a label added; a view with
  * no icon already shows its title as text and must not get it twice. */
 ha-tab-group-tab.icon-only::part(base)::after { content: var(--charro-tab-label, ""); }
+
+/* So the last row of cards can be scrolled clear of a dock that floats over
+ * them: 68px of dock, 18px of gap, and room to breathe. */
+hui-view-container { padding-bottom: 110px; }
 `;
 
 let _huiRoot = null;
