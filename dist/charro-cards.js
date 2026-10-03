@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.60.0";
+const VERSION = "4.61.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1290,12 +1290,36 @@ function listNames(rows) {
 /* The same chips the room tile shows, described in one place so the pop-up
  * header and the tile can't drift apart on colour or meaning. Each is only
  * produced when it has something to say, and carries what a tap should do. */
-const CHIP_AMBER  = ["rgba(255,193,7,0.22)", "var(--state-light-active-color, #ffc107)"];
-const CHIP_GREEN  = ["rgba(76,175,80,0.22)", "#4caf50"];
-const CHIP_BLUE   = ["rgba(33,150,243,0.22)", "#2196f3"];
-const CHIP_PURPLE = ["rgba(156,39,176,0.22)", "#ce93d8"];
-const CHIP_ORANGE = ["rgba(255,152,0,0.22)", "#ffb74d"];
-const CHIP_RED    = ["rgba(244,67,54,0.20)", "#ef5350"];
+/* THE chip palette. The tile draws its chips from room-card.json and the
+ * pop-up header draws them from roomChips() below, which is two renderers
+ * and was two sets of colours: the garage chip sat at 0.22 on the tile and
+ * 0.20 in the header, now-playing the other way round, the projector was
+ * sky on one and blue on the other, and the thermostat ran a whole set of
+ * 0.18 alphas of its own. The template no longer carries any colour: it is
+ * handed this object as `variables.pal` and reads it, so there is exactly
+ * one place to change a chip colour and no way for the two to disagree. */
+const CHIP_PAL = {
+  amber:  { bg: "rgba(255,193,7,0.22)",   fg: "var(--state-light-active-color, #ffc107)" },
+  green:  { bg: "rgba(76,175,80,0.22)",   fg: "var(--green-color, #4caf50)" },
+  blue:   { bg: "rgba(33,150,243,0.22)",  fg: "#2196f3" },
+  sky:    { bg: "rgba(3,169,244,0.22)",   fg: "#03a9f4" },
+  purple: { bg: "rgba(156,39,176,0.22)",  fg: "#ce93d8" },
+  violet: { bg: "rgba(179,136,255,0.22)", fg: "#b388ff" },
+  orange: { bg: "rgba(255,152,0,0.22)",   fg: "#ffb74d" },
+  red:    { bg: "rgba(244,67,54,0.22)",   fg: "#ef5350" },
+  off:    { bg: "transparent",            fg: "var(--disabled-text-color)" },
+};
+
+const pal = (name) => [CHIP_PAL[name].bg, CHIP_PAL[name].fg];
+
+const CHIP_AMBER  = pal("amber");
+const CHIP_GREEN  = pal("green");
+const CHIP_BLUE   = pal("blue");
+const CHIP_SKY    = pal("sky");
+const CHIP_PURPLE = pal("purple");
+const CHIP_VIOLET = pal("violet");
+const CHIP_ORANGE = pal("orange");
+const CHIP_RED    = pal("red");
 /* Elk zones say "Violated"; covers say "open"; binary sensors say "on" */
 const OPENISH = ["violated", "on", "open", "opening"];
 
@@ -1394,8 +1418,8 @@ function roomChips(r, hass) {
 
   for (const [key, icon, col, label] of [
     ["tv_entity", "mdi:television", CHIP_ORANGE, "TV"],
-    ["projector_entity", "mdi:projector", CHIP_BLUE, "Projector"],
-    ["receiver_entity", "mdi:audio-video", CHIP_PURPLE, "Receiver"],
+    ["projector_entity", "mdi:projector", CHIP_SKY, "Projector"],
+    ["receiver_entity", "mdi:audio-video", CHIP_VIOLET, "Receiver"],
   ]) {
     const id = r[key];
     const st = id && hass.states[id];
@@ -1942,6 +1966,9 @@ class CharroRoomCard extends CharroBase {
       tv_entity: c.tv_entity || "",
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
+      // the tile's chips read their colours from here, so they cannot drift
+      // from the pop-up header's
+      pal: CHIP_PAL,
     };
     // a light may be {entity, name, dim} in rooms.json; the tile wants ids
     // the tile's chips both count and switch off, so both skip the doubles

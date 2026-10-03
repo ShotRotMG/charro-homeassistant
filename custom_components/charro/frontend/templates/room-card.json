@@ -88,7 +88,7 @@
         "justify-self": "start"
       },
       {
-        "color": "[[[\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--primary-text-color)';\n]]]\n"
+        "color": "[[[\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : 'var(--primary-text-color)';\n]]]"
       }
     ],
     "name": [
@@ -161,7 +161,7 @@
           "font-weight": "700"
         },
         {
-          "color": "#f44336"
+          "color": "[[[ return variables.pal.red.fg ]]]"
         },
         {
           "white-space": "nowrap"
@@ -419,7 +419,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(255,193,7,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.bg : variables.pal.off.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -444,7 +444,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : variables.pal.off.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -493,7 +493,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(255,193,7,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.bg : variables.pal.off.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -518,7 +518,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--state-light-active-color, #ffc107)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : variables.pal.off.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -567,7 +567,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(76,175,80,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.bg : variables.pal.off.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -592,7 +592,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--green-color, #4caf50)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.fg : variables.pal.off.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -641,7 +641,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'rgba(76,175,80,0.22)' : 'transparent';\n]]]\n"
+                    "background": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.bg : variables.pal.off.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -666,7 +666,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? 'var(--green-color, #4caf50)' : 'var(--disabled-text-color)';\n]]]\n"
+                    "color": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.fg : variables.pal.off.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -718,7 +718,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? 'rgba(33,150,243,0.22)' : 'transparent'; ]]]"
+                    "background": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.bg : variables.pal.off.bg; ]]]"
                   }
                 ],
                 "icon": [
@@ -729,7 +729,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? '#2196f3' : 'var(--disabled-text-color)'; ]]]"
+                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.fg : variables.pal.off.fg; ]]]"
                   }
                 ],
                 "grid": [
@@ -757,7 +757,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? '#2196f3' : 'var(--disabled-text-color)'; ]]]"
+                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.fg : variables.pal.off.fg; ]]]"
                   }
                 ]
               },
@@ -774,7 +774,7 @@
               "show_icon": true,
               "show_name": true,
               "icon": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'cool') return 'mdi:snowflake';\n  if (s === 'heat') return 'mdi:fire';\n  if (s === 'heat_cool') return 'mdi:sun-snowflake-variant';\n  return 'mdi:thermostat';\n]]]\n",
-              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}\u00b0` : '';\n]]]\n",
+              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}°` : '';\n]]]\n",
               "tap_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.climate_entity ]]]"
@@ -794,7 +794,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'transparent';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return 'rgba(33,150,243,0.18)';\n  if (act === 'heating') return 'rgba(244,67,54,0.18)';\n  if (act === 'idle' || act === 'fan') return 'rgba(76,175,80,0.18)';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? 'rgba(76,175,80,0.18)' : 'rgba(33,150,243,0.18)';\n  if (s === 'heat') return (known && cur >= set) ? 'rgba(76,175,80,0.18)' : 'rgba(244,67,54,0.18)';\n  if (s === 'heat_cool') return 'rgba(156,39,176,0.18)';\n  return 'transparent';\n]]]"
+                    "background": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.bg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.bg;\n  if (act === 'heating') return variables.pal.red.bg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.bg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.bg : variables.pal.blue.bg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.bg : variables.pal.red.bg;\n  if (s === 'heat_cool') return variables.pal.purple.bg;\n  return variables.pal.off.bg;\n]]]"
                   }
                 ],
                 "grid": [
@@ -819,7 +819,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'var(--disabled-text-color)';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return '#2196f3';\n  if (act === 'heating') return '#f44336';\n  if (act === 'idle' || act === 'fan') return '#4caf50';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? '#4caf50' : '#2196f3';\n  if (s === 'heat') return (known && cur >= set) ? '#4caf50' : '#f44336';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]"
+                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.fg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.fg;\n  if (act === 'heating') return variables.pal.red.fg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.fg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.fg : variables.pal.blue.fg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.fg : variables.pal.red.fg;\n  if (s === 'heat_cool') return variables.pal.purple.fg;\n  return variables.pal.off.fg;\n]]]"
                   }
                 ],
                 "name": [
@@ -833,7 +833,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return 'var(--disabled-text-color)';\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return '#2196f3';\n  if (act === 'heating') return '#f44336';\n  if (act === 'idle' || act === 'fan') return '#4caf50';\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? '#4caf50' : '#2196f3';\n  if (s === 'heat') return (known && cur >= set) ? '#4caf50' : '#f44336';\n  if (s === 'heat_cool') return '#9c27b0';\n  return 'var(--disabled-text-color)';\n]]]"
+                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.fg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.fg;\n  if (act === 'heating') return variables.pal.red.fg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.fg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.fg : variables.pal.blue.fg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.fg : variables.pal.red.fg;\n  if (s === 'heat_cool') return variables.pal.purple.fg;\n  return variables.pal.off.fg;\n]]]"
                   }
                 ]
               },
@@ -875,7 +875,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(156,39,176,0.22)'"
+                    "background": "[[[ return variables.pal.purple.bg ]]]"
                   }
                 ],
                 "grid": [
@@ -900,7 +900,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#ce93d8'"
+                    "color": "[[[ return variables.pal.purple.fg ]]]"
                   }
                 ],
                 "name": [
@@ -914,7 +914,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "'#ce93d8'"
+                    "color": "[[[ return variables.pal.purple.fg ]]]"
                   }
                 ]
               },
@@ -949,7 +949,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(255,152,0,0.22)'"
+                    "background": "[[[ return variables.pal.orange.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -960,7 +960,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#ffb74d'"
+                    "color": "[[[ return variables.pal.orange.fg ]]]"
                   }
                 ]
               },
@@ -995,7 +995,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(3,169,244,0.20)'"
+                    "background": "[[[ return variables.pal.sky.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -1006,7 +1006,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#03a9f4'"
+                    "color": "[[[ return variables.pal.sky.fg ]]]"
                   }
                 ]
               },
@@ -1042,7 +1042,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(179,136,255,0.20)'"
+                    "background": "[[[ return variables.pal.violet.bg ]]]"
                   }
                 ],
                 "grid": [
@@ -1067,7 +1067,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#b388ff'"
+                    "color": "[[[ return variables.pal.violet.fg ]]]"
                   }
                 ],
                 "name": [
@@ -1081,7 +1081,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "'#b388ff'"
+                    "color": "[[[ return variables.pal.violet.fg ]]]"
                   }
                 ]
               },
@@ -1124,7 +1124,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';   /* heating / up to temp */\n]]]"
+                    "background": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.bg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.bg;\n  return cur + 0.5 < set ? variables.pal.orange.bg : variables.pal.green.bg;   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "grid": [
@@ -1149,7 +1149,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "name": [
@@ -1163,7 +1163,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
                   }
                 ]
               },
@@ -1206,7 +1206,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return 'rgba(3,169,244,0.20)';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return 'rgba(3,169,244,0.20)';\n  return cur + 0.5 < set ? 'rgba(255,152,0,0.20)' : 'rgba(76,175,80,0.20)';   /* heating / up to temp */\n]]]"
+                    "background": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.bg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.bg;\n  return cur + 0.5 < set ? variables.pal.orange.bg : variables.pal.green.bg;   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "grid": [
@@ -1231,7 +1231,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
                   }
                 ],
                 "name": [
@@ -1245,7 +1245,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return '#03a9f4';\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return '#03a9f4';\n  return cur + 0.5 < set ? '#ff9800' : '#4caf50';   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
                   }
                 ]
               },
@@ -1284,7 +1284,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(156,39,176,0.20)'"
+                    "background": "[[[ return variables.pal.purple.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -1295,7 +1295,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#ce93d8'"
+                    "color": "[[[ return variables.pal.purple.fg ]]]"
                   }
                 ]
               },
@@ -1330,7 +1330,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "'rgba(244,67,54,0.22)'"
+                    "background": "[[[ return variables.pal.red.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -1341,7 +1341,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "'#ef5350'"
+                    "color": "[[[ return variables.pal.red.fg ]]]"
                   }
                 ],
                 "name": [
@@ -1355,7 +1355,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "'#ef5350'"
+                    "color": "[[[ return variables.pal.red.fg ]]]"
                   }
                 ]
               },
