@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.71.0";
+const VERSION = "4.72.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6107,23 +6107,21 @@ const TAB_CSS = `
     justify-content: space-around;
     background: var(--card-background-color, #1e1e1e);
     max-width: 100vw;
-    /* right padding keeps the spread tabs clear of the dots in the corner.
-     * The home-indicator inset is only partly honoured: taking all 34px of
+    /* The home-indicator inset is only partly honoured: taking all 34px of
      * it pushed the labels noticeably up the screen, and the indicator is a
-     * thin overlay rather than something that needs full clearance. */
-    padding: 3px 54px calc(3px + env(safe-area-inset-bottom, 0px) * 0.55) 3px;
+     * thin overlay rather than something that needs full clearance. No room
+     * is reserved on the right any more — the dots are gone here, and the
+     * gap would just read as the bar being off-centre. */
+    padding: 3px calc(3px + env(safe-area-inset-right, 0px)) calc(3px + env(safe-area-inset-bottom, 0px) * 0.55) calc(3px + env(safe-area-inset-left, 0px));
   }
-  /* inside the bar now, so it carries no surface of its own */
-  :host(:not([charro-edit])) #charro-extras-btn {
-    left: auto;
-    right: 4px;
-    bottom: calc(5px + env(safe-area-inset-bottom, 0px));
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
+  /* No dots on a phone. The bar is the whole of the navigation here, and
+   * the extras behind the dots — add, search, assist, edit — are desk work.
+   * Note this also takes away the sidebar button, which Home Assistant only
+   * renders on narrow screens and which the extras row was carrying: on a
+   * phone this dashboard is now a closed loop, and the sidebar, Settings
+   * and the other dashboards are reached from a desktop or by turning this
+   * off with window.CHARRO_NO_TAB_STYLE = true. */
+  :host(:not([charro-edit])) #charro-extras-btn { display: none; }
   /* the bar is shorter here, and sits on the edge rather than above it */
   :host(:not([charro-edit])) hui-view-container {
     /* the status bar overlays the web view, but the full inset left a band
