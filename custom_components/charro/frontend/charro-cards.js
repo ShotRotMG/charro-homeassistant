@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.77.0";
+const VERSION = "4.78.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -591,6 +591,14 @@ function zonePlayerCards(p, r, hass) {
  * the two you get is settled when the pop-up opens: turn it on from here and
  * the buttons stay until you close and reopen it — useful, as it happens,
  * for changing your mind. */
+/* The one boundary the thermostat card's shape turns on. Shared so the
+ * builder and the watcher can never disagree about which side it is on. */
+function climateIdle(r, hass) {
+  const ent = r && r.climate_entity;
+  const st = ent && hass && hass.states && hass.states[ent];
+  return !st || st.state === "off";
+}
+
 function climateCard(r, hass) {
   if (r.climate_card) return r.climate_card;        // hand-written wins
   const card = {
@@ -601,7 +609,7 @@ function climateCard(r, hass) {
   if (r.climate_name) card.name = r.climate_name;
 
   const st = hass && hass.states && hass.states[r.climate_entity];
-  const idle = !st || st.state === "off";
+  const idle = climateIdle(r, hass);
   const pinned = r.climate_modes && r.climate_modes.length ? r.climate_modes : null;
   const modes = pinned
     || (idle && st && st.attributes && st.attributes.hvac_modes) || null;
@@ -1073,6 +1081,9 @@ async function renderBody(nodes, hass, target) {
       const el = helpers.createCardElement(cfg);
       el.hass = hass;
       el.style.display = "block";
+      // what it was built from, so a card whose shape depends on state can
+      // be found again and rebuilt without re-rendering the whole body
+      el.__charroCfg = cfg;
       into.appendChild(el);
       made.push(el);
     } catch (err) { console.error("charro-room-card:", cfg && cfg.type, err); }
@@ -1597,6 +1608,7 @@ class RoomPopup {
   set hass(h) {
     this._hass = h;
     for (const c of this._cards || []) c.hass = h;
+    this._syncClimate();
     // hass ticks constantly; only redraw the header when something it shows
     // has actually moved, or a busy house would rebuild it hundreds of times
     if (!this._hd) return;
@@ -1606,6 +1618,55 @@ class RoomPopup {
     const next = this._header();
     this._hd.replaceWith(next);
     this._hd = next;
+  }
+
+  /* Every other card in the body answers a state change by redrawing
+   * itself; the thermostat is the one whose *shape* depends on state —
+   * setpoint while it runs, mode buttons while it's off — and a card's
+   * config is fixed once it is built. So this watches that one boundary and
+   * rebuilds just that card when it is crossed, leaving the rest of the
+   * body, its scroll position and its other cards alone.
+   *
+   * Only the off/on transition counts. hass ticks constantly and a running
+   * thermostat changes temperature all day without changing shape, so the
+   * comparison is the boolean, not the state string. */
+  _syncClimate() {
+    const r = this.room, hass = this._hass;
+    const ent = r && r.climate_entity;
+    // a hand-written climate_card is the room's business, not ours to swap
+    if (!ent || !hass || !hass.states || r.climate_card) return;
+    const idle = climateIdle(r, hass);
+    if (this._climateIdle === undefined) { this._climateIdle = idle; return; }
+    if (idle === this._climateIdle || this._climateBusy) return;
+    this._climateIdle = idle;
+    this._swapClimate();
+  }
+
+  async _swapClimate() {
+    this._climateBusy = true;
+    try {
+      const cards = this._cards || [];
+      const old = cards.find((c) => {
+        const cfg = c && c.__charroCfg;
+        return cfg && cfg.type === "tile" && cfg.entity === this.room.climate_entity;
+      });
+      // the pop-up may have closed, or the room may not show its thermostat
+      if (!old || !old.isConnected) return;
+      const helpers = await window.loadCardHelpers();
+      if (!this.el) return;                     // closed while we awaited
+      const cfg = climateCard(this.room, this._hass);
+      const next = helpers.createCardElement(cfg);
+      next.hass = this._hass;
+      next.style.display = "block";
+      next.__charroCfg = cfg;
+      old.replaceWith(next);
+      const i = cards.indexOf(old);
+      if (i >= 0) cards[i] = next;              // so later hass ticks reach it
+    } catch (err) {
+      console.error("charro-room-card: climate swap", err);
+    } finally {
+      this._climateBusy = false;
+    }
   }
 
   _headerSig() {
@@ -1657,6 +1718,11 @@ class RoomPopup {
                               : roomBody(this.room, this._hass);
     this._sizeTo(widestRun(nodes));
     this._cards = await renderBody(nodes, this._hass, body);
+    /* Record the shape the body was actually built with, rather than
+     * whichever hass tick happened to arrive first — otherwise a thermostat
+     * that changed between the two would leave the two out of step and the
+     * next real transition would be missed. */
+    this._climateIdle = climateIdle(this.room, this._hass);
 
     const panel = this.el, back = this.backdrop;
     panel.append(hd, body);
@@ -1847,6 +1913,7 @@ class RoomPopup {
     const el = this.el, bd = this.backdrop;
     this.el = null; this.backdrop = null; this._cards = [];
     this._hd = null; this._hdSig = null;
+    this._climateIdle = undefined; this._climateBusy = false;
     if (!el) return;
     try { el.classList.remove("in"); if (bd) bd.classList.remove("in"); } catch (e) {}
     setTimeout(() => { try { el.remove(); if (bd) bd.remove(); } catch (e) {} }, 260);
