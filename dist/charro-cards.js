@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.81.0";
+const VERSION = "4.82.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -486,13 +486,36 @@ const isOn  = (e) => OFFISH.map((st) => ({ condition: "state", entity: e, state_
 const isOff = (e) => [{ condition: "or",
   conditions: OFFISH.map((st) => ({ condition: "state", entity: e, state: st })) }];
 
-/* The off-state face of a remote: one tile that turns the thing on. `wake`
- * fires a script instead of media_player.turn_on, which some TVs need. */
+/* What the off tile should actually do, in order of how specific it is.
+ *
+ * `media_player.turn_on` is the default and is the thing that quietly fails
+ * on a Samsung: the integration turns it into a wake-on-LAN packet aimed at
+ * 255.255.255.255, which leaves by whatever interface holds the default
+ * route. On a Home Assistant with a second NIC for the TV subnet that is
+ * the wrong one, and the packet never reaches the television's segment.
+ *
+ * `wake_mac` sends the packet directly instead, and `wake_broadcast` aims
+ * it at the TV's own subnet rather than the whole world, which is what
+ * makes the kernel pick the interface that can actually deliver it. No
+ * script and nothing in configuration.yaml — the room file carries it. */
+function wakeAction(spec) {
+  if (spec.wake) {
+    return { action: "perform-action", perform_action: spec.wake, target: {} };
+  }
+  if (spec.wake_mac) {
+    const data = { mac: spec.wake_mac };
+    if (spec.wake_broadcast) data.broadcast_address = spec.wake_broadcast;
+    return { action: "perform-action",
+             perform_action: "wake_on_lan.send_magic_packet",
+             data, target: {} };
+  }
+  return { action: "toggle" };
+}
+
+/* The off-state face of a remote: one tile that turns the thing on. */
 function remoteOffCard(spec, watch) {
   if (spec.off_card) return spec.off_card;
-  const act = spec.wake
-    ? { action: "perform-action", perform_action: spec.wake, target: {} }
-    : { action: "toggle" };
+  const act = wakeAction(spec);
   return { type: "tile", entity: watch,
            name: spec.off_name || spec.title || "",
            icon: spec.off_icon || "mdi:television-off",
@@ -516,7 +539,7 @@ function remoteCards(r, templates) {
     const watch = spec.when || spec.media_player || spec.remote || spec.entity;
     if (spec.always || !watch) { out.push(card); continue; }
     out.push({ type: "conditional", conditions: isOn(watch), card });
-    if (spec.wake || spec.off_card || spec.off_icon || spec.off_name) {
+    if (spec.wake || spec.wake_mac || spec.off_card || spec.off_icon || spec.off_name) {
       out.push({ type: "conditional", conditions: isOff(watch),
                  card: remoteOffCard(spec, watch) });
     }
@@ -547,8 +570,15 @@ function videoSimpleCards(r) {
       if (src && src.media_player === d.power) { own = src; break; }
     }
     if (!own || !own.use) {
-      out.push({ type: "tile", entity: d.power,
-                 name: d.name || "", icon: d.icon || "mdi:television" });
+      const bare = { type: "tile", entity: d.power,
+                     name: d.name || "", icon: d.icon || "mdi:television" };
+      // no remote template, but a MAC still beats a turn_on that goes nowhere
+      if (d.wake || d.wake_mac) {
+        const act = wakeAction(d);
+        bare.tap_action = act;
+        bare.icon_tap_action = act;
+      }
+      out.push(bare);
       continue;
     }
     const spec = Object.assign({}, own, {
@@ -557,6 +587,10 @@ function videoSimpleCards(r) {
       off_name: d.name || own.title || "TV",
       off_icon: d.icon || "mdi:television",
     });
+    // waking belongs to the screen, not to whichever box is feeding it
+    if (d.wake) spec.wake = d.wake;
+    if (d.wake_mac) spec.wake_mac = d.wake_mac;
+    if (d.wake_broadcast) spec.wake_broadcast = d.wake_broadcast;
     for (const c of remoteCards({ remotes: [spec] }, (r && r._remotes) || {})) out.push(c);
   }
   return out;
@@ -5537,6 +5571,19 @@ class CharroRoomsEditor extends HTMLElement {
         ["media_player", "switch", "remote"],
         (s) => { if (s) d.power = s; else delete d.power; },
         "media_player.kitchen_samsung_55_2"));
+      const mac = field("Wake-on-LAN MAC", d.wake_mac,
+        (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
+        "20:15:de:26:33:fa");
+      mac.title = "Fill this in when the screen's own turn-on does nothing. " +
+        "The off button sends a magic packet instead.";
+      row.appendChild(mac);
+      const bc = field("… broadcast to", d.wake_broadcast,
+        (t) => { if (t) d.wake_broadcast = t.trim(); else delete d.wake_broadcast; },
+        "192.168.1.255");
+      bc.title = "The TV subnet's broadcast address. Needed when Home Assistant " +
+        "has more than one network interface, because the default 255.255.255.255 " +
+        "leaves by the default route, which may not be the one that reaches the TV.";
+      row.appendChild(bc);
       const x = document.createElement("button");
       x.className = "vdel"; x.textContent = "Remove screen";
       x.addEventListener("click", () => { v.displays.splice(i, 1); changed(); });
