@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.80.0";
+const VERSION = "4.81.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -524,6 +524,44 @@ function remoteCards(r, templates) {
   return out;
 }
 
+/* "Basic TV only". The screens and sources stay exactly as configured — this
+ * just skips the switcher and renders each screen as what it actually is
+ * while nothing else is plugged into it yet: a button that turns the TV on,
+ * which becomes that TV's own remote once it is on.
+ *
+ * It reuses remoteCards rather than inventing a second way to do the same
+ * thing, so it gets the conditional pair that follows state instead of
+ * whatever was true when the pop-up opened.
+ *
+ * A screen's "own" remote is the source whose media_player IS the screen —
+ * for a smart TV running its own apps, that is the TV itself. A screen with
+ * no such source, or whose source names no remote template, falls back to a
+ * plain tile, which still turns it on and off and says so. */
+function videoSimpleCards(r) {
+  const v = (r && r.video) || {};
+  const out = [];
+  for (const d of v.displays || []) {
+    if (!d || !d.power) continue;
+    let own = null;
+    for (const src of Object.values(v.sources || {})) {
+      if (src && src.media_player === d.power) { own = src; break; }
+    }
+    if (!own || !own.use) {
+      out.push({ type: "tile", entity: d.power,
+                 name: d.name || "", icon: d.icon || "mdi:television" });
+      continue;
+    }
+    const spec = Object.assign({}, own, {
+      when: d.power,
+      // remoteCards only draws the off face when the spec asks for one
+      off_name: d.name || own.title || "TV",
+      off_icon: d.icon || "mdi:television",
+    });
+    for (const c of remoteCards({ remotes: [spec] }, (r && r._remotes) || {})) out.push(c);
+  }
+  return out;
+}
+
 function playerCard(id, hass) {
   if (!id) return null;
   if (isMassPlayer(hass, id)) {
@@ -932,8 +970,9 @@ function blockCards(name, r, hass) {
   }
 
   if (name === "video" && r.video) {
-    push({ type: "custom:charro-video-card", video: r.video,
-           templates: r._remotes || {} });
+    if (r.video.simple) for (const c of videoSimpleCards(r)) push(c);
+    else push({ type: "custom:charro-video-card", video: r.video,
+                templates: r._remotes || {} });
   }
 
   if (name === "media") {
@@ -5448,6 +5487,26 @@ class CharroRoomsEditor extends HTMLElement {
     const { text: field, ent, icon: iconField } = this._fields(() => {
       this._renderVideo(); this._renderPreview();
     });
+
+    /* Somewhere to park the whole switcher without throwing it away: a room
+     * whose other sources aren't wired up yet wants a TV button and a
+     * remote, not a source picker with one option. */
+    const basic = document.createElement("label");
+    basic.className = "vfield";
+    basic.title = "Ignore the sources and the screen picker for now. Each screen " +
+      "shows a button while its TV is off and that TV's own remote once it is on. " +
+      "Everything configured below is kept.";
+    const basicTxt = document.createElement("span");
+    basicTxt.textContent = "Basic TV only (keeps the config below)";
+    const basicBox = document.createElement("input");
+    basicBox.type = "checkbox";
+    basicBox.checked = !!v.simple;
+    basicBox.addEventListener("change", () => {
+      if (basicBox.checked) v.simple = true; else delete v.simple;
+      this._renderVideo(); this._renderPreview();
+    });
+    basic.append(basicTxt, basicBox);
+    box.appendChild(basic);
 
     // one screen needs no picker; more than one does
     const many = (v.displays || []).length > 1;
