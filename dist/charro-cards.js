@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.74.0";
+const VERSION = "4.76.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -571,9 +571,25 @@ function zonePlayerCards(p, r, hass) {
 
 /* A thermostat reads better as one line than as a panel: what it's doing and
  * what the room actually is on the left, the setpoint you came to change on
- * the right. `climate_modes` adds a row of mode buttons under it for the
- * rooms that want them; `climate_card` replaces the whole thing. */
-function climateCard(r) {
+ * the right. `climate_card` replaces the whole thing.
+ *
+ * That one line stops working the moment the thermostat is off. An off
+ * thermostat reports no target temperature, so the inline +/- renders blank
+ * and does nothing — the control is there, it just has nothing to set. And
+ * the thing you actually came to do, turn it on to heat or cool, isn't
+ * offered at all.
+ *
+ * So when it's off the mode buttons take that row instead, built from
+ * whatever the entity says it supports rather than a list anyone has to
+ * maintain. While it's running the one-liner is right and the buttons would
+ * be noise, so they stay out of the way. `climate_modes` still pins an
+ * explicit list and shows it in both states, for a room that wants that.
+ *
+ * The pop-up hands its cards new hass but never rebuilds them, so which of
+ * the two you get is settled when the pop-up opens: turn it on from here and
+ * the buttons stay until you close and reopen it — useful, as it happens,
+ * for changing your mind. */
+function climateCard(r, hass) {
   if (r.climate_card) return r.climate_card;        // hand-written wins
   const card = {
     type: "tile",
@@ -583,8 +599,14 @@ function climateCard(r) {
     features: [{ type: "target-temperature" }],
   };
   if (r.climate_name) card.name = r.climate_name;
-  const modes = r.climate_modes;
-  if (modes && modes.length) {
+
+  const st = hass && hass.states && hass.states[r.climate_entity];
+  const idle = !st || st.state === "off";
+  const pinned = r.climate_modes && r.climate_modes.length ? r.climate_modes : null;
+  const modes = pinned
+    || (idle && st && st.attributes && st.attributes.hvac_modes) || null;
+  // one mode is not a choice, it's a label
+  if (modes && modes.length > 1) {
     card.features_position = "bottom";
     card.features.push({ type: "climate-hvac-modes", style: "icons",
                          hvac_modes: modes });
@@ -823,7 +845,7 @@ function blockCards(name, r, hass) {
   const out = [];
   const push = (c) => { if (c) out.push(c); };
 
-  if (name === "climate" && r.climate_entity) push(climateCard(r));
+  if (name === "climate" && r.climate_entity) push(climateCard(r, hass));
 
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
@@ -1183,10 +1205,22 @@ function ownerFor(hash) {
   return null;
 }
 
+/* The pop-up is a dialog, and a theme that has thought about dialogs has
+ * already said what one should look like — so take those answers rather
+ * than inventing a surface. Frosted Glass Dark sets a 0.7 surface, an 8px
+ * frost and a 0.8 scrim; a theme that sets none of them falls through to
+ * the card variables and then to the values this used before, so nothing
+ * depends on any particular theme defining them.
+ *
+ * What is deliberately NOT themed: the open-door red. That belongs to the
+ * chip palette, not the dialog chrome, and pulling it from --error-color
+ * would leave the header's door a different red from the same door's chip
+ * two inches away. */
 const POPUP_CSS = `
 .charro-pop-backdrop{
   position:fixed; inset:0; z-index:8;
-  background:rgba(0,0,0,.45); backdrop-filter:blur(10px);
+  background:var(--mdc-dialog-scrim-color, rgba(0,0,0,.45));
+  backdrop-filter:blur(10px);
   -webkit-backdrop-filter:blur(10px);
   opacity:0; transition:opacity .22s ease;
 }
@@ -1195,7 +1229,12 @@ const POPUP_CSS = `
   position:fixed; left:0; right:0; bottom:0; z-index:9;
   max-height:88vh; overflow:auto; box-sizing:border-box;
   padding:14px 14px calc(18px + env(safe-area-inset-bottom,0px));
-  background:var(--ha-card-background, var(--card-background-color, #fff));
+  background:var(--ha-dialog-surface-background,
+             var(--ha-card-background, var(--card-background-color, #fff)));
+  backdrop-filter:var(--ha-dialog-surface-backdrop-filter, none);
+  -webkit-backdrop-filter:var(--ha-dialog-surface-backdrop-filter, none);
+  border:var(--ha-card-border-width, 1px) solid
+         var(--ha-card-border-color, var(--divider-color, transparent));
   border-radius:24px 24px 0 0;
   box-shadow:0 -8px 40px rgba(0,0,0,.35);
   transform:translateY(100%); transition:transform .26s cubic-bezier(.2,.8,.3,1);
@@ -1259,11 +1298,14 @@ const POPUP_CSS = `
 /* Only the round icon buttons — a chip is a button too, and this rule's
  * fixed 32px box was squaring it and stacking the count under the icon. */
 .charro-pop-hd .tail > button{
-  border:none; background:rgba(127,127,127,.16); color:var(--primary-text-color);
+  border:none; color:var(--primary-text-color);
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 12%, transparent);
   width:32px; height:32px; border-radius:50%; cursor:pointer;
   display:grid; place-items:center; font:inherit; flex:none;
 }
-.charro-pop-hd .tail > button:hover{ background:rgba(127,127,127,.28); }
+.charro-pop-hd .tail > button:hover{
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 20%, transparent);
+}
 .charro-pop-hd .tail > button ha-icon{ --mdc-icon-size:18px; }
 .charro-chips{ display:flex; align-items:center; gap:5px; flex:none; }
 .charro-chip{
