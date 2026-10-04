@@ -59,7 +59,7 @@
         "grid-template-areas": "\"i n alert\" \"chips chips chips\""
       },
       {
-        "grid-template-columns": "26px 1fr minmax(26px, auto)"
+        "grid-template-columns": "[[[\n  /* the alert column held 26px open even with nothing in it, which is the\n     width a long room name was missing */\n  return `26px 1fr ${(window.charroOpenAlerts ? window.charroOpenAlerts(variables, states) : []).length ? 'minmax(26px, auto)' : '0px'}`;\n]]]"
       },
       {
         "grid-template-rows": "26px 22px"
@@ -117,7 +117,7 @@
         "min-width": "0"
       },
       {
-        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  /* 86px = icon col + alert col + gaps + card padding */\n  return `clamp(11px, calc((100cqw - 86px) / ${n} * 1.6), 18px)`;\n]]]"
+        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  const alert = (window.charroOpenAlerts ? window.charroOpenAlerts(variables, states) : []).length > 0;\n  /* icon column + gaps + card padding, and the alert column only when it is\n     actually showing something */\n  const reserve = alert ? 86 : 60;\n  /* 1.72, not 1.6: measured in Roboto Bold, these room names run about\n     10.4px per character at 18px at their widest (\"Javon\"), where 1.6\n     budgets 11.25px — so an 11-character name was shrunk a step further\n     than it had to be */\n  return `clamp(11px, calc((100cqw - ${reserve}px) / ${n} * 1.72), 18px)`;\n]]]"
       }
     ],
     "custom_fields": {
@@ -1296,7 +1296,7 @@
         }
       }
     },
-    "alert": "[[[\n  const cs = variables.confirm_sensor;\n  if (cs) {\n    const cst = states[cs]?.state;\n    if (!(cst === 'Violated' || cst === 'on' || cst === 'open')) return '';\n  }\n  const list = variables.alert_sensors || [];\n  const open = list.filter(e => {\n    const s = states[e]?.state;\n    if (!s) return false;\n    if (e.startsWith('cover.')) return s !== 'closed';\n    return s === 'Violated' || s === 'on' || s === 'open';\n  });\n  if (!open.length) return '';\n  const id = open[0];\n  let icon = 'mdi:door-open';\n  if (id.startsWith('cover.')) icon = 'mdi:garage-open';\n  else if (id.includes('window')) icon = 'mdi:window-open-variant';\n  else if (id.includes('motion')) icon = 'mdi:motion-sensor';\n  const n = open.length > 1 ? ` ${open.length}` : '';\n  return `<ha-icon icon=\"${icon}\" style=\"width:24px;height:24px;--mdc-icon-size:24px;vertical-align:-6px;\"></ha-icon>${n}`;\n]]]\n"
+    "alert": "[[[\n  const open = (window.charroOpenAlerts ? window.charroOpenAlerts(variables, states) : []);\n  if (!open.length) return '';\n  const id = open[0];\n  let icon = 'mdi:door-open';\n  if (id.startsWith('cover.')) icon = 'mdi:garage-open';\n  else if (id.includes('window')) icon = 'mdi:window-open-variant';\n  else if (id.includes('motion')) icon = 'mdi:motion-sensor';\n  const n = open.length > 1 ? ` ${open.length}` : '';\n  return `<ha-icon icon=\"${icon}\" style=\"width:24px;height:24px;--mdc-icon-size:24px;vertical-align:-6px;\"></ha-icon>${n}`;\n]]]\n"
   },
   "card_mod": {
     "style": ":host {\n  display: block !important;\n  width: 100% !important;\n  min-width: 100% !important;\n}\nha-card {\n  container-type: inline-size;\n  container-name: roomcard;\n  width: 100% !important;\n  min-width: 100% !important;\n  height: 100% !important;\n  box-sizing: border-box !important;\n}\n#container { width: 100% !important; }\n"

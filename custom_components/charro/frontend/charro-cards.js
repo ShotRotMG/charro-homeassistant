@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.78.0";
+const VERSION = "4.80.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -787,6 +787,51 @@ function isGarage(entry, hass) {
  * holds by construction, the corner cannot miss anything the chip showed.
  * The pop-up header keeps its garage chip: there is no corner icon there,
  * so it is the only thing saying a door is open. */
+/* Which of a room's alert sensors are open right now, honouring the room's
+ * confirm sensor. It lives on `window` because three separate places in
+ * room-card.json need the same answer — the corner icon, the grid column it
+ * takes up, and the width the name is then allowed to assume — and a
+ * button-card template can only reach a shared implementation through a
+ * global. Passing it in as a card variable instead would freeze it:
+ * variables are computed once when the card is built, and this has to stay
+ * live. Three copies of the filter would be three chances to drift. */
+function charroOpenAlerts(v, states) {
+  const open = (st) => st === "Violated" || st === "on" || st === "open";
+  const cs = v && v.confirm_sensor;
+  if (cs && !open(states[cs] && states[cs].state)) return [];
+  return ((v && v.alert_sensors) || []).filter((e) => {
+    const st = states[e] && states[e].state;
+    if (!st) return false;
+    return e.startsWith("cover.") ? st !== "closed" : open(st);
+  });
+}
+if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
+
+/* The TV a room's chip should follow.
+ *
+ * There are two places a room can name its television and they were not
+ * talking to each other. `tv_entity` is the Media section's field, and it
+ * is what every chip reads. But most rooms never fill it: they add a screen
+ * under Video / remotes instead, and the television is that screen's power
+ * entity. The result was a room with a properly configured TV and no TV
+ * chip, because the chip was watching the field nobody filled in.
+ *
+ * So tv_entity still wins when it is set, and otherwise the screens answer
+ * the question. Only a media_player counts: Theatre's display is powered by
+ * switch.theatre_projector, which is its projector and already has its own
+ * chip, and promoting that to "the TV" would show one device twice under
+ * two icons. The projector entity is excluded explicitly for the same
+ * reason, in case a room names it both ways. */
+function roomTv(r) {
+  if (!r) return "";
+  if (r.tv_entity) return r.tv_entity;
+  for (const d of (r.video && r.video.displays) || []) {
+    const p = d && d.power;
+    if (p && p.startsWith("media_player.") && p !== r.projector_entity) return p;
+  }
+  return "";
+}
+
 const garageSensors = (r, hass) =>
   (r.alert_sensors || []).filter((e) => isGarage(e, hass));
 const plainSensors = (r, hass) =>
@@ -1539,7 +1584,7 @@ function roomChips(r, hass) {
     ["projector_entity", "mdi:projector", CHIP_SKY, "Projector"],
     ["receiver_entity", "mdi:audio-video", CHIP_VIOLET, "Receiver"],
   ]) {
-    const id = r[key];
+    const id = key === "tv_entity" ? roomTv(r) : r[key];
     const st = id && hass.states[id];
     if (!st || OFFISH.includes(st.state) || st.state === "idle") continue;
     out.push({ key, icon, col, text: "",
@@ -1678,7 +1723,7 @@ class RoomPopup {
       lightIds(r.fan_entities), lightIds(r.bath_fan_entities),
       lightIds(r.fountain_entities), r.alert_sensors || [],
       (r.music_powers || []).map((p) => typeof p === "string" ? p : (p && (p.entity || p.power))),
-      [r.media_player, r.tv_entity, r.projector_entity, r.receiver_entity, r.climate_entity],
+      [r.media_player, roomTv(r), r.projector_entity, r.receiver_entity, r.climate_entity],
     ).filter(Boolean);
     let s = "";
     for (const e of ids) {
@@ -2171,7 +2216,7 @@ class CharroRoomCard extends CharroBase {
       // the tile's garage chip counts these on its own
       garage_entities: garageSensors(c, this._hass)
         .map((e) => (typeof e === "string" ? e : e.entity)).filter(Boolean),
-      tv_entity: c.tv_entity || "",
+      tv_entity: roomTv(c),
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
       // the tile's chips read their colours from here, so they cannot drift
@@ -2194,6 +2239,12 @@ class CharroRoomCard extends CharroBase {
     for (const k of ROOM_LISTS) out.push(...lightIds(c[k]));
     for (const k of ROOM_SINGLES) if (c[k]) out.push(c[k]);
     if (c.fountain_entity) out.push(c.fountain_entity);
+    /* ROOM_SINGLES covers tv_entity, but a room that names its television
+     * through a screen instead has nothing there — and without the resolved
+     * one here the tile never redraws when that TV turns on, so the chip
+     * would only appear on a reload. */
+    const tv = roomTv(c);
+    if (tv) out.push(tv);
     return uniq(out);
   }
 
@@ -2267,7 +2318,9 @@ const ROOM_HELPERS = {
   pool_switch: "The pool chip appears only while this is on.",
   pool_heater: "Supplies the temperature and the warming/at-temp colour.",
   fountain_entities: "Fountain, spill, water wall. One chip with a count; tapping turns them all off.",
-  tv_entity: "Chip appears only while the TV is on.",
+  tv_entity: "Only needed if the room has no screen under Video / remotes — " +
+             "otherwise the chip follows that screen's TV on its own. " +
+             "Either way it appears only while the TV is on.",
   receiver_entity: "Chip shows the current source while the receiver is on.",
 };
 makeEditor("charro-room-card-editor", ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS);
