@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.82.0";
+const VERSION = "4.83.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -560,14 +560,60 @@ function remoteCards(r, templates) {
  * for a smart TV running its own apps, that is the TV itself. A screen with
  * no such source, or whose source names no remote template, falls back to a
  * plain tile, which still turns it on and off and says so. */
-function videoSimpleCards(r) {
+/* A switcher with nothing to switch between is just a television with extra
+ * steps. A room gets the basic pair automatically when there are no sources
+ * at all, or when no screen has a source select to pick between them —
+ * which is the state a room is in before any of that is wired up. The
+ * "Basic TV only" box forces the same thing for a room that has sources
+ * configured but isn't using them yet. */
+function videoIsBasic(v) {
+  if (!v) return true;
+  if (v.simple) return true;
+  if (!Object.keys(v.sources || {}).length) return true;
+  return !(v.displays || []).some((d) => d && d.source);
+}
+
+/* Which remote template fits a screen nobody has assigned one to.
+ *
+ * The templates in _remotes.json are named after what they drive —
+ * `samsung_tv`, `superbox` — so the first word of the name is the thing to
+ * look for in the entity id. It is a guess and it is treated like one: a
+ * configured source always wins, and a screen that matches nothing gets a
+ * plain tile rather than a remote full of buttons that go nowhere. */
+function guessRemote(entity, templates) {
+  if (!entity) return null;
+  const id = entity.replace(/^[a-z_]+\./, "");
+  let best = null;
+  for (const key of Object.keys(templates || {})) {
+    const word = String(key).split("_")[0].toLowerCase();
+    if (word.length > 3 && id.includes(word)) {
+      if (!best || word.length > best.word.length) best = { key, word };
+    }
+  }
+  return best && best.key;
+}
+
+function videoSimpleCards(r, hass) {
   const v = (r && r.video) || {};
+  const templates = (r && r._remotes) || {};
   const out = [];
   for (const d of v.displays || []) {
     if (!d || !d.power) continue;
     let own = null;
     for (const src of Object.values(v.sources || {})) {
       if (src && src.media_player === d.power) { own = src; break; }
+    }
+    /* Nothing configured for this screen: work out what it is. The remote
+     * entity is the same object id in the remote domain, which is how both
+     * Samsung integrations name their pair — only used when it really
+     * exists, so a guess can't invent an entity. */
+    if (!own) {
+      const use = guessRemote(d.power, templates);
+      if (use) {
+        own = { use, media_player: d.power };
+        const mate = "remote." + d.power.replace(/^[a-z_]+\./, "");
+        if (hass && hass.states && hass.states[mate]) own.remote = mate;
+      }
     }
     if (!own || !own.use) {
       const bare = { type: "tile", entity: d.power,
@@ -591,7 +637,7 @@ function videoSimpleCards(r) {
     if (d.wake) spec.wake = d.wake;
     if (d.wake_mac) spec.wake_mac = d.wake_mac;
     if (d.wake_broadcast) spec.wake_broadcast = d.wake_broadcast;
-    for (const c of remoteCards({ remotes: [spec] }, (r && r._remotes) || {})) out.push(c);
+    for (const c of remoteCards({ remotes: [spec] }, templates)) out.push(c);
   }
   return out;
 }
@@ -1004,7 +1050,7 @@ function blockCards(name, r, hass) {
   }
 
   if (name === "video" && r.video) {
-    if (r.video.simple) for (const c of videoSimpleCards(r)) push(c);
+    if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
     else push({ type: "custom:charro-video-card", video: r.video,
                 templates: r._remotes || {} });
   }
@@ -5529,7 +5575,9 @@ class CharroRoomsEditor extends HTMLElement {
     basic.className = "vfield";
     basic.title = "Ignore the sources and the screen picker for now. Each screen " +
       "shows a button while its TV is off and that TV's own remote once it is on. " +
-      "Everything configured below is kept.";
+      "Everything configured below is kept. This happens on its own when there " +
+      "are no sources, or no screen has a source select — the box forces it for " +
+      "a room that has them but isn't using them yet.";
     const basicTxt = document.createElement("span");
     basicTxt.textContent = "Basic TV only (keeps the config below)";
     const basicBox = document.createElement("input");
