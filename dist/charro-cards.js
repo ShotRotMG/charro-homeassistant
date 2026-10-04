@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.76.0";
+const VERSION = "4.77.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -574,16 +574,18 @@ function zonePlayerCards(p, r, hass) {
  * the right. `climate_card` replaces the whole thing.
  *
  * That one line stops working the moment the thermostat is off. An off
- * thermostat reports no target temperature, so the inline +/- renders blank
- * and does nothing — the control is there, it just has nothing to set. And
- * the thing you actually came to do, turn it on to heat or cool, isn't
- * offered at all.
+ * thermostat reports no target temperature, so the +/- renders blank and
+ * sets nothing — the control is there, it just has nothing to do. And the
+ * thing you actually came to do, turn it on to heat or cool, isn't offered
+ * at all.
  *
- * So when it's off the mode buttons take that row instead, built from
+ * So the two swap places. Off: the mode buttons, and no setpoint at all,
+ * because a dead +/- is worse than no +/-. Running: the setpoint on its one
+ * line, and no buttons, because they would be noise. The modes come from
  * whatever the entity says it supports rather than a list anyone has to
- * maintain. While it's running the one-liner is right and the buttons would
- * be noise, so they stay out of the way. `climate_modes` still pins an
- * explicit list and shows it in both states, for a room that wants that.
+ * maintain. `climate_modes` still pins an explicit list and keeps it in
+ * both states, for a room that wants that — the setpoint still goes away
+ * while it's off even then.
  *
  * The pop-up hands its cards new hass but never rebuilds them, so which of
  * the two you get is settled when the pop-up opens: turn it on from here and
@@ -595,8 +597,6 @@ function climateCard(r, hass) {
     type: "tile",
     entity: r.climate_entity,
     state_content: ["hvac_action", "current_temperature"],
-    features_position: "inline",
-    features: [{ type: "target-temperature" }],
   };
   if (r.climate_name) card.name = r.climate_name;
 
@@ -606,10 +606,20 @@ function climateCard(r, hass) {
   const modes = pinned
     || (idle && st && st.attributes && st.attributes.hvac_modes) || null;
   // one mode is not a choice, it's a label
-  if (modes && modes.length > 1) {
-    card.features_position = "bottom";
-    card.features.push({ type: "climate-hvac-modes", style: "icons",
-                         hvac_modes: modes });
+  const showModes = !!(modes && modes.length > 1);
+
+  const features = [];
+  if (!idle) features.push({ type: "target-temperature" });
+  if (showModes) features.push({ type: "climate-hvac-modes", style: "icons",
+                                 hvac_modes: modes });
+
+  /* A tile with an empty features array still reserves the row, so the key
+   * is left off entirely when there is nothing to put in it — an off
+   * thermostat whose entity offers no modes to choose between. */
+  if (features.length) {
+    card.features = features;
+    // the lone setpoint still reads best on the title's own line
+    card.features_position = showModes ? "bottom" : "inline";
   }
   return card;
 }
