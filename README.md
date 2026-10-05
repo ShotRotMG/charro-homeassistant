@@ -499,6 +499,19 @@ Climate stay in the form, having nothing to merge with.
 In Door / motion alert each sensor is a collapsed row you open for its
 details.
 
+An entity the room names and Home Assistant doesn't have — renamed, removed,
+or a typo — is listed above the form, with the badge on the room's rail entry
+so you can see which of twenty-one rooms is broken without opening each one.
+Each line says where in the room it is in the editor's own words: the panel
+and field for a plain one, the panel plus the screen, source, remote, gate or
+sensor it belongs to for a list, and for a room with a saved layout the
+column and row it sits in. The exact dotted path is on hover.
+
+A `perform_action` is a service name, not an entity, so `script.toggle` and
+`button.press` are no longer reported as missing entities — they never were
+entities. A script called by its own name is still checked, since that one
+can genuinely disappear.
+
 The layout builder owns arrangement, and the per-light table covers name,
 icon, render, dimming and counting for rooms that never take their layout over.
 

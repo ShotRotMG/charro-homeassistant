@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.84.0";
+const VERSION = "4.85.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4368,10 +4368,29 @@ const CORE_DOMAINS = new Set([
   "input_text", "input_datetime", "todo", "timer", "counter", "group",
 ]);
 
+/* `perform_action: "script.toggle"` reads exactly like an entity id and is
+ * not one — it is a service name, and no entity will ever be called
+ * `script.toggle` or `button.press`. Those were the checker's own false
+ * positives. A script or scene called by its own name
+ * (`perform_action: "script.open_gate"`) IS worth checking, so only Home
+ * Assistant's own verbs are skipped, not the whole key. */
+const ACTION_KEYS = new Set(["perform_action", "service", "action"]);
+const SERVICE_VERBS = new Set([
+  "toggle", "turn_on", "turn_off", "press", "trigger", "reload",
+  "select_option", "select_next", "select_previous", "select_first",
+  "select_last", "set_value", "set_level", "set_percentage", "set_datetime",
+  "increment", "decrement", "start", "stop", "pause", "cancel", "finish",
+  "open", "close", "lock", "unlock", "open_cover", "close_cover",
+  "stop_cover", "set_cover_position", "send_command", "send_magic_packet",
+  "toggle_cover_tilt", "snapshot", "play_media", "volume_up", "volume_down",
+]);
+
 function entityRefs(node, out, path) {
   if (typeof node === "string") {
     if (node.includes("{{") || node.includes("[[[")) return;
     if (ENTITY_RE.test(node)) {
+      const key = String(path || "").split(".").pop();
+      if (ACTION_KEYS.has(key) && SERVICE_VERBS.has(node.split(".")[1])) return;
       if (!out.has(node)) out.set(node, new Set());
       out.get(node).add(path || "room");
     }
@@ -4388,6 +4407,127 @@ function entityRefs(node, out, path) {
   }
 }
 
+/* A dotted path is exact and unreadable: `layout[1].items[2].entity` tells
+ * you nothing about where to click. Split it into segments, then say it in
+ * the editor's own words — which panel, which column, which row. */
+function pathParts(p) {
+  const out = [];
+  for (const seg of String(p || "").split(".")) {
+    const m = seg.match(/^([^[]*)((?:\[\d+\])*)$/);
+    if (!m) { out.push(seg); continue; }
+    if (m[1]) out.push(m[1]);
+    for (const n of (m[2] || "").match(/\d+/g) || []) out.push(Number(n));
+  }
+  return out;
+}
+
+/* One layout row, named the way its own chip is named in the builder. */
+function itemWhere(it) {
+  if (!it || typeof it !== "object") return "row";
+  if (it.block) return BLOCK_LABEL[it.block] || it.block;
+  if (it.entity) return String(it.entity);
+  if (it.sensor) return typeof it.sensor === "string" ? it.sensor
+                       : (it.sensor.label || it.sensor.entity || "sensor");
+  if (it.zone) return typeof it.zone === "string" ? it.zone
+                     : (it.zone.entity || it.zone.power || "zone");
+  if (it.gate) return `gate ${it.gate}`;
+  if (it.pump) return `${it.pump} pump`;
+  if (it.heater) return `${it.heater} heater`;
+  if (it.water_action) return it.water_action;
+  if (it.heading !== undefined) return `heading "${it.heading}"`;
+  if (it.card) return `card ${(it.card.type || "").replace(/^custom:/, "")}`.trim();
+  if (it.group !== undefined) return "column";
+  if (it.gap) return "gap";
+  return "row";
+}
+
+/* Which panel a plain field belongs to. ROOM_LABELS already names the ones
+ * the form owns, so this only adds the panel in front of it and covers the
+ * fields the form has no row for. */
+const FIELD_WHERE = {
+  climate_entity: "Climate", climate_card: "Climate", climate_modes: "Climate",
+  tv_entity: "Media & remotes", projector_entity: "Media & remotes",
+  receiver_entity: "Media & remotes",
+  media_player: "Music", media_card: "Advanced", music_player: "Music",
+  music_powers: "Music", zone_players: "Music",
+  light_entities: "Lights", landscape_entities: "Landscape",
+  fan_entities: "Fans", bath_fan_entities: "Other fans",
+  fountain_entities: "Pool & water", pool_switch: "Pool & water",
+  spa_switch: "Pool & water", pool_heater: "Pool & water",
+  spa_heater: "Pool & water", water_actions: "Pool & water",
+  alert_sensors: "Door / motion alert", confirm_sensor: "Door / motion alert",
+  cameras: "Cameras", gates: "Gates",
+  remotes: "Media & remotes", video: "Media & remotes",
+  sections: "Advanced",
+};
+
+function refWhere(room, path) {
+  const p = pathParts(path);
+  if (!p.length) return "the room file";
+  const r = room || {};
+  const k = p[0];
+  const nth = (i) => (typeof i === "number" ? i + 1 : "?");
+  const tail = (i) => (typeof p[i] === "string" ? ` \u2192 ${p[i]}` : "");
+
+  /* a custom layout: the builder's own geography */
+  if (k === "layout" || k === "hidden") {
+    const base = k === "layout" ? "Layout" : "Hidden";
+    const top = (r[k] || [])[p[1]];
+    if (top && top.group !== undefined && p[2] === "items") {
+      const col = (typeof top.group === "string" && top.group) || top.title
+                  || `column ${nth(p[1])}`;
+      return `${base} \u2192 ${col} \u2192 row ${nth(p[3])}: ${itemWhere((top.items || [])[p[3]])}`;
+    }
+    return `${base} \u2192 row ${nth(p[1])}: ${itemWhere(top)}`;
+  }
+
+  if (k === "cards") {
+    const slot = p[1] === "start" ? "before everything"
+               : p[1] === "end" ? "after everything"
+               : `after ${BLOCK_LABEL[p[1]] || p[1]}`;
+    return `Extra cards (${slot}) \u2192 card ${nth(p[2])}`;
+  }
+
+  if (k === "video") {
+    const v = r.video || {};
+    if (p[1] === "displays") {
+      const d = (v.displays || [])[p[2]] || {};
+      return `Media & remotes \u2192 screen ${d.name || nth(p[2])}${tail(3)}`;
+    }
+    if (p[1] === "sources")
+      return `Media & remotes \u2192 source "${p[2]}"${tail(3)}`;
+    return `Media & remotes \u2192 video${tail(1)}`;
+  }
+
+  if (k === "remotes") {
+    const spec = (r.remotes || [])[p[1]] || {};
+    return `Media & remotes \u2192 remote ${spec.title || spec.use || nth(p[1])}${tail(2)}`;
+  }
+
+  if (k === "gates") {
+    const g = (r.gates || [])[p[1]];
+    const name = g && typeof g === "object" ? g.name : g;
+    return `Gates \u2192 ${name || nth(p[1])}${tail(2)}`;
+  }
+
+  if (k === "water_actions") {
+    const a = (r.water_actions || [])[p[1]] || {};
+    return `Pool & water \u2192 ${a.name || a.script || a.perform_action || nth(p[1])}`;
+  }
+
+  if (k === "alert_sensors") {
+    const x = (r.alert_sensors || [])[p[1]];
+    const label = x && typeof x === "object" ? (x.label || x.entity) : x;
+    return `Door / motion alert \u2192 ${label || nth(p[1])}${tail(2)}`;
+  }
+
+  const panel = FIELD_WHERE[k];
+  const field = ROOM_LABELS[k];
+  const head = panel && field && panel !== field ? `${panel} \u2192 ${field}`
+             : (panel || field || k);
+  return typeof p[1] === "number" ? `${head} \u2192 #${nth(p[1])}` : head;
+}
+
 function unknownEntities(room, hass) {
   if (!room || !hass || !hass.states) return [];
   const refs = new Map();
@@ -4399,7 +4539,8 @@ function unknownEntities(room, hass) {
     const domain = id.split(".")[0];
     if (!seenDomains.has(domain) && !CORE_DOMAINS.has(domain)) continue;
     if (live[id]) continue;
-    out.push({ id, paths: [...paths].sort() });
+    const where = [...new Set([...paths].map((pt) => refWhere(room, pt)))].sort();
+    out.push({ id, paths: [...paths].sort(), where });
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -4512,7 +4653,7 @@ h4{
   font-family:ui-monospace,Menlo,monospace; font-size:11.5px;
   background:rgba(127,127,127,.16); padding:1px 5px; border-radius:4px;
 }
-.warnwhere{ font-size:11px; color:var(--secondary-text-color); }
+.warnwhere{ font-size:11px; color:var(--secondary-text-color); flex:1; min-width:0; }
 .railbad{
   margin-left:auto; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
   border-radius:9px; background:rgba(255,152,0,.9); color:#000;
@@ -5987,7 +6128,9 @@ class CharroRoomsEditor extends HTMLElement {
       id.textContent = row.id;
       const where = document.createElement("span");
       where.className = "warnwhere";
-      where.textContent = row.paths.join(", ");
+      where.textContent = (row.where || row.paths).join(" \u00b7 ");
+      // the exact path is still the ground truth, one hover away
+      where.title = row.paths.join("\n");
       line.append(id, where);
       this._warn.appendChild(line);
     }
