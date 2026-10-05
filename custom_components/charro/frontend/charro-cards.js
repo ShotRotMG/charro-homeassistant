@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.83.0";
+const VERSION = "4.84.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -420,23 +420,33 @@ function lightCard(l, noDim, fans) {
 /* Body of a room, shared by the pop-up and the page. Each block appears only
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
-const ROOM_SECTIONS = ["climate", "video", "media", "music", "lights", "water",
+const ROOM_SECTIONS = ["climate", "media", "music", "lights", "water",
                        "gates", "cameras", "security"];
 
-/* `music` was carved out of `media` in 4.20, so a room that spelled out its
- * sections before then names only `media`. Rather than silently dropping its
- * player, put `music` back in right behind it. */
+/* A room's own `sections` list is honoured as written, with two exceptions,
+ * both from blocks that have moved. `music` was carved out of `media` in
+ * 4.20, so a room that spelled its sections out before then names only
+ * `media` and would silently drop its player. And `video` was carved out in
+ * 4.29 and merged back in 4.84, so a room may name either or both. */
 function sectionOrder(r) {
-  const order = r.sections && r.sections.length ? [...r.sections] : [...ROOM_SECTIONS];
-  // `music` (4.20) and `video` (4.29) were carved out of `media`, so a room
-  // that spelled out its sections before then names only `media`. Slot the
-  // newer blocks in around it rather than silently dropping their content.
-  if (order.includes("media")) {
-    if (!order.includes("music"))
-      order.splice(order.indexOf("media") + 1, 0, "music");
-    if (!order.includes("video"))
-      order.splice(order.indexOf("media"), 0, "video");
+  let order = r.sections && r.sections.length ? [...r.sections] : [...ROOM_SECTIONS];
+  const namedMedia = order.includes("media");
+
+  /* 4.84: one block for the screens, the remotes and the player. Whichever
+   * of the two came first keeps its position, so merging doesn't drop a
+   * room's televisions to the bottom of the page. */
+  const first = order.findIndex((s) => s === "video" || s === "media");
+  if (first >= 0) {
+    order = order.filter((s) => s !== "video" && s !== "media");
+    order.splice(first, 0, "media");
   }
+
+  /* 4.20: `music` sits right behind the media it was split from. Only for a
+   * room that actually named `media` — a room that named only `video` never
+   * had a music block and shouldn't grow one now. */
+  if (namedMedia && !order.includes("music"))
+    order.splice(order.indexOf("media") + 1, 0, "music");
+
   return order;
 }
 
@@ -526,6 +536,12 @@ function remoteOffCard(spec, watch) {
 /* A remote only makes sense while its device is on, so it is paired with an
  * off-state tile and the two swap in place. Conditional cards do the watching,
  * so it follows state rather than whatever was true when the panel opened. */
+/* The entity a remote spec follows: what decides whether you are looking at
+ * the remote or at its off-state tile. */
+function remoteWatch(spec) {
+  return (spec && (spec.when || spec.media_player || spec.remote || spec.entity)) || "";
+}
+
 function remoteCards(r, templates) {
   const out = [];
   for (const spec of r.remotes || []) {
@@ -536,7 +552,7 @@ function remoteCards(r, templates) {
       continue;
     }
     const card = fillTemplate(clone(tpl), spec);
-    const watch = spec.when || spec.media_player || spec.remote || spec.entity;
+    const watch = remoteWatch(spec);
     if (spec.always || !watch) { out.push(card); continue; }
     out.push({ type: "conditional", conditions: isOn(watch), card });
     if (spec.wake || spec.wake_mac || spec.off_card || spec.off_icon || spec.off_name) {
@@ -930,7 +946,7 @@ if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
  * There are two places a room can name its television and they were not
  * talking to each other. `tv_entity` is the Media section's field, and it
  * is what every chip reads. But most rooms never fill it: they add a screen
- * under Video / remotes instead, and the television is that screen's power
+ * under Media & remotes instead, and the television is that screen's power
  * entity. The result was a room with a properly configured TV and no TV
  * chip, because the chip was watching the field nobody filled in.
  *
@@ -1025,6 +1041,9 @@ function zoneName(power, stem, r, hass) {
 function blockCards(name, r, hass) {
   const out = [];
   const push = (c) => { if (c) out.push(c); };
+  // `video` merged into `media` in 4.84. A layout that still names it draws
+  // the merged block rather than nothing at all.
+  if (name === "video") name = "media";
 
   if (name === "climate" && r.climate_entity) push(climateCard(r, hass));
 
@@ -1049,24 +1068,31 @@ function blockCards(name, r, hass) {
     push(mediaCard(r, hass));
   }
 
-  if (name === "video" && r.video) {
-    if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
-    else push({ type: "custom:charro-video-card", video: r.video,
-                templates: r._remotes || {} });
-  }
-
+  /* 4.84: screens, remotes and the plain AV tiles are one block. There was
+   * never a reason for two: a room has one television, and splitting it
+   * across "Media" and "Video / remotes" meant every room with a TV had to
+   * be told twice about it — and showed it twice when it was.
+   *
+   * Order inside the block: the screens first, because that is what you
+   * walked into the room to use; then the tiles for anything with no remote;
+   * then the loose remotes. */
   if (name === "media") {
+    const screens = new Set();              // what the video half already draws
+    if (r.video) {
+      for (const d of r.video.displays || [])
+        if (d && d.power) screens.add(d.power);
+      if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
+      else push({ type: "custom:charro-video-card", video: r.video,
+                  templates: r._remotes || {} });
+    }
+
     // A device a remote already watches doesn't want a plain tile too: the
     // remote pair covers both states, so the tile would only ever be a
     // duplicate of whichever half is showing.
-    const covered = new Set();
+    const covered = new Set(screens);
     for (const spec of r.remotes || []) {
-      const w = spec.when || spec.media_player || spec.remote || spec.entity;
+      const w = remoteWatch(spec);
       if (w) covered.add(w);
-    }
-    // a screen the video block owns doesn't want a second tile either
-    for (const d of (r.video && r.video.displays) || []) {
-      if (d.power) covered.add(d.power);
     }
     const av = [
       [r.tv_entity, "TV", "mdi:television"],
@@ -1077,7 +1103,12 @@ function blockCards(name, r, hass) {
       push({ type: "grid", columns: av.length > 2 ? 3 : av.length, square: false,
              cards: av.map(([e, n, i]) => ({ type: "tile", entity: e, name: n, icon: i })) });
     }
-    for (const c of remoteCards(r, r._remotes || {})) push(c);
+    /* A loose remote for a screen the video half is already drawing is the
+     * duplicate this merge exists to remove — both faces of it would be on
+     * screen twice, once from the switcher and once from here. The screen
+     * wins, because it knows which source is live. */
+    const loose = (r.remotes || []).filter((s) => !screens.has(remoteWatch(s)));
+    for (const c of remoteCards({ ...r, remotes: loose }, r._remotes || {})) push(c);
   }
 
   if (name === "cameras" && (r.cameras || []).length) {
@@ -1319,9 +1350,39 @@ function migrateMusic(r) {
   return res.changed ? { ...r, layout: res.list } : r;
 }
 
+/* 4.84 merged `video` into `media`. A saved layout may name one, the other,
+ * or both, and "both" is the case that matters: drawing the merged block
+ * twice would put the switcher on screen twice. So collapse them into a
+ * single `media` item at the position of whichever came first, and if the
+ * layout places one while `hidden` parks the other, drop the parked half —
+ * they are one thing now, and the one you can see wins.
+ *
+ * Runs after migrateMusic, so a room that named only `video` doesn't get a
+ * music block it never had. */
+function migrateVideo(r) {
+  const has = (list) => (list || []).some((it) => it &&
+    (it.block === "video" || (it.group !== undefined && has(it.items))));
+  if (!has(r.layout) && !has(r.hidden)) return r;
+
+  let kept = false;                     // the one media item, already placed
+  const walk = (list) => (list || []).flatMap((it) => {
+    if (!it) return [];
+    if (it.group !== undefined) return [{ ...it, items: walk(it.items) }];
+    if (it.block !== "video" && it.block !== "media") return [it];
+    if (kept) return [];                // the second half of the pair
+    kept = true;
+    return [{ ...it, block: "media" }];
+  });
+
+  const out = { ...r };
+  if (r.layout) out.layout = walk(r.layout);
+  if (r.hidden) out.hidden = walk(r.hidden);   // second, so a placed block wins
+  return out;
+}
+
 function roomBody(r, hass) {
   if (!(r.layout && r.layout.length)) return autoBody(r, hass);
-  return layoutBody(migrateMusic(r), hass);
+  return layoutBody(migrateVideo(migrateMusic(r)), hass);
 }
 
 /* Turn a room's automatic arrangement into an explicit layout it can then be
@@ -2437,7 +2498,7 @@ const ROOM_HELPERS = {
   pool_switch: "The pool chip appears only while this is on.",
   pool_heater: "Supplies the temperature and the warming/at-temp colour.",
   fountain_entities: "Fountain, spill, water wall. One chip with a count; tapping turns them all off.",
-  tv_entity: "Only needed if the room has no screen under Video / remotes — " +
+  tv_entity: "Only needed if the room has no screen under Media & remotes — " +
              "otherwise the chip follows that screen's TV on its own. " +
              "Either way it appears only while the TV is on.",
   receiver_entity: "Chip shows the current source while the receiver is on.",
@@ -3355,7 +3416,7 @@ ha-expansion-panel h4:first-of-type{ margin-top:4px; }
 const o_render = (it) => it.render || "mushroom";
 
 const BLOCK_LABEL = {
-  climate: "Climate", video: "Video / remotes", media: "Media",
+  climate: "Climate", media: "Media & remotes",
   music: "Music (every zone)", player: "Media player",
   water: "Pool & spa", gates: "Gates", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
@@ -3534,9 +3595,13 @@ const LayoutUI = {
     if (!Array.isArray(r.hidden)) r.hidden = [];
     // show the split the pop-up already renders, so Save doesn't undo it
     if (r.layout.length) {
-      const m = migrateMusic(r);
-      if (m !== r) r.layout = m.layout;
+      const m = migrateVideo(migrateMusic(r));
+      if (m !== r) { r.layout = m.layout; r.hidden = m.hidden || []; }
     }
+    // 4.84: `video` is no longer a section of its own, so a room that still
+    // names it gets the merged list it is already being rendered with.
+    if (Array.isArray(r.sections) && r.sections.includes("video"))
+      r.sections = sectionOrder(r);
   },
 
   /* Containers are addressed by key: "layout", "hidden", or "g:<index>" for a
@@ -3629,9 +3694,9 @@ const LayoutUI = {
       climate: () => !!r.climate_entity,
       security: () => (r.alert_sensors || []).length,
       cameras: () => (r.cameras || []).length,
-      media: () => !!(r.tv_entity || r.projector_entity || r.receiver_entity || r.remotes),
+      media: () => !!(r.tv_entity || r.projector_entity || r.receiver_entity
+                      || (r.remotes || []).length || r.video),
       music: () => !!((r.music_powers || []).length || r.media_player),
-      video: () => !!r.video,
       player: () => !!(r.media_player || r.media_card),
       water: () => !!(r.pool_switch || r.spa_switch || (r.water_actions || []).length),
       gates: () => (r.gates || []).length,
@@ -5033,7 +5098,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._doorsBox = document.createElement("div");
     this._gatesBox = document.createElement("div");
 
-    const videoHost = this._panel("Video / remotes",
+    const videoHost = this._panel("Media & remotes",
       "Screens, their sources, and every remote", "mdi:remote-tv",
       "_videoOpen", this._videoBox);
     const zoneHost = this._panel("Music",

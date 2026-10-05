@@ -150,6 +150,19 @@ player can be sorted away from a TV remote. A room whose `sections` named
 `music` is already parked in `hidden`, which is read as a decision rather than
 an omission.
 
+Screens went the other way. `video` was its own block from 4.29 and merged
+back into `media` in 4.84: a room has one television, and having to name it
+under two separate sections meant every room with a TV was configured twice
+and — when the TV was on — showed it twice. One block now draws the screens
+first, then a tile for anything with no remote, then the loose remotes. A room
+that still names `video` in `sections`, or places it in a saved `layout`, gets
+a single `media` at whichever position came first; if both are named, the
+second is dropped rather than drawn twice, and a `media` parked in `hidden`
+while `video` is placed is dropped too, since the two are now the same thing
+and the one you can see wins. The same merge removes a loose `remotes` entry
+for a screen the `video` block already draws — the switcher knows which source
+is live, so it wins.
+
 ### Climate
 
 `climate_entity` renders as a single tile row: what the thermostat is doing and
@@ -323,7 +336,7 @@ Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
 
-All of it is editable in the rooms editor under **Video / remotes**: screens
+All of it is editable in the rooms editor under **Media & remotes**: screens
 and sources are lists of objects, which `ha-form` has no good shape for, so
 they get their own rows — add, fill in, remove. The remote template is a
 dropdown of whatever `_remotes.json` holds. The screen picker only appears
@@ -469,7 +482,7 @@ the scalars and the entity lists; six collapsible panels cover the rest:
 
 | panel | what it edits |
 | --- | --- |
-| Video / remotes | the `video` block, and `remotes` for a room with no screen picker |
+| Media & remotes | the `video` block, and `remotes` for a room with no screen picker |
 | Music | `music_powers`, `music_player`, `zone_players` |
 | Pool & water | the pumps, their names and heaters, `fountain_entities`, `water_actions` |
 | Door / motion alert | `alert_sensors` and `confirm_sensor` — which sensors, and for each one its label, icon, opener, garage flag and guard |
@@ -479,9 +492,9 @@ the scalars and the entity lists; six collapsible panels cover the rest:
 Each panel is one subject. Picking the entities and configuring them used to
 be split — the simple fields in an `ha-form` group, the lists of objects in a
 panel below — which put the same subject in two places. The `ha-form` groups
-that had a partner were folded into it, so Music, Pool & water, Video /
-remotes and Door / motion alert are each a single place. Lights, Fans, Climate
-and Media stay in the form, having nothing to merge with.
+that had a partner were folded into it, so Music, Pool & water, Media &
+remotes and Door / motion alert are each a single place. Lights, Fans and
+Climate stay in the form, having nothing to merge with.
 
 In Door / motion alert each sensor is a collapsed row you open for its
 details.
