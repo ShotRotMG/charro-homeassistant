@@ -482,7 +482,7 @@ the scalars and the entity lists; six collapsible panels cover the rest:
 
 | panel | what it edits |
 | --- | --- |
-| Media & remotes | the `video` block, and `remotes` for a room with no screen picker |
+| Media & remotes | `tv_entity`, `projector_entity`, `receiver_entity`, the `video` block, and `remotes` for a room with no screen picker |
 | Music | `music_powers`, `music_player`, `zone_players` |
 | Pool & water | the pumps, their names and heaters, `fountain_entities`, `water_actions` |
 | Door / motion alert | `alert_sensors` and `confirm_sensor` — which sensors, and for each one its label, icon, opener, garage flag and guard |
@@ -495,6 +495,14 @@ panel below — which put the same subject in two places. The `ha-form` groups
 that had a partner were folded into it, so Music, Pool & water, Media &
 remotes and Door / motion alert are each a single place. Lights, Fans and
 Climate stay in the form, having nothing to merge with.
+
+Media was the one that got missed: you named the television in an `ha-form`
+group on one side of the editor and configured the screen it actually is on
+the other. Merging the two render blocks in 4.84 made that hard to ignore, so
+the three plain devices moved into the panel beside the screens. The schema
+itself is unchanged — the dashboard card editor has no panels, so it still
+shows the Media group; the rooms editor filters it out and asks for the same
+three fields itself.
 
 In Door / motion alert each sensor is a collapsed row you open for its
 details.

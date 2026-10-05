@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.86.0";
+const VERSION = "4.87.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3470,6 +3470,7 @@ const LB_CSS = `
 }
 .vfield{ display:flex; flex-direction:column; gap:2px; }
 .vfield > span{ font-size:11.5px; color:var(--secondary-text-color); }
+.vhelp{ font-size:11px; line-height:1.35; color:var(--secondary-text-color); margin:1px 0 2px; }
 .vfield input, .vfield select{
   padding:5px 7px; font-size:12.5px; border-radius:7px;
   border:1px solid var(--divider-color); background:var(--card-background-color);
@@ -5313,7 +5314,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._gatesBox = document.createElement("div");
 
     const videoHost = this._panel("Media & remotes",
-      "Screens, their sources, and every remote", "mdi:remote-tv",
+      "The TV, the screens, their sources, and every remote", "mdi:remote-tv",
       "_videoOpen", this._videoBox);
     const zoneHost = this._panel("Music",
       "Zones, the player, and what each input carries", "mdi:music",
@@ -5824,11 +5825,48 @@ class CharroRoomsEditor extends HTMLElement {
   /* Screens and sources are lists of objects, which ha-form has no good shape
    * for, so they get their own rows: add, fill in, remove. A room with one
    * screen needs no focus select at all, which is the common case. */
+  /* The room's plain AV devices. These were an `ha-form` group called
+   * "Media" on the other side of the editor, which put the same subject in
+   * two places: you named the television over there and configured the
+   * screen it actually is over here. Every other group that had a panel was
+   * folded into it long ago; this one was missed, and the 4.84 merge of the
+   * two render blocks is what made it obvious. */
+  _avFields(box) {
+    const r = this._room;
+    const { ent } = this._fields(() => {
+      this._renderUnknowns();
+      this._renderRail();      // a fixed id should clear the badge at once
+      this._renderPreview();
+    });
+    const set = (k) => (s) => { if (s) r[k] = s; else delete r[k]; };
+    const help = (el, k) => {
+      const t = ROOM_HELPERS[k];
+      if (!t) return el;
+      const h = document.createElement("div");
+      h.className = "vhelp";
+      h.textContent = t;
+      el.appendChild(h);
+      return el;
+    };
+
+    const cap = document.createElement("div");
+    cap.className = "vcap";
+    cap.textContent = "Devices";
+    box.appendChild(cap);
+
+    for (const [k, domains] of [
+      ["tv_entity", ["media_player"]],
+      ["projector_entity", ["switch", "media_player", "light"]],
+      ["receiver_entity", ["media_player"]],
+    ]) box.appendChild(help(ent(ROOM_LABELS[k], r[k], domains, set(k)), k));
+  }
+
   _renderVideo() {
     const box = this._videoBox;
     if (!box) return;
     box.innerHTML = "";
     const v = this._room.video;
+    this._avFields(box);
 
     if (!v) {
       const b = document.createElement("button");
@@ -5846,6 +5884,11 @@ class CharroRoomsEditor extends HTMLElement {
     const { text: field, ent, icon: iconField } = this._fields(() => {
       this._renderVideo(); this._renderPreview();
     });
+
+    const vsw = document.createElement("div");
+    vsw.className = "vcap";
+    vsw.textContent = "Video switching";
+    box.appendChild(vsw);
 
     /* Somewhere to park the whole switcher without throwing it away: a room
      * whose other sources aren't wired up yet wants a TV button and a
@@ -6003,9 +6046,14 @@ class CharroRoomsEditor extends HTMLElement {
     this._remotesInto(box);
   }
 
+  /* ROOM_SCHEMA is shared with the dashboard card editor, which has no
+   * panels — so the Media group is dropped here, not from the schema. The
+   * panel below asks for the same three fields, next to the screens they
+   * belong with. */
   _schema() {
     return ROOM_SCHEMA
       .filter((f) => !["room", "mode"].includes(f.name))
+      .filter((f) => f.title !== "Media")
       .map((f) => (f.type === "expandable" ? { ...f, expanded: this._expanded } : f));
   }
 
@@ -6013,6 +6061,10 @@ class CharroRoomsEditor extends HTMLElement {
     const d = { ...this._room };
     for (const k of RE_LIGHT_LISTS) if (d[k]) d[k] = lightIds(d[k]);
     delete d.cards; delete d.sections;
+    // the panel owns these now. Leaving them in the form's data would let a
+    // later edit anywhere in the form spread a stale copy back over one the
+    // panel had just cleared.
+    delete d.tv_entity; delete d.projector_entity; delete d.receiver_entity;
     return d;
   }
 
