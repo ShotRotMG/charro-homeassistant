@@ -499,6 +499,18 @@ Climate stay in the form, having nothing to merge with.
 In Door / motion alert each sensor is a collapsed row you open for its
 details.
 
+The preview loads the dashboard's Lovelace resources before it renders.
+Those modules — button-card, mushroom, card-mod — are loaded by a dashboard,
+not by Home Assistant, and the rooms editor on the sidebar is a panel, not a
+dashboard. So `charro-room-card` was defined there (the integration injects
+it on every page), built, and then failed on its inner `custom:button-card`,
+which is why every preview said "Configuration error" while the same room
+rendered correctly on a view — and why the only card that did draw was a core
+`tile`. The panel now asks for the same resource list and loads it itself,
+once, the first time a preview is about to render; a resource the page
+already has is not injected again, so the editor placed as a card on a
+dashboard does nothing extra.
+
 An entity the room names and Home Assistant doesn't have — renamed, removed,
 or a typo — is listed above the form, with the badge on the room's rail entry
 so you can see which of twenty-one rooms is broken without opening each one.

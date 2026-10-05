@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.85.0";
+const VERSION = "4.86.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1423,6 +1423,79 @@ function materializeLayout(r) {
   }
   for (const c of extra.end || []) out.push({ card: c });
   return out;
+}
+
+/* Lovelace resources — the modules that define button-card, mushroom and
+ * card-mod — are loaded by the dashboard, not by Home Assistant itself. A
+ * sidebar panel is not a dashboard, so on /charro-rooms none of them exist.
+ * charro-room-card is defined there (the integration injects it on every
+ * page), so it builds happily and then fails the moment it asks for its
+ * inner `custom:button-card` — which is why every preview in the editor
+ * said "Configuration error" while the same room rendered perfectly on a
+ * view, and why the one card that did render was a core `tile`.
+ *
+ * So the panel fetches the same list the dashboard would and loads it
+ * itself. customElements is per-document, so once a module has run its
+ * definitions are there for the preview too.
+ *
+ * Lazily and once: opening the editor to rename a room shouldn't pay for a
+ * few hundred KB of card modules, and nothing is re-injected that the page
+ * already has — on a dashboard, where the editor can also live as a card,
+ * every one of these is already in the document and this does nothing. */
+let _resP = null;
+const _resSeen = new Set();
+
+function _resHere(url) {
+  let abs;
+  try { abs = new URL(url, location.href).href; } catch (e) { return false; }
+  if (_resSeen.has(abs)) return true;
+  for (const n of document.querySelectorAll("script[src], link[href]")) {
+    if (n.src === abs || n.href === abs) { _resSeen.add(abs); return true; }
+  }
+  _resSeen.add(abs);
+  return false;
+}
+
+function loadResource(res) {
+  const url = res && res.url;
+  if (!url || _resHere(url)) return Promise.resolve(null);
+  return new Promise((done) => {
+    let el;
+    if (res.type === "css") {
+      el = document.createElement("link");
+      el.rel = "stylesheet";
+      el.href = url;
+    } else {
+      el = document.createElement("script");
+      el.src = url;
+      // "module" is what everything current ships as; "js" is the legacy
+      // classic script. HA's old html imports stopped working years ago.
+      if (res.type !== "js") el.type = "module";
+    }
+    // one bad URL shouldn't hang every preview behind it
+    el.addEventListener("load", () => done(url), { once: true });
+    el.addEventListener("error", () => {
+      console.warn("Charro Cards: resource failed to load", url);
+      done(null);
+    }, { once: true });
+    document.head.appendChild(el);
+  });
+}
+
+function loadLovelaceResources(hass) {
+  if (_resP) return _resP;
+  if (!hass || !hass.callWS) return Promise.resolve([]);
+  _resP = hass.callWS({ type: "lovelace/resources" })
+    .then((list) => Promise.all((list || []).map(loadResource)))
+    .then((done) => done.filter(Boolean))
+    .catch((err) => {
+      // storage-mode dashboards only; a YAML-mode instance has no such
+      // command, and there is nothing to do about it from here
+      console.warn("Charro Cards: couldn\u2019t read the resource list", err);
+      _resP = null;                      // transient failures can be retried
+      return [];
+    });
+  return _resP;
 }
 
 /* ------------------------------------------------------- room pop-up ----- */
@@ -6068,7 +6141,11 @@ class CharroRoomsEditor extends HTMLElement {
     this._queueSave();
     if (!this._room) return;
     try {
-      const helpers = await window.loadCardHelpers();
+      const [helpers] = await Promise.all([
+        window.loadCardHelpers(),
+        // on the sidebar panel nothing else has loaded button-card yet
+        loadLovelaceResources(this._hass),
+      ]);
       this._prevWrap.innerHTML = "";
 
       if (this._pmode === "popup") {
