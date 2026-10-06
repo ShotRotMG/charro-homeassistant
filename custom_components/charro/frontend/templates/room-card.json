@@ -309,7 +309,7 @@
             ],
             "tv": [
               {
-                "display": "[[[ return (variables.tv_entity && !['off','unavailable','unknown','standby','idle'].includes(states[variables.tv_entity]?.state)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[ const e = variables.tv_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
@@ -320,7 +320,7 @@
             ],
             "projector": [
               {
-                "display": "[[[ return (variables.projector_entity && !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown'].includes(s)) ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
@@ -331,7 +331,7 @@
             ],
             "receiver": [
               {
-                "display": "[[[ return (variables.receiver_entity && !['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[ const e = variables.receiver_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
