@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.92.0";
+const VERSION = "4.93.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4848,14 +4848,28 @@ h4{
 /* Each column scrolls on its own inside a fixed-height workspace, so
  * reaching the bottom of the layout doesn't take the form and the preview
  * with it. Height is the viewport minus HA's header and this card's chrome. */
+/* The four widths are a compromise that can't suit every room: a thirty-row
+ * layout wants the middle wide, a room you're only renaming wants the
+ * preview wide. So the gutters drag. The tracks stay fr so the whole thing
+ * still reflows with the window, and the gutters are real grid tracks
+ * rather than a gap, because a gap can't be grabbed. */
 .grid2{
-  display:grid; gap:18px; align-items:stretch;
-  grid-template-columns:170px minmax(240px,.72fr) minmax(330px,.95fr) minmax(300px,.5fr);
+  --gut:18px; --c1:170fr; --c2:720fr; --c3:950fr; --c4:500fr;
+  display:grid; gap:0; align-items:stretch;
+  grid-template-columns:
+    minmax(120px,var(--c1)) var(--gut) minmax(200px,var(--c2)) var(--gut)
+    minmax(240px,var(--c3)) var(--gut) minmax(260px,var(--c4));
   height:calc(100vh - 210px); min-height:420px;
 }
-.grid2.pop{
-  grid-template-columns:170px minmax(220px,.6fr) minmax(280px,.8fr) minmax(430px,1.4fr);
+.grid2.pop{ --c2:600fr; --c3:800fr; --c4:1400fr; }
+.gut{ cursor:col-resize; position:relative; touch-action:none; }
+.gut::after{
+  content:""; position:absolute; top:0; bottom:0; left:50%; width:2px;
+  transform:translateX(-50%); background:var(--divider-color);
+  border-radius:1px; opacity:0; transition:opacity .12s;
 }
+.gut:hover::after{ opacity:1; }
+.gut.on::after{ opacity:1; background:var(--primary-color); }
 .colscroll{ overflow-y:auto; overflow-x:hidden; padding-right:6px; min-height:0; }
 .colscroll::-webkit-scrollbar{ width:8px; }
 .colscroll::-webkit-scrollbar-thumb{
@@ -4928,11 +4942,16 @@ button.histrow:hover{ background:rgba(127,127,127,.16); }
 .autow{ display:inline-flex; align-items:center; gap:6px; font-size:13px;
   color:var(--secondary-text-color); cursor:pointer; }
 @media (max-width:1280px){
-  .grid2, .grid2.pop{ grid-template-columns:150px minmax(0,1fr) minmax(300px,.8fr); }
-  .preview{ display:none; }
+  .grid2, .grid2.pop{
+    grid-template-columns:
+      minmax(120px,var(--c1)) var(--gut) minmax(200px,var(--c2))
+      var(--gut) minmax(240px,var(--c3));
+  }
+  .preview, .gut3{ display:none; }
 }
 @media (max-width:820px){
   .grid2, .grid2.pop{ grid-template-columns:1fr; height:auto; }
+  .gut{ display:none; }
   .colscroll{ overflow:visible; }
   .rail{ flex-direction:row; flex-wrap:wrap; border-right:none;
     border-bottom:1px solid var(--divider-color); padding:0 0 8px; }
@@ -4991,6 +5010,75 @@ td input[type=text]{ width:100%; padding:5px 7px; font-size:13px; }
   :host(.panelmode) .grid2{ height:auto; }
 }
 ` + LB_CSS;
+
+/* Where you left the gutters, per browser. Storage can be off or throw, and
+ * a panel that won't open because localStorage said no would be a silly way
+ * to lose an editor, so every touch of it is guarded and the widths simply
+ * don't stick when it isn't there. */
+const COLS_KEY = "charro-rooms-cols";
+const COL_MIN = [120, 200, 240, 260];
+
+function readCols() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(COLS_KEY) || "null");
+    return Array.isArray(v) && v.length === 4
+        && v.every((n) => Number(n) > 0) ? v.map(Number) : null;
+  } catch (e) { return null; }
+}
+
+function writeCols(v) {
+  try {
+    if (v) window.localStorage.setItem(COLS_KEY, JSON.stringify(v.map(Math.round)));
+    else window.localStorage.removeItem(COLS_KEY);
+  } catch (e) { /* nothing to do: the widths just won't be remembered */ }
+}
+
+/* Pixels are written back as fr. They are proportional either way, and fr
+ * keeps the columns sharing the window instead of overflowing it when the
+ * browser is next a different size. */
+function applyCols(el, v) {
+  for (let i = 0; i < 4; i++) {
+    if (v) el.style.setProperty(`--c${i + 1}`, `${Math.round(v[i])}fr`);
+    else el.style.removeProperty(`--c${i + 1}`);
+  }
+}
+
+function mountGutters(cols, kids) {
+  const widths = () => kids.map((k) => k.getBoundingClientRect().width);
+  for (let i = 0; i < 3; i++) {
+    const g = document.createElement("div");
+    g.className = `gut gut${i + 1}`;
+    g.title = "Drag to resize \u2014 double-click to reset";
+    cols.insertBefore(g, kids[i + 1]);
+
+    let startX = 0, a = 0, b = 0, base = null;
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      const next = base.slice();
+      next[i] = Math.max(COL_MIN[i], a + dx);
+      next[i + 1] = Math.max(COL_MIN[i + 1], b - dx);
+      applyCols(cols, next);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      g.classList.remove("on");
+      document.body.style.userSelect = "";
+      writeCols(widths());
+    };
+    g.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      base = widths();
+      a = base[i]; b = base[i + 1];
+      startX = ev.clientX;
+      g.classList.add("on");
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+    g.addEventListener("dblclick", () => { applyCols(cols, null); writeCols(null); });
+  }
+}
 
 class CharroRoomsEditor extends HTMLElement {
   static getStubConfig() { return { type: "custom:charro-rooms-editor", rooms: [] }; }
@@ -5260,6 +5348,8 @@ class CharroRoomsEditor extends HTMLElement {
     this._prevWrap = document.createElement("div");
     right.append(prow, this._prevWrap);
     cols.append(this._rail, this._left, this._mid, right);
+    mountGutters(cols, [this._rail, this._left, this._mid, right]);
+    applyCols(cols, readCols());
 
     this._warn = document.createElement("div");
     this._warn.className = "warnbox";

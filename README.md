@@ -648,6 +648,12 @@ A `perform_action` is a service name, not an entity, so `script.toggle` and
 entities. A script called by its own name is still checked, since that one
 can genuinely disappear.
 
+The four columns resize. Drag the gutter between any two; double-click one to
+put all four back. Widths are remembered per browser, and the tracks stay `fr`
+so the workspace still reflows when the window changes size rather than
+overflowing it. A column stops at its minimum rather than disappearing, and
+whichever one you were squeezing simply stops giving ground.
+
 The layout builder owns arrangement, and the per-light table covers name,
 icon, render, dimming and counting for rooms that never take their layout over.
 
