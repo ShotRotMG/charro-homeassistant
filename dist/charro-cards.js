@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.93.0";
+const VERSION = "4.94.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3645,6 +3645,15 @@ const LB_CSS = `
 }
 .vfield{ display:flex; flex-direction:column; gap:2px; }
 .vfield > span{ font-size:11.5px; color:var(--secondary-text-color); }
+.vdet{ margin-top:2px; }
+.vdet > summary{
+  cursor:pointer; font-size:11.5px; color:var(--secondary-text-color);
+  padding:5px 0; list-style:none; user-select:none;
+}
+.vdet > summary::-webkit-details-marker{ display:none; }
+.vdet > summary::before{ content:"\u25B8 "; }
+.vdet[open] > summary::before{ content:"\u25BE "; }
+.vdet ha-selector{ display:block; margin:4px 0 6px; }
 .vhelp{ font-size:11px; line-height:1.35; color:var(--secondary-text-color); margin:1px 0 2px; }
 .vfield input, .vfield select{
   padding:5px 7px; font-size:12.5px; border-radius:7px;
@@ -6155,6 +6164,16 @@ class CharroRoomsEditor extends HTMLElement {
     vsw.textContent = "Video switching";
     box.appendChild(vsw);
 
+    const sfField = ent("Current source comes from", v.source_from,
+      ["media_player", "select", "input_select"],
+      (s) => { if (s) v.source_from = s; else delete v.source_from; },
+      "media_player.vsx_lx305");
+    sfField.title = "The receiver \u2014 or the matrix\u2019s own select \u2014 that " +
+      "actually knows which source is live. Set it and the card reads the " +
+      "live source from there and draws its own buttons, so the room needs " +
+      "no input_select helper and no automation per source.";
+    box.appendChild(sfField);
+
     /* Somewhere to park the whole switcher without throwing it away: a room
      * whose other sources aren't wired up yet wants a TV button and a
      * remote, not a source picker with one option. */
@@ -6288,6 +6307,82 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(ent("Volume goes to", spec.volume, ["media_player"], (s) => {
         if (s) spec.volume = s; else delete spec.volume; },
         "the screen's own media_player"));
+
+      /* Which input this is on whatever reports the live source. A receiver
+       * publishes its own source_list, so this is a list of the real names
+       * rather than a box to mistype one into. */
+      const sfSt = v.source_from && this._hass.states[v.source_from];
+      const slist = (sfSt && sfSt.attributes && sfSt.attributes.source_list) || null;
+      if (slist && slist.length) {
+        const w = document.createElement("label");
+        w.className = "vfield";
+        const t = document.createElement("span");
+        t.textContent = "Its input on " +
+          ((sfSt.attributes && sfSt.attributes.friendly_name) || v.source_from);
+        const dd = document.createElement("select");
+        const opts = [""].concat(slist);
+        if (spec.input && !slist.includes(spec.input)) opts.push(spec.input);
+        for (const o of opts) {
+          const op = document.createElement("option");
+          op.value = o;
+          op.textContent = o || "\u2014 none \u2014";
+          if ((spec.input || "") === o) op.selected = true;
+          dd.appendChild(op);
+        }
+        dd.addEventListener("change", () => {
+          if (dd.value) spec.input = dd.value; else delete spec.input;
+          changed();
+        });
+        w.append(t, dd);
+        row.appendChild(w);
+      } else {
+        row.appendChild(field("Its input on the receiver", spec.input, (s) => {
+          if (s) spec.input = s; else delete spec.input; },
+          v.source_from ? "the receiver\u2019s name for this input"
+                        : "set \u201cCurrent source comes from\u201d first"));
+      }
+
+      /* Home Assistant's own action editor, which ha-selector lazy-loads the
+       * first time one is asked for. Add, remove, reorder, every service and
+       * each service's own fields are all HA's - a hand-built version would
+       * be a worse copy that drifts out of date, and this is the whole
+       * reason a room no longer needs an automation per source. */
+      const det = document.createElement("details");
+      det.className = "vdet";
+      const sum = document.createElement("summary");
+      const label = () => {
+        const n = (spec.do || []).length;
+        sum.textContent = n ? `What picking this does \u2014 ${n} action${n > 1 ? "s" : ""}`
+                            : "What picking this does \u2014 nothing yet";
+      };
+      label();
+      det.appendChild(sum);
+      if (customElements.get("ha-selector")) {
+        const sel = document.createElement("ha-selector");
+        sel.hass = this._hass;
+        sel.selector = { action: {} };
+        sel.value = spec.do || [];
+        sel.addEventListener("value-changed", (ev) => {
+          ev.stopPropagation();
+          const val = ev.detail && ev.detail.value;
+          if (val && val.length) spec.do = val; else delete spec.do;
+          label();
+          /* Deliberately not the panel's redraw: rebuilding this box under
+           * the editor would take the focus and the half-finished row with
+           * it. The preview redraw is what queues the save - debounced,
+           * because the action editor reports every field as you touch it
+           * and rebuilding the whole room card that often is wasteful. */
+          clearTimeout(this._doT);
+          this._doT = setTimeout(() => this._renderPreview(), 400);
+        });
+        det.appendChild(sel);
+      } else {
+        const note = document.createElement("div");
+        note.className = "vnote";
+        note.textContent = "Home Assistant\u2019s action editor isn\u2019t available on this page.";
+        det.appendChild(note);
+      }
+      row.appendChild(det);
 
       const x = document.createElement("button");
       x.className = "vdel"; x.textContent = "Remove source";

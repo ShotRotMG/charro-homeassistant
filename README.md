@@ -371,6 +371,21 @@ the same thing you'd write in an automation, pasted straight across:
 }
 ```
 
+All of it is editable in the rooms editor, and none of it is JSON. Each
+source gets **Home Assistant's own action editor** — `ha-selector` with an
+`action` selector, which is the component the automation page uses, so add,
+remove, drag-to-reorder, every service and each service's own fields are all
+HA's. Nothing is written to `automations.yaml` and no automation entity is
+created: the list lives in the room file and the card calls the services
+itself. The trade is that these have no automation traces, so a misbehaving
+step shows up in the browser console and the logbook rather than a trace view
+— fine for "turn on three things and pick an input", and anything genuinely
+conditional should be a real automation the source calls.
+
+`Its input` is a dropdown of the receiver's own `source_list` once
+`Current source comes from` is set, so the input names come from the receiver
+rather than being typed.
+
 This is what an `input_select` helper and one automation per source used to
 be. There is no little language in the middle, so anything an automation can
 do a source can do — a Harmony `send_command` with its repeats and hold, a
