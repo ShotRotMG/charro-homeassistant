@@ -413,6 +413,42 @@ so the plain tile would only ever duplicate whichever half is showing. Those
 keys still draw their own tile in rooms with no remote configured, and
 `tv_entity` still drives the now-playing chip on the room tile either way.
 
+Most rooms never fill `tv_entity` in, though — they add a screen under Media &
+remotes instead — so when it is blank the screens answer the question.
+
+A screen's `power` doesn't have to be the television. A set fed by the RTI
+matrix is switched over HDMI-CEC, so its power entity is the matrix's `switch`
+— which is the one control path a recent Samsung still honours reliably, and
+far better than asking the TV's own network stack to wake up. But a switch can
+only switch: no volume, no buttons, nothing playing. So a screen can also name
+its own `media_player`, and then the two do different jobs:
+
+```json
+"displays": [
+  { "name": "Bar",
+    "power": "switch.vhd8x_bar_power",
+    "media_player": "media_player.saloon_bar_samsung_q60_55" }
+]
+```
+
+`power` says whether the screen is on and turns it on; `media_player` carries
+the remote, the volume and what's playing. The remote still appears and
+disappears on `power`, so the pair follows what the matrix reports rather than
+what the television claims about itself. Both are entity pickers in the editor.
+
+The room's TV chip then follows the screen's `media_player` when it has one,
+and its `power` otherwise, preferring a real player across screens since that
+is the one that knows what's on. The single exclusion is `projector_entity`:
+Theatre's screen is powered by `switch.theatre_projector`, which already has
+its own chip, and promoting it to "the TV" would show one device twice under
+two icons.
+
+A chip is drawn only when its entity actually exists. A `media_player` that
+has been deleted from Home Assistant leaves the room file naming an id that
+resolves to nothing, and an absent state used to read as "not off" and light
+the chip up — a removed television claiming to be on. The editor lists that id
+as unknown, with where in the room it is.
+
 Name a template that doesn't exist and you get a card saying so, rather than
 silence.
 

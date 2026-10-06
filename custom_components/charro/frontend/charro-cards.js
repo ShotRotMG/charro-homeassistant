@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.88.0";
+const VERSION = "4.89.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -615,19 +615,22 @@ function videoSimpleCards(r, hass) {
   const out = [];
   for (const d of v.displays || []) {
     if (!d || !d.power) continue;
+    /* What a remote would drive. For a screen on the matrix that is its own
+     * media_player, not the CEC switch that powers it. */
+    const tv = screenTv(d);
     let own = null;
     for (const src of Object.values(v.sources || {})) {
-      if (src && src.media_player === d.power) { own = src; break; }
+      if (src && (src.media_player === d.power || src.media_player === tv)) { own = src; break; }
     }
     /* Nothing configured for this screen: work out what it is. The remote
      * entity is the same object id in the remote domain, which is how both
      * Samsung integrations name their pair — only used when it really
      * exists, so a guess can't invent an entity. */
     if (!own) {
-      const use = guessRemote(d.power, templates);
+      const use = guessRemote(tv, templates);
       if (use) {
-        own = { use, media_player: d.power };
-        const mate = "remote." + d.power.replace(/^[a-z_]+\./, "");
+        own = { use, media_player: tv };
+        const mate = "remote." + tv.replace(/^[a-z_]+\./, "");
         if (hass && hass.states && hass.states[mate]) own.remote = mate;
       }
     }
@@ -648,6 +651,11 @@ function videoSimpleCards(r, hass) {
       // remoteCards only draws the off face when the spec asks for one
       off_name: d.name || own.title || "TV",
       off_icon: d.icon || "mdi:television",
+      // the switcher fills these in; a template that uses them for volume
+      // shouldn't render a literal {{display_media}} just because the room
+      // isn't using the switcher
+      display: d.name || "",
+      display_media: tv,
     });
     // waking belongs to the screen, not to whichever box is feeding it
     if (d.wake) spec.wake = d.wake;
@@ -951,19 +959,31 @@ if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
  * chip, because the chip was watching the field nobody filled in.
  *
  * So tv_entity still wins when it is set, and otherwise the screens answer
- * the question. Only a media_player counts: Theatre's display is powered by
- * switch.theatre_projector, which is its projector and already has its own
- * chip, and promoting that to "the TV" would show one device twice under
- * two icons. The projector entity is excluded explicitly for the same
- * reason, in case a room names it both ways. */
+ * the question. What is excluded is the projector: Theatre's display is
+ * powered by switch.theatre_projector, which already has its own chip, and
+ * promoting it to "the TV" would show one device twice under two icons.
+ *
+ * 4.89: a screen's power doesn't have to be a media_player. A television fed
+ * by the RTI matrix is switched over HDMI-CEC, so its power entity is the
+ * matrix's switch - reliable, because CEC is the one control path a modern
+ * Samsung still honours. But a switch can only switch: it has no volume, no
+ * buttons, nothing playing. So a screen can name its own `media_player` as
+ * well, and then the two do different jobs - the switch says whether the
+ * screen is on and turns it on, the player carries the remote. That player
+ * is what the chip follows when it is set, since it is the one that knows
+ * what is on screen. */
+function screenTv(d) {
+  return (d && (d.media_player || d.power)) || "";
+}
+
 function roomTv(r) {
   if (!r) return "";
   if (r.tv_entity) return r.tv_entity;
-  for (const d of (r.video && r.video.displays) || []) {
-    const p = d && d.power;
-    if (p && p.startsWith("media_player.") && p !== r.projector_entity) return p;
-  }
-  return "";
+  const screens = ((r.video && r.video.displays) || [])
+    .filter((d) => d && d.power !== r.projector_entity)
+    .map(screenTv)
+    .filter((p) => p && p !== r.projector_entity);
+  return screens.find((p) => p.startsWith("media_player.")) || screens[0] || "";
 }
 
 const garageSensors = (r, hass) =>
@@ -1079,8 +1099,10 @@ function blockCards(name, r, hass) {
   if (name === "media") {
     const screens = new Set();              // what the video half already draws
     if (r.video) {
-      for (const d of r.video.displays || [])
+      for (const d of r.video.displays || []) {
         if (d && d.power) screens.add(d.power);
+        if (d && d.media_player) screens.add(d.media_player);
+      }
       if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
       else push({ type: "custom:charro-video-card", video: r.video,
                   templates: r._remotes || {} });
@@ -2891,7 +2913,8 @@ class CharroVideoCard extends HTMLElement {
     }
     // the display's own volume, so the buttons act on the screen you're at
     add(fillTemplate(clone(tpl), { title: spec.title || src, ...spec,
-                                   display: d.name, display_media: d.power || "" }));
+                                   display: d.name,
+                                   display_media: screenTv(d) }));
   }
 }
 def("charro-video-card", CharroVideoCard);
@@ -5941,6 +5964,15 @@ class CharroRoomsEditor extends HTMLElement {
         ["media_player", "switch", "remote"],
         (s) => { if (s) d.power = s; else delete d.power; },
         "media_player.kitchen_samsung_55_2"));
+      const tvf = ent("Its TV, if that isn\u2019t the screen itself", d.media_player,
+        ["media_player"],
+        (s) => { if (s) d.media_player = s; else delete d.media_player; },
+        "media_player.saloon_bar_samsung_q60_55");
+      tvf.title = "Fill this in when the screen is powered by something other " +
+        "than the television \u2014 a matrix switching it over HDMI-CEC, say. " +
+        "The power entity says whether it is on and turns it on; this one " +
+        "carries the remote, the volume and what is playing.";
+      row.appendChild(tvf);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
