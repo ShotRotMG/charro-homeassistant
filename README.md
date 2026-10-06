@@ -416,25 +416,48 @@ keys still draw their own tile in rooms with no remote configured, and
 Most rooms never fill `tv_entity` in, though — they add a screen under Media &
 remotes instead — so when it is blank the screens answer the question.
 
-A screen's `power` doesn't have to be the television. A set fed by the RTI
-matrix is switched over HDMI-CEC, so its power entity is the matrix's `switch`
-— which is the one control path a recent Samsung still honours reliably, and
-far better than asking the TV's own network stack to wake up. But a switch can
-only switch: no volume, no buttons, nothing playing. So a screen can also name
-its own `media_player`, and then the two do different jobs:
+A screen is two questions that usually have one answer: **what is it**, and
+**what turns it on**. For a television wired straight to the wall they're the
+same entity, so a room fills in `screen` and leaves `power` blank. For a set
+fed by the RTI matrix they come apart:
 
 ```json
 "displays": [
-  { "name": "Bar",
-    "power": "switch.vhd8x_bar_power",
-    "media_player": "media_player.saloon_bar_samsung_q60_55" }
+  { "name": "TV",
+    "screen": "media_player.kitchen_samsung_55_2",
+    "power":  "switch.rti_vhd_8x_video_kitchen_power" }
 ]
 ```
 
-`power` says whether the screen is on and turns it on; `media_player` carries
-the remote, the volume and what's playing. The remote still appears and
-disappears on `power`, so the pair follows what the matrix reports rather than
-what the television claims about itself. Both are entity pickers in the editor.
+`screen` is the television — the remote, the volume, what's playing, and what
+the room's TV chip follows. `power` is what actually turns it on and reports
+whether it's on, which for these sets is the matrix switching them over
+HDMI-CEC: the one control path a recent Samsung still honours, and far better
+than asking the TV's own network stack to wake up. A switch can only switch —
+no volume, no buttons, nothing playing — which is exactly why it isn't asked to
+be the screen.
+
+Either field answers for the other when it's blank, so a room that fills in
+only one still works. `screen` takes a `media_player`, a `remote` or a `switch`;
+`power` takes any of those too, since what powers a screen varies. The remote
+appears and disappears on `power`, so the pair follows what the matrix reports
+rather than what the television claims about itself.
+
+Rooms saved before this called the TV `power`, and 4.89–4.90 briefly called it
+`media_player`; both are still read, and the editor folds them into `screen`
+when you open the room so a save writes the current shape.
+
+That second field takes a `remote` as well as a `media_player`. A player is
+better when the television has one, since it is what reports what's on screen
+and what a volume template reads its level from — but a set with only a remote
+entity still gets its buttons. Whichever half is named, the other is looked for
+under the same object id in the other domain and used only if it really exists,
+which is how both Samsung integrations name their pairs.
+
+Note that the matrix output stays a `switch`, deliberately. MQTT discovery has
+no `media_player` platform, and a CEC output has no transport, no volume state
+and no media title to report — so dressing it as a player would mean a custom
+component producing a shell. Two honest entities beat one that pretends.
 
 The room's TV chip then follows the screen's `media_player` when it has one,
 and its `power` otherwise, preferring a real player across screens since that

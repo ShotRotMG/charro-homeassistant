@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.89.0";
+const VERSION = "4.91.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -614,13 +614,13 @@ function videoSimpleCards(r, hass) {
   const templates = (r && r._remotes) || {};
   const out = [];
   for (const d of v.displays || []) {
-    if (!d || !d.power) continue;
+    if (!d || !screenPower(d)) continue;
     /* What a remote would drive. For a screen on the matrix that is its own
      * media_player, not the CEC switch that powers it. */
     const tv = screenTv(d);
     let own = null;
     for (const src of Object.values(v.sources || {})) {
-      if (src && (src.media_player === d.power || src.media_player === tv)) { own = src; break; }
+      if (src && (src.media_player === screenPower(d) || src.media_player === tv)) { own = src; break; }
     }
     /* Nothing configured for this screen: work out what it is. The remote
      * entity is the same object id in the remote domain, which is how both
@@ -629,13 +629,21 @@ function videoSimpleCards(r, hass) {
     if (!own) {
       const use = guessRemote(tv, templates);
       if (use) {
-        own = { use, media_player: tv };
-        const mate = "remote." + tv.replace(/^[a-z_]+\./, "");
-        if (hass && hass.states && hass.states[mate]) own.remote = mate;
+        /* Both Samsung integrations name the pair with the same object id in
+         * two domains, so whichever half the room gave us, look for the
+         * other - and only use it if it really exists, so a guess can't
+         * invent an entity. */
+        const stem = tv.replace(/^[a-z_]+\./, "");
+        const isRemote = tv.startsWith("remote.");
+        own = isRemote ? { use, remote: tv } : { use, media_player: tv };
+        const mate = (isRemote ? "media_player." : "remote.") + stem;
+        if (hass && hass.states && hass.states[mate]) {
+          if (isRemote) own.media_player = mate; else own.remote = mate;
+        }
       }
     }
     if (!own || !own.use) {
-      const bare = { type: "tile", entity: d.power,
+      const bare = { type: "tile", entity: screenPower(d),
                      name: d.name || "", icon: d.icon || "mdi:television" };
       // no remote template, but a MAC still beats a turn_on that goes nowhere
       if (d.wake || d.wake_mac) {
@@ -647,7 +655,7 @@ function videoSimpleCards(r, hass) {
       continue;
     }
     const spec = Object.assign({}, own, {
-      when: d.power,
+      when: screenPower(d),
       // remoteCards only draws the off face when the spec asks for one
       off_name: d.name || own.title || "TV",
       off_icon: d.icon || "mdi:television",
@@ -655,7 +663,11 @@ function videoSimpleCards(r, hass) {
       // shouldn't render a literal {{display_media}} just because the room
       // isn't using the switcher
       display: d.name || "",
-      display_media: tv,
+      // volume belongs to a player. A remote-only screen has none, and a
+      // template that asks for one should get a blank rather than a remote
+      // entity it will try to read a volume level off.
+      display_media: own.media_player
+                     || (tv.startsWith("media_player.") ? tv : ""),
     });
     // waking belongs to the screen, not to whichever box is feeding it
     if (d.wake) spec.wake = d.wake;
@@ -972,15 +984,39 @@ if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
  * screen is on and turns it on, the player carries the remote. That player
  * is what the chip follows when it is set, since it is the one that knows
  * what is on screen. */
+/* A screen is two questions that are usually one answer: what is it, and
+ * what turns it on. For a television wired straight to the wall they are the
+ * same entity and only `screen` is filled in. For a set fed by the RTI
+ * matrix they come apart - `screen` is the TV, carrying the remote, the
+ * volume and what is playing, and `power` is the matrix switch, which is
+ * what actually turns it on over HDMI-CEC and what reports whether it is on.
+ *
+ * Either field answers for the other when it is blank, so a room that fills
+ * in only one still works, and `media_player` is read as `screen` for rooms
+ * saved by 4.89 and 4.90, when that was its name. */
 function screenTv(d) {
-  return (d && (d.media_player || d.power)) || "";
+  return (d && (d.screen || d.media_player || d.power)) || "";
+}
+
+function screenPower(d) {
+  return (d && (d.power || d.screen || d.media_player)) || "";
+}
+
+/* Fold an older screen into the two fields. The editor does this on load, so
+ * the boxes show what the room is really doing and a save writes it back in
+ * the current shape. */
+function migrateScreen(d) {
+  if (!d || typeof d !== "object" || d.screen) return false;
+  if (d.media_player) { d.screen = d.media_player; delete d.media_player; return true; }
+  if (d.power) { d.screen = d.power; delete d.power; return true; }
+  return false;
 }
 
 function roomTv(r) {
   if (!r) return "";
   if (r.tv_entity) return r.tv_entity;
   const screens = ((r.video && r.video.displays) || [])
-    .filter((d) => d && d.power !== r.projector_entity)
+    .filter((d) => d && screenPower(d) !== r.projector_entity)
     .map(screenTv)
     .filter((p) => p && p !== r.projector_entity);
   return screens.find((p) => p.startsWith("media_player.")) || screens[0] || "";
@@ -1100,8 +1136,8 @@ function blockCards(name, r, hass) {
     const screens = new Set();              // what the video half already draws
     if (r.video) {
       for (const d of r.video.displays || []) {
-        if (d && d.power) screens.add(d.power);
-        if (d && d.media_player) screens.add(d.media_player);
+        if (screenPower(d)) screens.add(screenPower(d));
+        if (screenTv(d)) screens.add(screenTv(d));
       }
       if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
       else push({ type: "custom:charro-video-card", video: r.video,
@@ -2770,7 +2806,7 @@ class CharroVideoCard extends HTMLElement {
     const h = this._hass;
     if (!h || !h.states) return "";
     const ids = [this._v.focus].filter(Boolean).concat(
-      (this._v.displays || []).flatMap((d) => [d.source, d.power].filter(Boolean)));
+      (this._v.displays || []).flatMap((d) => [d.source, screenPower(d)].filter(Boolean)));
     return ids.map((e) => `${e}=${h.states[e] ? h.states[e].state : "_"}`).join(";");
   }
 
@@ -2796,8 +2832,9 @@ class CharroVideoCard extends HTMLElement {
   }
   _isLive(d) {
     if (!d) return false;
-    if (d.power) {
-      const st = this._hass.states[d.power];
+    const p = screenPower(d);
+    if (p) {
+      const st = this._hass.states[p];
       if (st) return !OFFISH.includes(st.state);
     }
     const s = this._sourceOf(d);
@@ -2879,8 +2916,9 @@ class CharroVideoCard extends HTMLElement {
     // ---- and the buttons for it
     const src = this._sourceOf(d);
     if (!src || src === off) {
-      if (d.power) {
-        add({ type: "tile", entity: d.power, name: d.name,
+      const p = screenPower(d);
+      if (p) {
+        add({ type: "tile", entity: p, name: d.name,
               icon: d.off_icon || "mdi:television-off", hide_state: true,
               tap_action: { action: "toggle" }, icon_tap_action: { action: "toggle" } });
       } else {
@@ -5957,22 +5995,25 @@ class CharroRoomsEditor extends HTMLElement {
         many ? "must match a picker option" : "TV"));
       row.appendChild(iconField("Icon", d.icon,
         (s) => { if (s) d.icon = s; else delete d.icon; }));
+      migrateScreen(d);
+      const scr = ent("Screen", d.screen, ["media_player", "switch", "remote"],
+        (s) => { if (s) d.screen = s; else delete d.screen; },
+        "media_player.kitchen_samsung_55_2");
+      scr.title = "The television itself \u2014 what the remote drives, where the " +
+        "volume goes, and what the room\u2019s TV chip follows.";
+      row.appendChild(scr);
+      const tvf = ent("Screen power, if something else switches it", d.power,
+        ["switch", "media_player", "remote"],
+        (s) => { if (s) d.power = s; else delete d.power; },
+        "switch.rti_vhd_8x_video_kitchen_power");
+      tvf.title = "Leave this blank when the screen turns itself on. Fill it in " +
+        "when something else does \u2014 the RTI matrix switching it over " +
+        "HDMI-CEC, say. Then this is what the on/off button presses and what " +
+        "says whether the screen is on, while Screen above keeps the remote.";
+      row.appendChild(tvf);
       row.appendChild(ent("Source select", d.source, ["input_select", "select"],
         (s) => { if (s) d.source = s; else delete d.source; },
-        "input_select.kitchen_media_select"));
-      row.appendChild(ent("The screen itself", d.power,
-        ["media_player", "switch", "remote"],
-        (s) => { if (s) d.power = s; else delete d.power; },
-        "media_player.kitchen_samsung_55_2"));
-      const tvf = ent("Its TV, if that isn\u2019t the screen itself", d.media_player,
-        ["media_player"],
-        (s) => { if (s) d.media_player = s; else delete d.media_player; },
-        "media_player.saloon_bar_samsung_q60_55");
-      tvf.title = "Fill this in when the screen is powered by something other " +
-        "than the television \u2014 a matrix switching it over HDMI-CEC, say. " +
-        "The power entity says whether it is on and turns it on; this one " +
-        "carries the remote, the volume and what is playing.";
-      row.appendChild(tvf);
+        "select.rti_vhd_8x_video_kitchen_source"));
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
