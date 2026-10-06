@@ -336,6 +336,63 @@ Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
 
+### What picking a source does
+
+A source can carry its own actions, written in Home Assistant's own shape —
+the same thing you'd write in an automation, pasted straight across:
+
+```json
+"video": {
+  "source_from": "media_player.vsx_lx305",
+  "sources": {
+    "AppleTV": {
+      "input": "AppleTV", "use": "apple_tv",
+      "media_player": "media_player.theatre_appletv",
+      "do": [
+        { "action": "media_player.turn_on",
+          "target": { "entity_id": ["media_player.vsx_lx305",
+                                    "media_player.theatre_appletv",
+                                    "media_player.theatre_projector"] } }
+      ]
+    },
+    "Off": {
+      "do": [
+        { "action": "media_player.turn_off",
+          "target": { "entity_id": ["media_player.xbox", "media_player.theatre_appletv",
+                                    "media_player.vsx_lx305", "media_player.theatre_projector"] } },
+        { "delay": 0.5 },
+        { "action": "remote.send_command",
+          "target": { "entity_id": "remote.harmony_hub" },
+          "data": { "device": "83001072", "command": "PowerOff",
+                    "num_repeats": 1, "delay_secs": 0.4 } }
+      ]
+    }
+  }
+}
+```
+
+This is what an `input_select` helper and one automation per source used to
+be. There is no little language in the middle, so anything an automation can
+do a source can do — a Harmony `send_command` with its repeats and hold, a
+script, a scene. A step is an action, or `{ "delay": 1.5 }` to wait between
+two. One failing step is logged and the rest still run, because a receiver
+that is already on shouldn't stop the projector coming up.
+
+`input` is the only sugar: with `source_from` set, the `select_source` call is
+appended for you, since every room was writing the same one. `source_from` can
+be the receiver's `media_player` — then the live source is read from its
+`source` attribute — or a `select`, which is what the RTI matrix publishes per
+output; then it's read from the state.
+
+**`Off` is an ordinary entry with its own actions**, deliberately not derived
+from the others. A room that has to send a PowerOff to a Harmony can't be
+guessed at, and a wrong guess turns the wrong things off. It's the entry that
+shows as live whenever `source_from` reports off.
+
+With `source_from` set the card draws its own source buttons in place of the
+dropdown, highlighting whichever one the receiver says is live. Nothing is
+stored anywhere for it to drift out of step with.
+
 All of it is editable in the rooms editor under **Media & remotes**: screens
 and sources are lists of objects, which `ha-form` has no good shape for, so
 they get their own rows — add, fill in, remove. The remote template is a

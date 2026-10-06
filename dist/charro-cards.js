@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.91.0";
+const VERSION = "4.92.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -582,6 +582,45 @@ function remoteCards(r, templates) {
  * which is the state a room is in before any of that is wired up. The
  * "Basic TV only" box forces the same thing for a room that has sources
  * configured but isn't using them yet. */
+/* A source can carry what picking it should do, written in Home Assistant's
+ * own action shape - the same thing you would write in an automation, pasted
+ * straight across:
+ *
+ *   "AppleTV": { "input": "AppleTV", "use": "apple_tv",
+ *                "do": [ { "action": "media_player.turn_on",
+ *                          "target": { "entity_id": ["media_player.vsx_lx305"] } } ] }
+ *
+ * This is what replaces a per-room input_select and one automation per
+ * source. Anything an automation can do, a source can do - a Harmony
+ * send_command with its repeats and delays included - because there is no
+ * little language in the middle to run out of road.
+ *
+ * `Off` is an ordinary entry with its own actions. It is deliberately not
+ * derived from the others: a room that has to send a PowerOff to a Harmony
+ * cannot be guessed at, and a wrong guess turns the wrong things off.
+ *
+ * A step is an action, or { "delay": 1.5 } to wait between two of them. One
+ * failing step is logged and the rest still run, because a receiver that is
+ * already on shouldn't stop the projector coming up. */
+async function runActions(hass, steps) {
+  for (const step of steps || []) {
+    if (!step) continue;
+    if (step.delay !== undefined) {
+      await new Promise((r) => setTimeout(r, (Number(step.delay) || 0) * 1000));
+      continue;
+    }
+    const name = step.action || step.service;
+    if (!name || !String(name).includes(".")) continue;
+    const [domain, service] = String(name).split(".");
+    try {
+      await hass.callService(domain, service, step.data || {},
+                             step.target || undefined);
+    } catch (err) {
+      console.error("Charro Cards: action failed", name, err);
+    }
+  }
+}
+
 function videoIsBasic(v) {
   if (!v) return true;
   if (v.simple) return true;
@@ -2805,9 +2844,15 @@ class CharroVideoCard extends HTMLElement {
   _sig() {
     const h = this._hass;
     if (!h || !h.states) return "";
-    const ids = [this._v.focus].filter(Boolean).concat(
-      (this._v.displays || []).flatMap((d) => [d.source, screenPower(d)].filter(Boolean)));
-    return ids.map((e) => `${e}=${h.states[e] ? h.states[e].state : "_"}`).join(";");
+    const ids = [this._v.focus, this._v.source_from].filter(Boolean).concat(
+      (this._v.displays || []).flatMap(
+        (d) => [d.source, d.source_from, screenPower(d)].filter(Boolean)));
+    // the receiver's input lives in an attribute, so the state alone would
+    // miss a source change entirely
+    return ids.map((e) => {
+      const st = h.states[e];
+      return `${e}=${st ? st.state : "_"}/${(st && st.attributes && st.attributes.source) || ""}`;
+    }).join(";");
   }
 
   /* A room with one screen has nothing to choose between, so it needs no
@@ -2825,10 +2870,56 @@ class CharroVideoCard extends HTMLElement {
   _display(name) {
     return (this._v.displays || []).find((d) => d.name === name) || null;
   }
+  /* Where "which source is live" is read from. The receiver's own
+   * media_player, usually - it is the thing that actually knows, so the card
+   * cannot drift out of step with it the way a helper could. A `select` works
+   * too, which is what the RTI matrix publishes per output. */
+  _sourceFrom(d) {
+    return (d && d.source_from) || this._v.source_from || "";
+  }
+
   _sourceOf(d) {
+    const sf = this._sourceFrom(d);
+    if (sf) {
+      const st = this._hass.states[sf];
+      if (!st) return "";
+      // nothing on is the Off entry, whatever the room chose to call it
+      if (OFFISH.includes(st.state)) return this._v.off_option || "Off";
+      const cur = sf.startsWith("media_player.")
+        ? ((st.attributes || {}).source || "")
+        : st.state;
+      for (const [key, spec] of Object.entries(this._v.sources || {}))
+        if (((spec && spec.input) || key) === cur) return key;
+      return cur;             // on an input no source in the room names
+    }
     if (!d || !d.source) return "";
     const st = this._hass.states[d.source];
     return st ? st.state : "";
+  }
+
+  _sourceSpec(key) {
+    const d = this._display(this._focusName());
+    return ((d && d.sources) || {})[key] || (this._v.sources || {})[key] || null;
+  }
+
+  /* Run the source's own actions, then the one call every room was writing
+   * out by hand. */
+  async _pickSource(key) {
+    const spec = this._sourceSpec(key) || {};
+    await runActions(this._hass, spec.do);
+    const sf = this._sourceFrom(this._display(this._focusName()));
+    if (!sf || !spec.input) return;
+    const domain = sf.split(".")[0];
+    try {
+      if (domain === "media_player")
+        await this._hass.callService("media_player", "select_source",
+                                     { source: spec.input }, { entity_id: sf });
+      else
+        await this._hass.callService(domain, "select_option",
+                                     { option: spec.input }, { entity_id: sf });
+    } catch (err) {
+      console.error("Charro Cards: couldn\u2019t select source", spec.input, err);
+    }
   }
   _isLive(d) {
     if (!d) return false;
@@ -2907,7 +2998,30 @@ class CharroVideoCard extends HTMLElement {
     };
 
     // ---- what's feeding it
-    if (d.source) {
+    const sf = this._sourceFrom(d);
+    const keys = Object.keys(this._v.sources || {});
+    if (sf && keys.length) {
+      const live = this._sourceOf(d);
+      const srow = document.createElement("div");
+      srow.className = "vrow";
+      for (const key of keys) {
+        const spec = this._v.sources[key] || {};
+        const b = document.createElement("button");
+        b.className = "vchip" + (key === live ? " sel live" : "");
+        if (spec.icon) {
+          const i = document.createElement("ha-icon");
+          i.icon = spec.icon;
+          b.appendChild(i);
+        }
+        const sp = document.createElement("span");
+        sp.textContent = spec.title || key;
+        b.appendChild(sp);
+        b.title = key === live ? `${spec.title || key} \u2014 on now` : `Switch to ${spec.title || key}`;
+        b.addEventListener("click", () => this._pickSource(key));
+        srow.appendChild(b);
+      }
+      this._wrap.appendChild(srow);
+    } else if (d.source) {
       add({ type: "custom:mushroom-select-card", entity: d.source,
             name: `${d.name} source`, layout: "horizontal",
             fill_container: false, secondary_info: "none" });
