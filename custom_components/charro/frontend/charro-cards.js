@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.97.0";
+const VERSION = "4.98.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6202,6 +6202,13 @@ class CharroRoomsEditor extends HTMLElement {
     if (!box) return;
     box.innerHTML = "";
     const v = this._room.video;
+
+    /* Redraw this panel and the preview; the preview redraw is what queues
+     * the save. Eleven places called this and nothing declared it, so every
+     * button in here - add and remove a screen, add and remove a source,
+     * reorder, hide, rename - threw a ReferenceError and did nothing. */
+    const changed = () => { this._renderVideo(); this._renderPreview(); };
+
     this._avFields(box);
 
     if (!v) {
@@ -6217,9 +6224,7 @@ class CharroRoomsEditor extends HTMLElement {
       return;
     }
 
-    const { text: field, ent, icon: iconField } = this._fields(() => {
-      this._renderVideo(); this._renderPreview();
-    });
+    const { text: field, ent, icon: iconField } = this._fields(changed);
 
     const vsw = document.createElement("div");
     vsw.className = "vcap";

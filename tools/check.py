@@ -207,9 +207,79 @@ def c_manifest_order() -> None:
           f"expected {', '.join(want)}")
 
 
+JS_GLOBALS = {
+    "Array", "Boolean", "Date", "Error", "JSON", "Map", "Math", "Number",
+    "Object", "Promise", "Proxy", "Reflect", "RegExp", "Set", "String",
+    "Symbol", "WeakMap", "WeakSet", "BigInt", "Intl",
+    "isNaN", "isFinite", "parseFloat", "parseInt", "encodeURIComponent",
+    "decodeURIComponent", "encodeURI", "decodeURI", "structuredClone",
+    "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+    "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame",
+    "fetch", "atob", "btoa",
+    "window", "document", "console", "location", "history", "navigator",
+    "customElements", "getComputedStyle", "matchMedia", "CustomEvent", "Event",
+    "HTMLElement", "CSSStyleSheet", "MutationObserver", "ResizeObserver",
+    "IntersectionObserver", "URL", "URLSearchParams", "DOMParser", "Image",
+    "localStorage", "sessionStorage", "TextEncoder", "TextDecoder",
+    "prompt", "alert", "confirm",
+    "if", "for", "while", "switch", "catch", "return", "typeof", "function",
+    "new", "await", "throw", "delete", "void", "in", "of", "do", "else",
+    "case", "yield", "import", "super", "this",
+}
+
+_STR = re.compile(r"`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\"", re.S)
+_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+_METHOD_DEF = re.compile(r"^\s+(?:static\s+|async\s+|get\s+|set\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", re.M)
+
+
+def c_bare_calls() -> None:
+    """Every bare foo() call resolves to something declared in the bundle.
+
+    c_methods covers this._foo(); nothing covered a plain identifier. A
+    helper that is referenced but never declared parses fine, passes every
+    other check, and throws ReferenceError the moment a button is pressed -
+    which is how `changed()` sat behind five buttons in the video panel,
+    called eleven times and declared nowhere.
+
+    Strings, template literals and comments are removed first, or the CSS in
+    them (calc, rgba, translateX) and the prose around them read as calls.
+    Method definitions are removed too: `_render() {` is a declaration, not
+    a call to _render.
+    """
+    s = src()
+    code = _STR.sub('""', _COMMENT.sub(" ", s))
+    defs_here = set(_METHOD_DEF.findall(code))
+    code = _METHOD_DEF.sub(" ", code)
+
+    called = set(re.findall(r"(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(", code))
+
+    declared = set(re.findall(r"\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)", code))
+    for block in re.findall(r"\b(?:const|let|var)\s*[{\[]([^}\]]*)[}\]]\s*=", code):
+        for part in block.split(","):
+            name = part.split(":")[-1].split("=")[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                declared.add(name)
+    for params in re.findall(r"(?:function\s*[\w$]*\s*|catch\s*)\(([^)]*)\)", code):
+        for part in params.split(","):
+            name = part.split("=")[0].strip().lstrip(".")
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                declared.add(name)
+    for params in re.findall(r"\(([^()]*)\)\s*=>", code):
+        for part in params.split(","):
+            name = part.split("=")[0].strip().lstrip(".")
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                declared.add(name)
+    declared |= set(re.findall(r"([A-Za-z_$][\w$]*)\s*=>", code))
+    declared |= defs_here
+
+    missing = sorted(called - declared - JS_GLOBALS)
+    check(f"bare foo() calls resolve ({len(called)} names)", not missing,
+          ", ".join(missing))
+
+
 def main() -> int:
     print(f"charro checks - {ROOT}")
-    for fn in (c_parses, c_methods, c_defines, c_templates,
+    for fn in (c_parses, c_methods, c_bare_calls, c_defines, c_templates,
                c_built, c_version, c_precompressed, c_python, c_json_files,
                c_manifest_order):
         try:
