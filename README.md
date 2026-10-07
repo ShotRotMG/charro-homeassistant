@@ -384,7 +384,26 @@ conditional should be a real automation the source calls.
 
 `Its input` is a dropdown of the receiver's own `source_list` once
 `Current source comes from` is set, so the input names come from the receiver
-rather than being typed.
+rather than being typed. So is **Option text**, for the same reason and a
+sharper one: a source only matches when its name equals what the receiver
+reports, so one wrong letter — `DirectTV` for `DirecTV` — gives you "no
+remote is configured" for a source that is plainly sitting there. Picking from
+a list removes the whole class of bug. **Custom…** is there for a source the
+matrix has never heard of, such as the television's own apps.
+
+A custom source can be picked but will never show as live, and that is not an
+oversight. The matrix output is always routed to something, so the matrix can
+never distinguish "watching the matrix" from "watching the TV's apps". The
+only thing that knows is the television's own `source` attribute, and that
+needs a working media_player to read.
+
+Each source collapses to one line showing its name and a summary of what it
+carries — template, input, action count. Two arrows and a dot in that line
+reorder it and hide it without opening anything. **Hidden means hidden from
+the picker, not disabled:** the source still supplies its remote when the
+receiver reports that input, which is what you want for an input that exists
+but that nobody should be switching to from a wall tablet. Since `Off` is an
+ordinary source, hiding the Off button is the same control.
 
 This is what an `input_select` helper and one automation per source used to
 be. There is no little language in the middle, so anything an automation can

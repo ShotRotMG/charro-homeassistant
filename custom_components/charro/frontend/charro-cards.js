@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.95.0";
+const VERSION = "4.97.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2878,16 +2878,36 @@ class CharroVideoCard extends HTMLElement {
     return (d && d.source_from) || this._v.source_from || "";
   }
 
-  _sourceOf(d) {
+  /* What the receiver says is feeding this screen, in its own words.
+   * null means the room has no source_from and the old helper is in play. */
+  _liveInput(d) {
     const sf = this._sourceFrom(d);
-    if (sf) {
-      const st = this._hass.states[sf];
-      if (!st) return "";
-      // nothing on is the Off entry, whatever the room chose to call it
-      if (OFFISH.includes(st.state)) return this._v.off_option || "Off";
-      const cur = sf.startsWith("media_player.")
-        ? ((st.attributes || {}).source || "")
-        : st.state;
+    if (!sf) return null;
+    const st = this._hass.states[sf];
+    if (!st) return "";
+    // nothing on is the Off entry, whatever the room chose to call it
+    if (OFFISH.includes(st.state)) return this._v.off_option || "Off";
+    return sf.startsWith("media_player.")
+      ? ((st.attributes || {}).source || "")
+      : st.state;
+  }
+
+  /* A view-only source - the television's own apps, say - isn't something
+   * the matrix can report, because the matrix is still routed somewhere
+   * whatever the TV is actually showing. So picking one sets a view
+   * override: which remote you are looking at, held for as long as the
+   * matrix hasn't moved. It lives on the card and nowhere else, so it dies
+   * with the pop-up and cannot disagree with the hardware for long - the
+   * moment the receiver reports a different input, something really did
+   * switch and the override gives way. */
+  _sourceOf(d) {
+    const cur = this._liveInput(d);
+    if (cur !== null) {
+      const ov = this._view;
+      if (ov) {
+        if (ov.base === cur) return ov.key;
+        this._view = null;            // the matrix moved; it wins
+      }
       for (const [key, spec] of Object.entries(this._v.sources || {}))
         if (((spec && spec.input) || key) === cur) return key;
       return cur;             // on an input no source in the room names
@@ -2906,8 +2926,20 @@ class CharroVideoCard extends HTMLElement {
    * out by hand. */
   async _pickSource(key) {
     const spec = this._sourceSpec(key) || {};
+    const d = this._display(this._focusName());
+
+    if (spec.view_only) {
+      // show this remote against whatever the matrix is already doing, and
+      // route nothing
+      this._view = { key, base: this._liveInput(d) };
+      await runActions(this._hass, spec.do);
+      this._render();
+      return;
+    }
+
+    this._view = null;                // a real pick ends any view override
     await runActions(this._hass, spec.do);
-    const sf = this._sourceFrom(this._display(this._focusName()));
+    const sf = this._sourceFrom(d);
     if (!sf || !spec.input) return;
     const domain = sf.split(".")[0];
     try {
@@ -2999,7 +3031,10 @@ class CharroVideoCard extends HTMLElement {
 
     // ---- what's feeding it
     const sf = this._sourceFrom(d);
-    const keys = Object.keys(this._v.sources || {});
+    /* Hidden sources still match - they supply the remote when the receiver
+     * reports them - they just aren't offered as something to press. */
+    const keys = Object.keys(this._v.sources || {})
+      .filter((k) => !(this._v.sources[k] || {}).hidden);
     if (sf && keys.length) {
       const live = this._sourceOf(d);
       const srow = document.createElement("div");
@@ -3661,6 +3696,15 @@ const LB_CSS = `
   text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .vsrc > .vrowbox{ border:0; border-radius:0; margin:0; }
+.vsrc.off > summary{ opacity:.5; }
+.vsrc > summary .ctl{ display:flex; gap:3px; flex:0 0 auto; }
+.vsrc > summary .sbtn{
+  border:1px solid var(--divider-color); background:transparent; cursor:pointer;
+  color:var(--secondary-text-color); border-radius:6px; width:24px; height:24px;
+  line-height:1; font-size:12px; padding:0;
+}
+.vsrc > summary .sbtn:hover{ background:rgba(127,127,127,.16); }
+.vsrc > summary .sbtn.on{ color:var(--primary-color); border-color:var(--primary-color); }
 .vfield{ display:flex; flex-direction:column; gap:2px; }
 .vfield > span{ font-size:11.5px; color:var(--secondary-text-color); }
 .vdet{ margin-top:2px; }
@@ -6284,8 +6328,38 @@ class CharroRoomsEditor extends HTMLElement {
 
     const sh = document.createElement("div");
     sh.className = "vcap";
-    sh.textContent = "Sources — one row per option in the source select";
+    sh.textContent = "Sources — what the picker offers, in this order";
     box.appendChild(sh);
+
+    /* The picker's buttons are these, in this order, minus the hidden ones.
+     * Order is the key order in the file, which is why reordering rebuilds
+     * the object rather than sorting a list. */
+    const optsFrom = v.source_from && this._hass.states[v.source_from];
+    const optsList = (optsFrom && optsFrom.attributes &&
+      (optsFrom.attributes.options || optsFrom.attributes.source_list)) || null;
+
+    const renameSource = (from, to) => {
+      if (!to || to === from || v.sources[to]) return;
+      const next = {};
+      for (const [k, val] of Object.entries(v.sources)) next[k === from ? to : k] = val;
+      v.sources = next;
+      if (this._srcOpen) {
+        this._srcOpen[to] = this._srcOpen[from];
+        delete this._srcOpen[from];
+      }
+      changed();
+    };
+
+    const moveSource = (k, dir) => {
+      const keys = Object.keys(v.sources);
+      const i = keys.indexOf(k), j = i + dir;
+      if (i < 0 || j < 0 || j >= keys.length) return;
+      keys.splice(j, 0, keys.splice(i, 1)[0]);
+      const next = {};
+      for (const kk of keys) next[kk] = v.sources[kk];
+      v.sources = next;
+      changed();
+    };
 
     const tpls = Object.keys(this._room._remotes || {});
     for (const [key, spec] of Object.entries(v.sources || {})) {
@@ -6304,22 +6378,118 @@ class CharroRoomsEditor extends HTMLElement {
       const srcSub = document.createElement("span");
       srcSub.className = "sub";
       const bits = [];
+      if (spec.hidden) bits.push("hidden");
+      if (spec.view_only) bits.push("view only");
       if (spec.use) bits.push(spec.use);
       if (spec.input) bits.push("\u2192 " + spec.input);
       const nAct = (spec.do || []).length;
       if (nAct) bits.push(`${nAct} action${nAct > 1 ? "s" : ""}`);
       srcSub.textContent = bits.join(" \u00b7 ");
-      srcSum.append(srcNm, srcSub);
+      if (spec.hidden) srcDet.classList.add("off");
+
+      /* Reorder and hide live in the header so a room can be sorted and
+       * pruned without opening anything. A button inside a summary toggles
+       * the details unless it says otherwise. */
+      const ctl = document.createElement("span");
+      ctl.className = "ctl";
+      const sbtn = (txt, title, fn, on) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sbtn" + (on ? " on" : "");
+        b.textContent = txt;
+        b.title = title;
+        b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          fn();
+        });
+        ctl.appendChild(b);
+      };
+      sbtn("\u2191", "Move up", () => moveSource(key, -1));
+      sbtn("\u2193", "Move down", () => moveSource(key, 1));
+      sbtn(spec.hidden ? "\u2715" : "\u25CF",
+           spec.hidden ? "Hidden from the picker \u2014 click to show it"
+                       : "Shown in the picker \u2014 click to hide it. It still " +
+                         "supplies the remote when the receiver reports it.",
+           () => { if (spec.hidden) delete spec.hidden; else spec.hidden = true; changed(); },
+           !spec.hidden);
+
+      srcSum.append(srcNm, srcSub, ctl);
       srcDet.appendChild(srcSum);
 
       const row = document.createElement("div");
       row.className = "vrowbox";
-      row.appendChild(field("Option text", key, (s) => {
-        if (!s || s === key) return;
-        const next = {};
-        for (const [k, val] of Object.entries(v.sources)) next[k === key ? s : k] = val;
-        v.sources = next;
-      }, "SuperBox"));
+      /* The name has to equal what the receiver reports, or the source
+       * never matches and you get "no remote configured" for a source that
+       * is plainly there - one wrong letter does it. So when the receiver
+       * publishes its inputs, this is a list of them rather than a box to
+       * mistype one into. Custom is for a source the matrix has never heard
+       * of, like the television's own apps. */
+      /* A source that only changes which remote you are looking at. Its
+       * name matches nothing on the receiver, so the list of inputs would
+       * be the wrong thing to offer - it gets a plain box. */
+      const vo = document.createElement("label");
+      vo.className = "vfield";
+      vo.title = "For a remote that isn\u2019t a matrix input at all \u2014 the " +
+        "television\u2019s own apps. Picking it shows this remote and routes " +
+        "nothing; the matrix stays where it is. Pick any other source and the " +
+        "matrix switches as usual.";
+      const voTxt = document.createElement("span");
+      voTxt.textContent = "Only shows this remote \u2014 doesn\u2019t switch the matrix";
+      const voBox = document.createElement("input");
+      voBox.type = "checkbox";
+      voBox.checked = !!spec.view_only;
+      voBox.addEventListener("change", () => {
+        if (voBox.checked) spec.view_only = true; else delete spec.view_only;
+        changed();
+      });
+      vo.append(voTxt, voBox);
+      row.appendChild(vo);
+
+      if (optsList && optsList.length && !spec.view_only) {
+        const used = new Set(Object.keys(v.sources).filter((k) => k !== key));
+        const w = document.createElement("label");
+        w.className = "vfield";
+        const t = document.createElement("span");
+        t.textContent = "Option text";
+        const dd = document.createElement("select");
+        const custom = !optsList.includes(key);
+        const mk = (val, lab, seld) => {
+          const o = document.createElement("option");
+          o.value = val; o.textContent = lab;
+          if (seld) o.selected = true;
+          dd.appendChild(o);
+        };
+        for (const o of optsList) if (!used.has(o)) mk(o, o, o === key);
+        if (custom) mk(key, key + "  (custom)", true);
+        mk("\u0000custom", "Custom\u2026", false);
+
+        const txt = document.createElement("input");
+        txt.type = "text";
+        txt.value = custom ? key : "";
+        txt.placeholder = "a name of your own \u2014 not an input on the receiver";
+        txt.style.marginTop = "4px";
+        txt.style.display = custom ? "" : "none";
+        txt.addEventListener("change", () => {
+          const n = txt.value.trim();
+          if (n) renameSource(key, n);
+        });
+        dd.addEventListener("change", () => {
+          if (dd.value === "\u0000custom") {
+            txt.style.display = "";
+            txt.focus();
+            return;
+          }
+          renameSource(key, dd.value);
+        });
+        w.append(t, dd, txt);
+        row.appendChild(w);
+      } else {
+        row.appendChild(field("Option text", key, (s) => renameSource(key, s),
+          spec.view_only ? "Screen"
+            : (v.source_from ? "SuperBox"
+               : "set \u201cCurrent source comes from\u201d for a list")));
+      }
 
       const sel = document.createElement("label");
       sel.className = "vfield";
@@ -6354,7 +6524,9 @@ class CharroRoomsEditor extends HTMLElement {
        * rather than a box to mistype one into. */
       const sfSt = v.source_from && this._hass.states[v.source_from];
       const slist = (sfSt && sfSt.attributes && sfSt.attributes.source_list) || null;
-      if (slist && slist.length) {
+      if (spec.view_only) {
+        // it routes nothing, so it has no input on the receiver to name
+      } else if (slist && slist.length) {
         const w = document.createElement("label");
         w.className = "vfield";
         const t = document.createElement("span");
@@ -6437,7 +6609,8 @@ class CharroRoomsEditor extends HTMLElement {
     addS.textContent = "+ Source";
     addS.addEventListener("click", () => {
       v.sources = v.sources || {};
-      let n = "New source", i = 2;
+      const free = (optsList || []).filter((o) => !v.sources[o]);
+      let n = free[0] || "New source", i = 2;
       while (v.sources[n]) n = `New source ${i++}`;
       v.sources[n] = {};
       this._srcOpen = this._srcOpen || {};
