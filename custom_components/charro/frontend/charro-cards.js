@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.94.0";
+const VERSION = "4.95.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3643,6 +3643,24 @@ const LB_CSS = `
   border:1px solid var(--divider-color); border-radius:8px; padding:8px;
   margin-bottom:6px; display:flex; flex-direction:column; gap:6px;
 }
+/* A source has nine fields and a room has four or five sources. Open they
+ * are a wall; the name is all you need to find the one you want. */
+.vsrc{
+  border:1px solid var(--divider-color); border-radius:8px; margin-bottom:6px;
+}
+.vsrc > summary{
+  cursor:pointer; list-style:none; user-select:none;
+  display:flex; align-items:center; gap:8px; padding:9px 10px; font-size:13px;
+}
+.vsrc > summary::-webkit-details-marker{ display:none; }
+.vsrc > summary::before{ content:"\u25B8"; color:var(--secondary-text-color); }
+.vsrc[open] > summary::before{ content:"\u25BE"; }
+.vsrc[open] > summary{ border-bottom:1px solid var(--divider-color); }
+.vsrc > summary .sub{
+  margin-left:auto; font-size:11px; color:var(--secondary-text-color);
+  text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.vsrc > .vrowbox{ border:0; border-radius:0; margin:0; }
 .vfield{ display:flex; flex-direction:column; gap:2px; }
 .vfield > span{ font-size:11.5px; color:var(--secondary-text-color); }
 .vdet{ margin-top:2px; }
@@ -6271,6 +6289,29 @@ class CharroRoomsEditor extends HTMLElement {
 
     const tpls = Object.keys(this._room._remotes || {});
     for (const [key, spec] of Object.entries(v.sources || {})) {
+      const srcDet = document.createElement("details");
+      srcDet.className = "vsrc";
+      // reopen whatever was open before this redraw, so changing one field
+      // doesn't collapse the source you are in the middle of editing
+      srcDet.open = !!(this._srcOpen && this._srcOpen[key]);
+      srcDet.addEventListener("toggle", () => {
+        this._srcOpen = this._srcOpen || {};
+        this._srcOpen[key] = srcDet.open;
+      });
+      const srcSum = document.createElement("summary");
+      const srcNm = document.createElement("span");
+      srcNm.textContent = spec.title || key;
+      const srcSub = document.createElement("span");
+      srcSub.className = "sub";
+      const bits = [];
+      if (spec.use) bits.push(spec.use);
+      if (spec.input) bits.push("\u2192 " + spec.input);
+      const nAct = (spec.do || []).length;
+      if (nAct) bits.push(`${nAct} action${nAct > 1 ? "s" : ""}`);
+      srcSub.textContent = bits.join(" \u00b7 ");
+      srcSum.append(srcNm, srcSub);
+      srcDet.appendChild(srcSum);
+
       const row = document.createElement("div");
       row.className = "vrowbox";
       row.appendChild(field("Option text", key, (s) => {
@@ -6388,7 +6429,8 @@ class CharroRoomsEditor extends HTMLElement {
       x.className = "vdel"; x.textContent = "Remove source";
       x.addEventListener("click", () => { delete v.sources[key]; changed(); });
       row.appendChild(x);
-      box.appendChild(row);
+      srcDet.appendChild(row);
+      box.appendChild(srcDet);
     }
 
     const addS = document.createElement("button");
@@ -6398,6 +6440,8 @@ class CharroRoomsEditor extends HTMLElement {
       let n = "New source", i = 2;
       while (v.sources[n]) n = `New source ${i++}`;
       v.sources[n] = {};
+      this._srcOpen = this._srcOpen || {};
+      this._srcOpen[n] = true;
       changed();
     });
     const rm = document.createElement("button");
