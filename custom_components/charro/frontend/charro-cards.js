@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "4.98.0";
+const VERSION = "5.0.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1044,6 +1044,20 @@ function screenPower(d) {
 /* Fold an older screen into the two fields. The editor does this on load, so
  * the boxes show what the room is really doing and a save writes it back in
  * the current shape. */
+/* Stamped on a video block the moment the editor has folded it forward, so
+ * the fold below can never run twice. Without it a screen that deliberately
+ * names only `power` - a television there is no integration for, switched
+ * by the matrix - would have that power absorbed into `screen` every time
+ * the room was opened, quietly undoing the configuration. */
+const VIDEO_SCHEMA = 2;
+
+function migrateVideoSchema(v) {
+  if (!v || v.schema >= VIDEO_SCHEMA) return false;
+  for (const d of v.displays || []) migrateScreen(d);
+  v.schema = VIDEO_SCHEMA;
+  return true;
+}
+
 function migrateScreen(d) {
   if (!d || typeof d !== "object" || d.screen) return false;
   if (d.media_player) { d.screen = d.media_player; delete d.media_player; return true; }
@@ -2924,6 +2938,34 @@ class CharroVideoCard extends HTMLElement {
 
   /* Run the source's own actions, then the one call every room was writing
    * out by hand. */
+  /* The screen's own power, as a chip rather than a card: it belongs beside
+   * the screen's name, not in the run of source remotes.
+   *
+   * It appears when power is genuinely a different entity from the screen -
+   * a Samsung switched over HDMI-CEC by the matrix, because the Samsung's
+   * own turn-on is not dependable. When they are the same entity there is
+   * nothing to add: the screen's remote already has a power button, and a
+   * second one beside it would only be a way to get the two out of step. */
+  _powerChip(d) {
+    const p = screenPower(d);
+    if (!p) return null;
+    const st = this._hass.states[p];
+    const on = st && !OFFISH.includes(st.state);
+    const b = document.createElement("button");
+    b.className = "vchip pwr" + (on ? " live" : "");
+    b.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+    const sp = document.createElement("span");
+    sp.textContent = d.name || "Screen";
+    b.appendChild(sp);
+    b.title = `${d.name || "This screen"} is ${on ? "on" : "off"} \u2014 tap to turn it `
+            + `${on ? "off" : "on"} (${p})`;
+    b.addEventListener("click", () => {
+      const domain = p.split(".")[0];
+      this._hass.callService(domain, "toggle", {}, { entity_id: p });
+    });
+    return b;
+  }
+
   async _pickSource(key) {
     const spec = this._sourceSpec(key) || {};
     const d = this._display(this._focusName());
@@ -3029,6 +3071,23 @@ class CharroVideoCard extends HTMLElement {
       } catch (err) { console.error("charro-video-card:", cfg && cfg.type, err); }
     };
 
+    /* ---- the screen itself, above whatever is feeding it.
+     *
+     * The test is simply whether the room filled the power field in. That
+     * is the room saying "this screen is switched by something other than
+     * its own remote" - the matrix over CEC - and it holds equally for a
+     * screen that names no television at all, where the remote on show
+     * belongs to the box and can't turn the screen off either. Leave the
+     * field blank, as an LG that answers its own remote would, and no
+     * second power button appears. */
+    const sepPower = !!d.power;
+    if (sepPower) {
+      const prow = document.createElement("div");
+      prow.className = "vrow";
+      prow.appendChild(this._powerChip(d));
+      this._wrap.appendChild(prow);
+    }
+
     // ---- what's feeding it
     const sf = this._sourceFrom(d);
     /* Hidden sources still match - they supply the remote when the receiver
@@ -3063,14 +3122,27 @@ class CharroVideoCard extends HTMLElement {
     }
 
     // ---- and the buttons for it
+    /* Somewhere to turn the screen off whatever else is going on. The header
+     * has it when power is separate; these are the cases where it isn't, and
+     * where without this you would be looking at a note and nothing else. */
+    const stranded = () => {
+      if (sepPower) return;            // already in the header, don't repeat it
+      const chip = this._powerChip(d);
+      if (!chip) return;
+      const r2 = document.createElement("div");
+      r2.className = "vrow";
+      r2.appendChild(chip);
+      this._wrap.appendChild(r2);
+    };
+
     const src = this._sourceOf(d);
     if (!src || src === off) {
       const p = screenPower(d);
-      if (p) {
+      if (p && !sepPower) {
         add({ type: "tile", entity: p, name: d.name,
               icon: d.off_icon || "mdi:television-off", hide_state: true,
               tap_action: { action: "toggle" }, icon_tap_action: { action: "toggle" } });
-      } else {
+      } else if (!p) {
         const n = document.createElement("div");
         n.className = "vnote";
         n.textContent = `${d.name} is off. Pick a source to turn it on.`;
@@ -3087,6 +3159,7 @@ class CharroVideoCard extends HTMLElement {
       n.className = "vnote";
       n.textContent = `No remote is configured for "${src}".`;
       this._wrap.appendChild(n);
+      stranded();
       return;
     }
     if (spec.card) { add(spec.card); return; }
@@ -3096,6 +3169,7 @@ class CharroVideoCard extends HTMLElement {
       n.className = "vnote";
       n.textContent = `\`_remotes.json\` has no template named "${spec.use}".`;
       this._wrap.appendChild(n);
+      stranded();
       return;
     }
     // the display's own volume, so the buttons act on the screen you're at
@@ -3696,6 +3770,7 @@ const LB_CSS = `
   text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .vsrc > .vrowbox{ border:0; border-radius:0; margin:0; }
+.vchip.pwr.live{ color:#4CAF50; border-color:rgba(76,175,80,.55); }
 .vsrc.off > summary{ opacity:.5; }
 .vsrc > summary .ctl{ display:flex; gap:3px; flex:0 0 auto; }
 .vsrc > summary .sbtn{
@@ -6202,6 +6277,7 @@ class CharroRoomsEditor extends HTMLElement {
     if (!box) return;
     box.innerHTML = "";
     const v = this._room.video;
+    migrateVideoSchema(v);
 
     /* Redraw this panel and the preview; the preview redraw is what queues
      * the save. Eleven places called this and nothing declared it, so every
@@ -6279,13 +6355,36 @@ class CharroRoomsEditor extends HTMLElement {
     box.appendChild(dh);
 
     (v.displays || []).forEach((d, i) => {
+      /* Same reasoning as the sources: nine fields each, and a room with
+       * three screens is a wall of them. Keyed on the index because a
+       * screen's name can be blank while you are still typing it. */
+      const scrDet = document.createElement("details");
+      scrDet.className = "vsrc";
+      scrDet.open = !!(this._dispOpen && this._dispOpen[i]);
+      scrDet.addEventListener("toggle", () => {
+        this._dispOpen = this._dispOpen || {};
+        this._dispOpen[i] = scrDet.open;
+      });
+      const scrSum = document.createElement("summary");
+      const scrNm = document.createElement("span");
+      scrNm.textContent = d.name || `Screen ${i + 1}`;
+      const scrSub = document.createElement("span");
+      scrSub.className = "sub";
+      const sbits = [];
+      const tvId = screenTv(d), pwId = screenPower(d);
+      if (tvId) sbits.push(tvId.replace(/^[a-z_]+\./, ""));
+      else sbits.push("no screen set");
+      if (pwId && pwId !== tvId) sbits.push("power: " + pwId.replace(/^[a-z_]+\./, ""));
+      scrSub.textContent = sbits.join(" \u00b7 ");
+      scrSum.append(scrNm, scrSub);
+      scrDet.appendChild(scrSum);
+
       const row = document.createElement("div");
       row.className = "vrowbox";
       row.appendChild(field("Name", d.name, (s) => { d.name = s; },
         many ? "must match a picker option" : "TV"));
       row.appendChild(iconField("Icon", d.icon,
         (s) => { if (s) d.icon = s; else delete d.icon; }));
-      migrateScreen(d);
       const scr = ent("Screen", d.screen, ["media_player", "switch", "remote"],
         (s) => { if (s) d.screen = s; else delete d.screen; },
         "media_player.kitchen_samsung_55_2");
@@ -6321,13 +6420,18 @@ class CharroRoomsEditor extends HTMLElement {
       x.className = "vdel"; x.textContent = "Remove screen";
       x.addEventListener("click", () => { v.displays.splice(i, 1); changed(); });
       row.appendChild(x);
-      box.appendChild(row);
+      scrDet.appendChild(row);
+      box.appendChild(scrDet);
     });
 
     const addD = document.createElement("button");
     addD.textContent = "+ Screen";
     addD.addEventListener("click", () => {
-      (v.displays = v.displays || []).push({ name: "" }); changed();
+      v.displays = v.displays || [];
+      this._dispOpen = this._dispOpen || {};
+      this._dispOpen[v.displays.length] = true;   // a new one opens itself
+      v.displays.push({ name: "" });
+      changed();
     });
     box.appendChild(addD);
 
