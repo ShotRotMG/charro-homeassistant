@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.3.0";
+const VERSION = "5.4.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3006,17 +3006,29 @@ class CharroVideoCard extends HTMLElement {
     this._view = null;                // a real pick ends any view override
     await runActions(this._hass, spec.do);
     const sf = this._sourceFrom(d);
-    if (!sf || !spec.input) return;
+    /* The option to set: `input` when the source names one, and otherwise
+     * the source's own name - which is what the matching side has always
+     * used. Requiring one here while matching fell back to the name meant a
+     * source could highlight correctly and still do nothing when pressed. */
+    const opt = spec.input || key;
+    if (!sf || !opt) return;
     const domain = sf.split(".")[0];
+    const st = this._hass.states[sf];
+    const valid = st && st.attributes &&
+      (st.attributes.options || st.attributes.source_list);
+    if (valid && valid.length && !valid.includes(opt)) {
+      console.warn(`Charro Cards: "${opt}" is not an option on ${sf}. ` +
+                   `It offers: ${valid.join(", ")}`);
+    }
     try {
       if (domain === "media_player")
         await this._hass.callService("media_player", "select_source",
-                                     { source: spec.input }, { entity_id: sf });
+                                     { source: opt }, { entity_id: sf });
       else
         await this._hass.callService(domain, "select_option",
-                                     { option: spec.input }, { entity_id: sf });
+                                     { option: opt }, { entity_id: sf });
     } catch (err) {
-      console.error("Charro Cards: couldn\u2019t select source", spec.input, err);
+      console.error("Charro Cards: couldn\u2019t select source", opt, err);
     }
   }
   _isLive(d) {
@@ -6520,9 +6532,25 @@ class CharroRoomsEditor extends HTMLElement {
     /* The picker's buttons are these, in this order, minus the hidden ones.
      * Order is the key order in the file, which is why reordering rebuilds
      * the object rather than sorting a list. */
-    const optsFrom = v.source_from && this._hass.states[v.source_from];
-    const optsList = (optsFrom && optsFrom.attributes &&
-      (optsFrom.attributes.options || optsFrom.attributes.source_list)) || null;
+    /* Where the list of real inputs comes from. A room with one receiver
+     * names it under Video switching; a matrix gives each screen its own
+     * select, so the screens are asked too, in the order _sourceFrom
+     * resolves. A `select` publishes `options` and a `media_player`
+     * publishes `source_list`; looking for only one of them was why rooms
+     * on the matrix got a free-text box and ended up with source names that
+     * match nothing on the receiver. */
+    const optsList = (() => {
+      const seen = [v.source_from]
+        .concat((v.displays || []).map((d) => d && (d.source_from || d.source)))
+        .filter(Boolean);
+      for (const e of seen) {
+        const st = this._hass.states[e];
+        const list = st && st.attributes &&
+          (st.attributes.options || st.attributes.source_list);
+        if (list && list.length) return list;
+      }
+      return null;
+    })();
 
     const renameSource = (from, to) => {
       if (!to || to === from || v.sources[to]) return;
@@ -6708,16 +6736,14 @@ class CharroRoomsEditor extends HTMLElement {
       /* Which input this is on whatever reports the live source. A receiver
        * publishes its own source_list, so this is a list of the real names
        * rather than a box to mistype one into. */
-      const sfSt = v.source_from && this._hass.states[v.source_from];
-      const slist = (sfSt && sfSt.attributes && sfSt.attributes.source_list) || null;
+      const slist = optsList;
       if (spec.view_only) {
         // it routes nothing, so it has no input on the receiver to name
       } else if (slist && slist.length) {
         const w = document.createElement("label");
         w.className = "vfield";
         const t = document.createElement("span");
-        t.textContent = "Its input on " +
-          ((sfSt.attributes && sfSt.attributes.friendly_name) || v.source_from);
+        t.textContent = "Its input on the receiver";
         const dd = document.createElement("select");
         const opts = [""].concat(slist);
         if (spec.input && !slist.includes(spec.input)) opts.push(spec.input);
@@ -6737,8 +6763,7 @@ class CharroRoomsEditor extends HTMLElement {
       } else {
         row.appendChild(field("Its input on the receiver", spec.input, (s) => {
           if (s) spec.input = s; else delete spec.input; },
-          v.source_from ? "the receiver\u2019s name for this input"
-                        : "set \u201cCurrent source comes from\u201d first"));
+          "blank uses the name above"));
       }
 
       /* Home Assistant's own action editor, which ha-selector lazy-loads the
