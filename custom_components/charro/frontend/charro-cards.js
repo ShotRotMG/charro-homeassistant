@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.4.0";
+const VERSION = "5.5.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1609,6 +1609,113 @@ function loadLovelaceResources(hass) {
   return _resP;
 }
 
+/* ----------------------------------------------------------- scenes ----- */
+/* A scene is what the room looked like, recalled later. It is stored in the
+ * room file as a plain entity -> state map and applied with HA's own
+ * `scene.apply`, which takes that map inline: no scene entity is created,
+ * nothing is left behind, and HA's state-reproduction does the work, so
+ * brightness, colour temperature, fan percentage, hvac mode, source and
+ * volume all land correctly without this file knowing how any of them work.
+ *
+ * Everything below is deliberately plain data in and out, so the store can
+ * become real HA scenes later without the capture or the UI changing. */
+
+const SCENE_GROUPS = [
+  ["lights",  "Lights",  "mdi:lightbulb"],
+  ["fans",    "Fans",    "mdi:ceiling-fan"],
+  ["climate", "Climate", "mdi:thermostat"],
+  ["music",   "Music",   "mdi:music"],
+  ["screens", "Screens", "mdi:television"],
+];
+
+/* Which attributes are worth keeping per domain. State alone would lose the
+ * dim level and the input; everything is too much, and a captured
+ * `friendly_name` or `supported_features` only invites HA to argue with it. */
+const SCENE_ATTRS = {
+  light: ["brightness", "color_temp_kelvin", "hs_color", "rgb_color",
+          "color_mode", "effect"],
+  fan: ["percentage", "preset_mode", "direction", "oscillating"],
+  climate: ["temperature", "target_temp_high", "target_temp_low",
+            "fan_mode", "humidity", "swing_mode"],
+  media_player: ["source", "volume_level"],
+  cover: ["current_position", "current_tilt_position"],
+};
+
+function sceneGroupIds(r, group) {
+  const ids = [];
+  const add = (x) => { const id = lightId(x); if (id) ids.push(id); };
+  if (group === "lights") {
+    for (const k of ["light_entities", "landscape_entities"]) (r[k] || []).forEach(add);
+  } else if (group === "fans") {
+    for (const k of ["fan_entities", "bath_fan_entities"]) (r[k] || []).forEach(add);
+  } else if (group === "climate") {
+    if (r.climate_entity) ids.push(r.climate_entity);
+  } else if (group === "music") {
+    for (const p of r.music_powers || []) {
+      const id = typeof p === "string" ? p : (p && (p.entity || p.power));
+      if (id) ids.push(id);
+    }
+    if (r.media_player) ids.push(r.media_player);
+  } else if (group === "screens") {
+    for (const d of (r.video && r.video.displays) || []) {
+      const pw = screenPower(d), tv = screenTv(d);
+      if (pw) ids.push(pw);
+      if (tv) ids.push(tv);
+      const src = d && (d.source_from || d.source);
+      if (src) ids.push(src);
+    }
+    for (const k of ["tv_entity", "projector_entity", "receiver_entity"])
+      if (r[k]) ids.push(r[k]);
+  }
+  return uniq(ids);
+}
+
+/* Only offer a tick-box for something the room actually has. */
+function sceneGroupsFor(r) {
+  return SCENE_GROUPS.filter(([k]) => sceneGroupIds(r, k).length);
+}
+
+function captureScene(r, groups, hass) {
+  const out = {};
+  const states = (hass && hass.states) || {};
+  for (const g of groups) {
+    for (const id of sceneGroupIds(r, g)) {
+      const st = states[id];
+      // an entity HA can't see would be recalled as a guess, so skip it
+      if (!st || st.state === "unavailable" || st.state === "unknown") continue;
+      const e = { state: st.state };
+      for (const a of SCENE_ATTRS[id.split(".")[0]] || []) {
+        const v = st.attributes ? st.attributes[a] : undefined;
+        if (v !== undefined && v !== null) e[a] = v;
+      }
+      out[id] = e;
+    }
+  }
+  return out;
+}
+
+function applyScene(hass, entities) {
+  if (!entities || !Object.keys(entities).length) return Promise.resolve();
+  return hass.callService("scene", "apply", { entities });
+}
+
+/* Read the room back from the server before writing, so a scene saved from
+ * a dashboard can't overwrite an edit made in the editor a moment earlier,
+ * and so the card's own merged copy - which carries the card's config keys
+ * on top of the file - never becomes the file. */
+async function writeScenes(hass, key, mutate) {
+  const fresh = await loadRoom(key, hass);
+  const next = { ...(fresh || {}) };
+  delete next._remotes;
+  const scenes = { ...(next.scenes || {}) };
+  mutate(scenes);
+  if (Object.keys(scenes).length) next.scenes = scenes;
+  else delete next.scenes;
+  await hass.callWS({ type: WS_SAVE, key, config: next });
+  invalidateRooms();
+  return next;
+}
+
 /* ------------------------------------------------------- room pop-up ----- */
 /* Rendered into document.body so the grid can't clip it, and keyed on the
  * hash so the browser back button closes it. One owner per hash, or a room
@@ -1759,6 +1866,88 @@ const POPUP_CSS = `
   }
   .charro-pop-hd .t{ text-align:left; font-size:20px; }
   .charro-chips{ flex-wrap:wrap; }
+}
+/* ----- room scenes --------------------------------------------------------
+ * The panel hangs off the header it was opened from, so it can't be left
+ * behind by a scroll, and carries its own max-height: a room with a dozen
+ * scenes scrolls the list, not the pop-up. */
+.charro-pop-hd .tail > button.on{
+  background:color-mix(in srgb, var(--primary-color, #03a9f4) 30%, transparent);
+  color:var(--primary-color, #03a9f4);
+}
+.charro-scenes{
+  position:absolute; top:calc(100% + 6px); right:0; z-index:3;
+  width:min(300px, calc(100vw - 48px));
+  max-height:min(60vh, 420px); overflow:auto;
+  box-sizing:border-box; padding:8px; text-align:left; font-size:14px;
+  background:var(--ha-card-background, var(--card-background-color, #1c1c1c));
+  border:1px solid var(--divider-color, rgba(255,255,255,.12));
+  border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.45);
+}
+.charro-scenes .sc-hint{
+  padding:6px 8px; color:var(--secondary-text-color); font-size:12.5px;
+}
+.charro-scenes .sc-err{
+  padding:6px 8px; color:var(--error-color, #ef5350); font-size:12.5px;
+}
+.charro-scenes .sc-row{ display:flex; align-items:center; gap:4px; }
+.charro-scenes button{
+  border:none; background:none; color:var(--primary-text-color);
+  font:inherit; cursor:pointer; border-radius:10px;
+}
+.charro-scenes button[disabled]{ opacity:.5; cursor:default; }
+.charro-scenes .sc-go{
+  flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:8px;
+  padding:8px; text-align:left;
+}
+.charro-scenes .sc-go span{
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.charro-scenes .sc-go:hover,
+.charro-scenes .sc-ed:hover,
+.charro-scenes .sc-add:hover{
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 10%, transparent);
+}
+.charro-scenes .sc-ed{
+  flex:none; width:32px; height:32px; display:grid; place-items:center;
+}
+.charro-scenes ha-icon{
+  --mdc-icon-size:18px; width:18px; height:18px; flex:none;
+  display:flex; align-items:center; justify-content:center; line-height:0;
+}
+.charro-scenes .sc-edit{ display:flex; gap:6px; padding:0 8px 8px 34px; }
+.charro-scenes .sc-edit button,
+.charro-scenes .sc-save button{
+  padding:6px 12px; font-size:13px; font-weight:600;
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 12%, transparent);
+}
+.charro-scenes .sc-edit button.danger{ color:var(--error-color, #ef5350); }
+.charro-scenes .sc-sep{
+  height:1px; margin:6px 2px;
+  background:var(--divider-color, rgba(255,255,255,.12));
+}
+.charro-scenes .sc-add{
+  width:100%; display:flex; align-items:center; gap:8px; padding:8px;
+}
+.charro-scenes .sc-groups{
+  display:flex; flex-direction:column; gap:2px; padding:4px 2px;
+}
+.charro-scenes .sc-groups label{
+  display:flex; align-items:center; gap:8px; padding:5px 6px;
+  border-radius:10px; cursor:pointer;
+}
+.charro-scenes .sc-groups label:hover{
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 8%, transparent);
+}
+.charro-scenes .sc-groups input{ accent-color:var(--primary-color, #03a9f4); margin:0; }
+.charro-scenes .sc-save{
+  display:flex; gap:6px; align-items:center; padding:4px 2px 2px;
+}
+.charro-scenes .sc-save input[type=text]{
+  flex:1 1 auto; min-width:0; box-sizing:border-box; padding:7px 9px;
+  border-radius:10px; font:inherit; color:var(--primary-text-color);
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 8%, transparent);
+  border:1px solid var(--divider-color, rgba(255,255,255,.12));
 }
 .charro-pop-body > *{ margin-bottom:8px; display:block; }
 @media (prefers-reduced-motion:reduce){
@@ -2013,6 +2202,7 @@ class RoomPopup {
     this.bodyFn = bodyFn || null; this.titleOverride = title || null;
     this.el = null; this.backdrop = null;
     this._hd = null; this._hdSig = null;
+    this._scOpen = false; this._scPanel = null; this._scBtn = null;
   }
   set hass(h) {
     this._hass = h;
@@ -2021,6 +2211,11 @@ class RoomPopup {
     // hass ticks constantly; only redraw the header when something it shows
     // has actually moved, or a busy house would rebuild it hundreds of times
     if (!this._hd) return;
+    /* The scenes panel hangs off the header, and the rebuild below replaces
+     * the header whole - which under an open panel would wipe a half-typed
+     * scene name and a set of tick boxes. The chips go stale for as long as
+     * it is open; _scClose() forces the redraw they missed. */
+    if (this._scOpen) return;
     const sig = this._headerSig();
     if (sig === this._hdSig) return;
     this._hdSig = sig;
@@ -2143,7 +2338,12 @@ class RoomPopup {
       panel.classList.add("in");
     });
 
-    this._key = (ev) => { if (ev.key === "Escape") this.dismiss(); };
+    this._key = (ev) => {
+      if (ev.key !== "Escape") return;
+      // one Escape per layer, or a scene half-named would take the room with it
+      if (this._scOpen) { this._scClose(); return; }
+      this.dismiss();
+    };
     window.addEventListener("keydown", this._key);
   }
   /* The header reads like the room's own tile: the door alone at the far
@@ -2194,6 +2394,23 @@ class RoomPopup {
     const tail = document.createElement("div");
     tail.className = "tail";
 
+    /* Scenes belong to the room, so the button sits with the room's own
+     * buttons. Only on the room's own pop-up - the now-playing panel is a
+     * different thing wearing the same frame - and only when there is
+     * something behind it: for anyone who can't save, an empty list is a
+     * button that does nothing. */
+    if (this.room.room && !this.bodyFn
+        && (this._scAdmin() || Object.keys(this._scenes()).length)) {
+      const sb = document.createElement("button");
+      sb.title = "Scenes";
+      sb.setAttribute("aria-label", "Scenes");
+      sb.innerHTML = `<ha-icon icon="mdi:palette"></ha-icon>`;
+      if (this._scOpen) sb.classList.add("on");
+      sb.addEventListener("click", () => this._scToggle());
+      tail.appendChild(sb);
+      this._scBtn = sb;
+    }
+
     if (this.room.page_path) {
       const go = document.createElement("button");
       go.title = "Open the full page";
@@ -2214,7 +2431,292 @@ class RoomPopup {
     tail.appendChild(x);
 
     hd.append(mid, tail);
+    if (this._scOpen) {
+      const p = this._scPanelEl();
+      this._scPanel = p;
+      hd.appendChild(p);
+    }
     return hd;
+  }
+
+  /* ----------------------------------------------------------- scenes ---
+   * One room, its own scenes, kept in its own file. The palette button
+   * opens the panel; a tap on a row applies it with `scene.apply`, so
+   * nothing is created in Home Assistant and HA's own state-reproduction
+   * does the recall. Admins save, update and delete; everyone applies. */
+
+  _scAdmin() {
+    const u = this._hass && this._hass.user;
+    return !!(u && u.is_admin);
+  }
+  _scenes() { return (this.room && this.room.scenes) || {}; }
+
+  _scToggle() {
+    if (this._scOpen) { this._scClose(); return; }
+    this._scOpen = true;
+    this._scEdit = null; this._scMode = null; this._scDel = null;
+    this._scErr = ""; this._scName = "";
+    this._scGroups = new Set(sceneGroupsFor(this.room).map(([k]) => k));
+    this._scRedraw();
+  }
+  _scClose() {
+    this._scOpen = false;
+    if (this._scPanel) { try { this._scPanel.remove(); } catch (err) {} }
+    this._scPanel = null;
+    if (this._scBtn) this._scBtn.classList.remove("on");
+    // the chips stood still while the panel held the header; catch them up
+    this._hdSig = null;
+    if (this._hass) this.hass = this._hass;
+  }
+  _scRedraw() {
+    if (!this._hd || !this._scOpen) return;
+    const next = this._scPanelEl();
+    if (this._scPanel && this._scPanel.isConnected) this._scPanel.replaceWith(next);
+    else this._hd.appendChild(next);
+    this._scPanel = next;
+    if (this._scBtn) this._scBtn.classList.add("on");
+  }
+
+  _scPanelEl() {
+    const p = document.createElement("div");
+    p.className = "charro-scenes";
+    const admin = this._scAdmin();
+    const scenes = this._scenes();
+    const names = Object.keys(scenes);
+    const groups = sceneGroupsFor(this.room);
+
+    if (!names.length) {
+      const h = document.createElement("div");
+      h.className = "sc-hint";
+      h.textContent = admin
+        ? "No scenes yet. Set the room how you want it, then save it below."
+        : "No scenes saved for this room.";
+      p.appendChild(h);
+    }
+
+    for (const name of names) {
+      const row = document.createElement("div");
+      row.className = "sc-row";
+
+      const go = document.createElement("button");
+      go.className = "sc-go";
+      go.title = `Apply ${name}`;
+      const gi = document.createElement("ha-icon");
+      gi.icon = scenes[name].icon || "mdi:palette";
+      const gt = document.createElement("span");
+      gt.textContent = name;
+      go.append(gi, gt);
+      go.addEventListener("click", () => this._scApply(name));
+      row.appendChild(go);
+
+      if (admin) {
+        const ed = document.createElement("button");
+        ed.className = "sc-ed";
+        ed.title = `Edit ${name}`;
+        ed.setAttribute("aria-label", `Edit ${name}`);
+        ed.innerHTML = `<ha-icon icon="mdi:pencil"></ha-icon>`;
+        ed.addEventListener("click", () => {
+          const shut = this._scEdit === name && !this._scMode;
+          this._scEdit = shut ? null : name;
+          this._scMode = null; this._scDel = null; this._scErr = "";
+          this._scRedraw();
+        });
+        row.appendChild(ed);
+      }
+      p.appendChild(row);
+
+      if (admin && this._scEdit === name && !this._scMode) {
+        const e = document.createElement("div");
+        e.className = "sc-edit";
+        const up = document.createElement("button");
+        up.textContent = "Update";
+        up.addEventListener("click", () => {
+          this._scMode = "update";
+          /* Re-open with the groups this scene was saved with, not with
+           * everything: a lights-only scene asked to remember the lights,
+           * and an update shouldn't quietly widen it. */
+          const have = groups.map(([k]) => k);
+          const was = scenes[name].groups;
+          this._scGroups = new Set(
+            (was && was.length ? was : have).filter((k) => have.includes(k)));
+          this._scRedraw();
+        });
+        const del = document.createElement("button");
+        del.className = "danger";
+        del.textContent = this._scDel === name ? "Tap again to delete" : "Delete";
+        del.addEventListener("click", () => {
+          // two taps, because there is no undo on the other side of this
+          if (this._scDel !== name) { this._scDel = name; this._scRedraw(); return; }
+          this._scDelete(name);
+        });
+        e.append(up, del);
+        p.appendChild(e);
+      }
+
+      if (admin && this._scEdit === name && this._scMode === "update")
+        p.appendChild(this._scForm(groups, name));
+    }
+
+    if (admin) {
+      const sep = document.createElement("div");
+      sep.className = "sc-sep";
+      p.appendChild(sep);
+      if (!groups.length) {
+        const h = document.createElement("div");
+        h.className = "sc-hint";
+        h.textContent = "This room has no lights, fans, climate, music or screens to remember.";
+        p.appendChild(h);
+      } else if (this._scMode === "new") {
+        p.appendChild(this._scForm(groups, null));
+      } else {
+        const add = document.createElement("button");
+        add.className = "sc-add";
+        add.innerHTML =
+          `<ha-icon icon="mdi:plus"></ha-icon><span>Save the room as a scene</span>`;
+        add.addEventListener("click", () => {
+          this._scMode = "new"; this._scEdit = null; this._scDel = null;
+          this._scErr = "";
+          this._scGroups = new Set(groups.map(([k]) => k));
+          this._scRedraw();
+        });
+        p.appendChild(add);
+      }
+    }
+
+    if (this._scErr) {
+      const e = document.createElement("div");
+      e.className = "sc-err";
+      e.textContent = this._scErr;
+      p.appendChild(e);
+    }
+    return p;
+  }
+
+  /* The tick boxes: what the scene should remember. Only what the room
+   * actually has is offered, and an unticked group is left out of the
+   * capture entirely, so a lights scene never touches the television.
+   * The count beside each one is how many entities it covers. */
+  _scForm(groups, name) {
+    const wrap = document.createElement("div");
+
+    const gs = document.createElement("div");
+    gs.className = "sc-groups";
+    for (const [k, label, icon] of groups) {
+      const l = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = this._scGroups.has(k);
+      // no redraw on a tick: the name field would lose what was typed in it
+      cb.addEventListener("change", () => {
+        if (cb.checked) this._scGroups.add(k); else this._scGroups.delete(k);
+      });
+      const i = document.createElement("ha-icon");
+      i.icon = icon;
+      const s = document.createElement("span");
+      s.textContent = `${label} (${sceneGroupIds(this.room, k).length})`;
+      l.append(cb, i, s);
+      gs.appendChild(l);
+    }
+    wrap.appendChild(gs);
+
+    const row = document.createElement("div");
+    row.className = "sc-save";
+
+    const save = document.createElement("button");
+    save.textContent = this._scBusy ? "Saving…" : (name ? "Save over it" : "Save");
+    save.disabled = !!this._scBusy;
+    save.addEventListener("click", () => this._scSave(name));
+
+    const cancel = document.createElement("button");
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => {
+      this._scMode = null; this._scEdit = null; this._scErr = "";
+      this._scRedraw();
+    });
+
+    let field = null;
+    if (!name) {
+      field = document.createElement("input");
+      field.type = "text";
+      field.placeholder = "Scene name";
+      field.value = this._scName || "";
+      field.addEventListener("input", () => { this._scName = field.value; });
+      field.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        this._scSave(null);
+      });
+      row.appendChild(field);
+    }
+    row.append(save, cancel);
+    wrap.appendChild(row);
+    if (field) requestAnimationFrame(() => { try { field.focus(); } catch (err) {} });
+    return wrap;
+  }
+
+  async _scApply(name) {
+    const sc = this._scenes()[name];
+    if (!sc) return;
+    this._scClose();
+    try {
+      await applyScene(this._hass, sc.entities);
+    } catch (err) {
+      console.error("charro-room-card: apply scene", err);
+    }
+  }
+
+  async _scSave(name) {
+    const key = this.room && this.room.room;
+    if (!key) {
+      this._scErr = "This room has no file to save into.";
+      this._scRedraw(); return;
+    }
+    const label = String(name || this._scName || "").trim();
+    if (!label) { this._scErr = "Give the scene a name."; this._scRedraw(); return; }
+    const groups = [...(this._scGroups || [])];
+    if (!groups.length) {
+      this._scErr = "Tick at least one thing to remember.";
+      this._scRedraw(); return;
+    }
+    const entities = captureScene(this.room, groups, this._hass);
+    if (!Object.keys(entities).length) {
+      this._scErr = "Nothing in those groups is answering right now.";
+      this._scRedraw(); return;
+    }
+    this._scBusy = true; this._scErr = "";
+    this._scRedraw();
+    try {
+      const was = this._scenes()[label] || {};
+      const next = await writeScenes(this._hass, key, (s) => {
+        s[label] = { ...(was.icon ? { icon: was.icon } : {}), groups, entities };
+      });
+      this.room.scenes = next.scenes || {};
+      this._scMode = null; this._scEdit = null; this._scName = "";
+    } catch (err) {
+      console.error("charro-room-card: save scene", err);
+      this._scErr = (err && err.message) || "Could not save the scene.";
+    } finally {
+      this._scBusy = false;
+      this._scRedraw();
+    }
+  }
+
+  async _scDelete(name) {
+    const key = this.room && this.room.room;
+    if (!key) return;
+    this._scBusy = true; this._scErr = ""; this._scDel = null;
+    this._scRedraw();
+    try {
+      const next = await writeScenes(this._hass, key, (s) => { delete s[name]; });
+      this.room.scenes = next.scenes || {};
+      this._scEdit = null; this._scMode = null;
+    } catch (err) {
+      console.error("charro-room-card: delete scene", err);
+      this._scErr = (err && err.message) || "Could not delete the scene.";
+    } finally {
+      this._scBusy = false;
+      this._scRedraw();
+    }
   }
 
   _chipStrip() {
@@ -2322,6 +2824,9 @@ class RoomPopup {
     const el = this.el, bd = this.backdrop;
     this.el = null; this.backdrop = null; this._cards = [];
     this._hd = null; this._hdSig = null;
+    this._scOpen = false; this._scPanel = null; this._scBtn = null;
+    this._scEdit = null; this._scMode = null; this._scDel = null;
+    this._scBusy = false; this._scErr = ""; this._scName = "";
     this._climateIdle = undefined; this._climateBusy = false;
     if (!el) return;
     try { el.classList.remove("in"); if (bd) bd.classList.remove("in"); } catch (e) {}
