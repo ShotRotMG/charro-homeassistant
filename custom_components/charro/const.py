@@ -7,6 +7,13 @@ PANEL_URL = "charro-rooms"
 PANEL_TITLE = "Rooms"
 PANEL_ICON = "mdi:floor-plan"
 
+# The UniFi diagnostics panel is a second sidebar entry off the same bundle:
+# one module fetch serves both, so adding it costs nothing at load time.
+UNIFI_PANEL_URL = "charro-unifi"
+UNIFI_PANEL_TITLE = "UniFi"
+UNIFI_PANEL_ICON = "mdi:router-network"
+UNIFI_PANEL_ELEMENT = "charro-unifi-panel"
+
 # Where the bundle is served from, and the element the panel mounts.
 STATIC_URL = "/charro_static"
 BUNDLE = "charro-cards.js"

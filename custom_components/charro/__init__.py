@@ -51,6 +51,10 @@ from .const import (
     SNAP_MAX,
     SNAP_MID_EVERY,
     STATIC_URL,
+    UNIFI_PANEL_ELEMENT,
+    UNIFI_PANEL_ICON,
+    UNIFI_PANEL_TITLE,
+    UNIFI_PANEL_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -145,6 +149,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         require_admin=True,
     )
 
+    # Second panel, same bundle and same module URL, so the browser's module
+    # map keys on it once and this costs one extra sidebar entry and nothing
+    # else. Admin only: it can restart an access point.
+    await panel_custom.async_register_panel(
+        hass,
+        webcomponent_name=UNIFI_PANEL_ELEMENT,
+        frontend_url_path=UNIFI_PANEL_URL,
+        sidebar_title=UNIFI_PANEL_TITLE,
+        sidebar_icon=UNIFI_PANEL_ICON,
+        module_url=url,
+        embed_iframe=False,
+        require_admin=True,
+    )
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
@@ -179,6 +197,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     store = hass.data.get(DOMAIN, {})
     frontend.async_remove_panel(hass, PANEL_URL)
+    frontend.async_remove_panel(hass, UNIFI_PANEL_URL)
     store.pop(entry.entry_id, None)
     _drop_extra_js(hass, store.pop("extra_js", None))
     return True

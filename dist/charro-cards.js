@@ -7,6 +7,7 @@
  *   charro-all-off-card   all zones off, both amps
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *   charro-rooms-editor   edit the room files from inside Home Assistant
+ *   charro-unifi-panel    UniFi diagnostics panel, at /charro-unifi
  *
  * Installed through HACS, so the Lovelace resource is registered automatically.
  * The first four render custom:button-card with a template fetched from
@@ -19,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.6.0";
+const VERSION = "5.7.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3469,18 +3470,32 @@ class CharroVideoCard extends HTMLElement {
   getCardSize() { return 6; }
 
   /* focus and every source select — the remote only changes when one does */
+  /* The set of entities worth watching changes only when the registries do,
+   * so it is found once and kept. Without this the signature walked all
+   * ~2000 entities on every hass tick, which in a busy house is several
+   * thousand wasted regex tests a second for a panel that is usually shut. */
+  _scan() {
+    const h = this._hass;
+    if (this._scanDevs === h.devices && this._scanEnts === h.entities && this._watch) return;
+    this._scanDevs = h.devices;
+    this._scanEnts = h.entities;
+    this._devs = ubiDevices(h);
+    const byDev = entsByDevice(h);
+    const ids = [];
+    for (const d of this._devs) for (const e of byDev[d.id] || []) ids.push(e);
+    for (const id in h.states)
+      if (/_bssid$|_ssid$|_wifi_signal$|_connection_type$/.test(id)) ids.push(id);
+    this._watch = uniq(ids);
+  }
+
   _sig() {
     const h = this._hass;
-    if (!h || !h.states) return "";
-    const ids = [this._v.focus, this._v.source_from].filter(Boolean).concat(
-      (this._v.displays || []).flatMap(
-        (d) => [d.source, d.source_from, screenPower(d)].filter(Boolean)));
-    // the receiver's input lives in an attribute, so the state alone would
-    // miss a source change entirely
-    return ids.map((e) => {
-      const st = h.states[e];
-      return `${e}=${st ? st.state : "_"}/${(st && st.attributes && st.attributes.source) || ""}`;
-    }).join(";");
+    if (!h || !h.states || !h.devices) return "";
+    this._scan();
+    let s = "";
+    for (const d of this._devs) s += `${d.id}:${d.sw_version || ""}|`;
+    for (const id of this._watch) s += `${id}=${(h.states[id] || {}).state};`;
+    return s;
   }
 
   /* A room with one screen has nothing to choose between, so it needs no
@@ -7888,6 +7903,682 @@ class CharroRoomsPanel extends HTMLElement {
   }
 }
 def("charro-rooms-panel", CharroRoomsPanel);
+
+/* ========================================================= UNIFI PANEL == */
+/*
+ * A diagnostics panel for the Ubiquiti gear, at /charro-unifi.
+ *
+ * Nothing here is hardcoded to this house. Every device, every entity and
+ * every button is discovered from the registries at render time, which
+ * matters for three reasons: the UniFi integration ships almost all of its
+ * entities disabled, so what exists changes as they are enabled; an AP
+ * added next year should appear without a code change; and the BSSID map
+ * below would otherwise be a list of MAC addresses that silently rots.
+ *
+ * The one piece of real cleverness is that map. A client's BSSID is not its
+ * AP's MAC - the first octet carries the virtual-BSSID bit and the last is
+ * a per-SSID offset - but octets two to five are the AP's, so they identify
+ * it exactly. Deriving that from each AP's own `connections` means "Kitchen
+ * AP" instead of a MAC, with no table to maintain.
+ */
+
+/* Order matters, most specific first. UDMB is the Beacon HD - an access
+ * point - and would otherwise be caught by the gateway rule's ^UDM; UXG is
+ * a gateway and would be caught by a loose ^UX in the AP rule. Both were
+ * wrong in the first draft of this list. */
+const UNIFI_KINDS = [
+  ["ap",  /^(U[67]|UAP|UDMB|UHD|UAL|UWB|E7)/i,  "Access points",       "mdi:access-point"],
+  ["gw",  /^(UDM|UXG|USG|UCG|UCKP?|UCK)/i,      "Gateways & consoles", "mdi:router"],
+  ["sw",  /^(US|USW|USM|USC|USL|USP)/i,         "Switches",            "mdi:switch"],
+  ["wlan", /UniFi WLAN/i,                       "Wireless networks",   "mdi:wifi"],
+];
+
+function ubiKind(d) {
+  const m = String((d && d.model) || "");
+  for (const [k, re] of UNIFI_KINDS) if (re.test(m)) return k;
+  return "other";
+}
+
+function ubiDevices(hass) {
+  const devs = (hass && hass.devices) || {};
+  const out = [];
+  for (const id in devs) {
+    const d = devs[id];
+    if (d && /ubiquiti/i.test(d.manufacturer || "")) out.push(d);
+  }
+  return out;
+}
+
+function entsByDevice(hass) {
+  const map = {};
+  const ents = (hass && hass.entities) || {};
+  for (const id in ents) {
+    const dev = ents[id].device_id;
+    if (dev) (map[dev] = map[dev] || []).push(id);
+  }
+  return map;
+}
+
+const ubiName = (d) => (d && (d.name_by_user || d.name)) || "(unnamed)";
+
+function ubiMac(d) {
+  for (const c of (d && d.connections) || []) if (c[0] === "mac") return String(c[1]).toLowerCase();
+  return "";
+}
+
+/* octets two to five of every AP's MAC -> that AP's name */
+function apBssidMap(hass) {
+  const m = {};
+  for (const d of ubiDevices(hass)) {
+    if (ubiKind(d) !== "ap") continue;
+    const mac = ubiMac(d);
+    if (mac.length >= 14) m[mac.slice(3, 14)] = ubiName(d);
+  }
+  return m;
+}
+
+function unifiAgo(iso) {
+  if (!iso) return "—";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(s) || s < 0) return "—";
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d > 0) return `${d}d`;
+  if (h > 0) return `${h}h`;
+  if (m > 0) return `${m}m`;
+  return `${Math.floor(s)}s`;
+}
+
+const UNIFI_DEAD = ["unknown", "unavailable", "none", "", "not connected"];
+
+/* Every client whose phone or tablet reports a BSSID, resolved to an AP.
+ * These come from the companion app rather than from UniFi, which is why
+ * they work at all while the integration's own entities are disabled. */
+function clientRows(hass) {
+  const map = apBssidMap(hass);
+  const ents = (hass && hass.entities) || {};
+  const devs = (hass && hass.devices) || {};
+  const rows = [];
+  for (const id in hass.states) {
+    if (!/^sensor\..+_bssid$/.test(id)) continue;
+    const st = hass.states[id];
+    const base = id.slice(0, -6);
+    const reg = ents[id] || {};
+    const dev = reg.device_id && devs[reg.device_id];
+    const raw = String(st.state || "").toLowerCase();
+    const live = UNIFI_DEAD.indexOf(raw) < 0;
+    const ssidSt = hass.states[base + "_ssid"];
+    const linkSt = hass.states[base + "_connection_type"];
+    rows.push({
+      name: (dev && ubiName(dev)) || reg.name || id,
+      ssid: live && ssidSt ? String(ssidSt.state).trim() : "—",
+      ap: live ? (map[raw.slice(3, 14)] || `Unknown ${st.state}`) : "—",
+      known: live && !!map[raw.slice(3, 14)],
+      bssid: live ? st.state : "—",
+      link: linkSt && UNIFI_DEAD.indexOf(String(linkSt.state).toLowerCase()) < 0
+            ? linkSt.state : "—",
+      since: live ? unifiAgo(st.last_changed) : "—",
+      sinceMs: live ? Date.now() - new Date(st.last_changed).getTime() : -1,
+      online: live,
+    });
+  }
+  return rows;
+}
+
+/* What's worth shouting about. Firmware is judged against whatever the
+ * majority of the same kind of device is running rather than against a
+ * version number this file would have to know. */
+function unifiHealth(hass) {
+  const out = [];
+  const devs = ubiDevices(hass);
+  const byDev = entsByDevice(hass);
+
+  let withEnts = 0;
+  for (const d of devs) if ((byDev[d.id] || []).length) withEnts++;
+  if (!withEnts && devs.length) {
+    out.push(["err", `${devs.length} Ubiquiti devices are registered but none have any ` +
+      "entities. Settings › Devices & Services › UniFi Network › Configure, " +
+      "then turn on “Track network devices”."]);
+  }
+
+  for (const [kind, , label] of UNIFI_KINDS) {
+    const group = devs.filter((d) => ubiKind(d) === kind && d.sw_version);
+    if (group.length < 3) continue;
+    const tally = {};
+    for (const d of group) tally[d.sw_version] = (tally[d.sw_version] || 0) + 1;
+    let best = "", bn = 0;
+    for (const v in tally) if (tally[v] > bn) { bn = tally[v]; best = v; }
+    const odd = group.filter((d) => d.sw_version !== best);
+    if (odd.length && bn > odd.length) {
+      out.push(["warn", `${label}: ${odd.map(ubiName).join(", ")} ` +
+        `${odd.length === 1 ? "is" : "are"} not on ${best}.`]);
+    }
+  }
+
+  const weak = [];
+  for (const id in hass.states) {
+    if (!/_wifi_signal$/.test(id)) continue;
+    const v = Number(hass.states[id].state);
+    if (isFinite(v) && v <= -70) weak.push(`${(hass.entities[id] || {}).name || id} (${v})`);
+  }
+  if (weak.length) out.push(["warn", `Weak signal: ${weak.join(", ")} dBm.`]);
+
+  const unknownAp = clientRows(hass).filter((r) => r.online && !r.known);
+  if (unknownAp.length) {
+    out.push(["info", `${unknownAp.length} client(s) are on a BSSID that matches no ` +
+      "known AP — a neighbour's network, or an AP that isn't adopted here."]);
+  }
+  if (!out.length) out.push(["ok", "Nothing looks wrong."]);
+  return out;
+}
+
+function sortRows(rows, col, dir) {
+  const s = rows.slice();
+  s.sort((a, b) => {
+    const x = a[col], y = b[col];
+    const n = typeof x === "number" && typeof y === "number";
+    const r = n ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return dir < 0 ? -r : r;
+  });
+  return s;
+}
+
+const UNIFI_CSS = `
+:host{ display:block; height:100%; background:var(--primary-background-color); }
+.top{
+  display:flex; align-items:center; gap:4px; height:var(--header-height, 56px);
+  padding:0 8px 0 8px; box-sizing:border-box;
+  background:var(--app-header-background-color, var(--primary-color));
+  color:var(--app-header-text-color, var(--text-primary-color, #fff));
+  font-size:20px; font-weight:400;
+}
+.top .t{ margin-left:8px; margin-right:auto; }
+.top ha-icon-button{ --mdc-icon-button-size:40px; color:inherit; }
+.top input{
+  font:inherit; font-size:14px; padding:6px 10px; border-radius:999px;
+  border:none; width:200px; max-width:38vw;
+  background:rgba(255,255,255,.18); color:inherit;
+}
+.top input::placeholder{ color:inherit; opacity:.7; }
+.tabs{
+  display:flex; gap:4px; padding:8px 12px 0; flex-wrap:wrap;
+  background:var(--primary-background-color);
+}
+.tabs button{
+  font:inherit; font-size:14px; font-weight:600; cursor:pointer;
+  border:none; border-radius:999px; padding:7px 14px;
+  color:var(--secondary-text-color);
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 8%, transparent);
+}
+.tabs button.on{
+  color:var(--text-primary-color, #fff);
+  background:var(--primary-color, #03a9f4);
+}
+.body{ height:calc(100% - var(--header-height, 56px)); overflow:auto; padding-bottom:40px; }
+.wrap{ padding:12px; }
+.card{
+  background:var(--ha-card-background, var(--card-background-color, #1c1c1c));
+  border:1px solid var(--divider-color, rgba(255,255,255,.12));
+  border-radius:14px; margin:0 0 12px; overflow:hidden;
+}
+.card > h3{
+  margin:0; padding:12px 14px; font-size:15px; font-weight:700;
+  border-bottom:1px solid var(--divider-color, rgba(255,255,255,.12));
+}
+.msg{ padding:10px 14px; font-size:13.5px; line-height:1.5; }
+.msg.err{ color:var(--error-color, #ef5350); }
+.msg.warn{ color:#ffb74d; }
+.msg.ok{ color:var(--green-color, #4caf50); }
+.msg.info{ color:var(--secondary-text-color); }
+table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+th,td{ padding:8px 12px; text-align:left; white-space:nowrap; }
+th{
+  font-size:12px; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--secondary-text-color); cursor:pointer; user-select:none;
+  border-bottom:1px solid var(--divider-color, rgba(255,255,255,.12));
+}
+th:hover{ color:var(--primary-text-color); }
+th .ar{ opacity:.5; font-size:10px; }
+tbody tr:nth-child(even){
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 4%, transparent);
+}
+td.dim{ color:var(--secondary-text-color); }
+td.bad{ color:var(--error-color, #ef5350); font-weight:600; }
+td.good{ color:var(--green-color, #4caf50); }
+.pill{
+  display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px;
+  font-weight:700; background:color-mix(in srgb, var(--primary-text-color, #fff) 12%, transparent);
+}
+.act{
+  font:inherit; font-size:12px; font-weight:600; cursor:pointer; border:none;
+  border-radius:8px; padding:4px 9px; margin-right:4px;
+  color:var(--primary-text-color);
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 13%, transparent);
+}
+.act:hover{ background:color-mix(in srgb, var(--primary-text-color, #fff) 22%, transparent); }
+.act.arm{ color:#fff; background:var(--error-color, #ef5350); }
+.stat{ display:flex; flex-wrap:wrap; gap:10px; padding:12px 14px; }
+.stat div{
+  min-width:92px; padding:10px 12px; border-radius:12px;
+  background:color-mix(in srgb, var(--primary-text-color, #fff) 7%, transparent);
+}
+.stat b{ display:block; font-size:22px; font-weight:700; line-height:1.2; }
+.stat span{ font-size:12px; color:var(--secondary-text-color); }
+.empty{ padding:14px; color:var(--secondary-text-color); font-size:13.5px; }
+`;
+
+const UNIFI_TABS = [
+  ["overview", "Overview"],
+  ["aps", "Access points"],
+  ["sw", "Switches & ports"],
+  ["clients", "Clients"],
+  ["fw", "Firmware"],
+];
+
+class CharroUnifiPanel extends HTMLElement {
+  set hass(h) {
+    this._hass = h;
+    this._render();
+    /* hass ticks constantly and these tables are wide. Only redraw when
+     * something this panel actually shows has moved. */
+    const sig = this._sig();
+    if (sig !== this._lastSig) { this._lastSig = sig; this._paint(); }
+  }
+  set narrow(n) { this._narrow = n; }
+  set route(r) { this._route = r; }
+  set panel(p) { this._panelCfg = p; }
+
+  _sig() {
+    const h = this._hass;
+    if (!h || !h.states) return "";
+    let s = "";
+    for (const d of ubiDevices(h)) s += `${d.id}:${d.sw_version || ""}|`;
+    for (const id in h.states) {
+      if (/_bssid$|_ssid$|_wifi_signal$|_connection_type$/.test(id))
+        s += `${id}=${h.states[id].state};`;
+    }
+    const byDev = entsByDevice(h);
+    for (const d of ubiDevices(h)) for (const e of byDev[d.id] || [])
+      s += `${e}=${(h.states[e] || {}).state};`;
+    return s;
+  }
+
+  _render() {
+    if (this._built) return;
+    this._built = true;
+    this._tab = "overview";
+    this._sort = {};
+    this._q = "";
+    this._armed = "";
+    const root = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = UNIFI_CSS;
+
+    const top = document.createElement("div");
+    top.className = "top";
+    const menu = document.createElement("ha-icon-button");
+    menu.setAttribute("label", "Menu");
+    menu.addEventListener("click", () => {
+      this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true }));
+    });
+    const mi = document.createElement("ha-svg-icon");
+    mi.setAttribute("path", "M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z");
+    menu.appendChild(mi);
+    const title = document.createElement("div");
+    title.className = "t";
+    title.textContent = (this._panelCfg && this._panelCfg.title) || "UniFi";
+    const q = document.createElement("input");
+    q.type = "search";
+    q.placeholder = "Filter…";
+    // no redraw of the whole panel on a keystroke, or the box loses focus
+    q.addEventListener("input", () => { this._q = q.value.toLowerCase(); this._paintBody(); });
+    top.append(menu, title, q);
+
+    const tabs = document.createElement("div");
+    tabs.className = "tabs";
+    this._tabBtns = {};
+    for (const [k, label] of UNIFI_TABS) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        this._tab = k; this._armed = "";
+        for (const t in this._tabBtns) this._tabBtns[t].classList.toggle("on", t === k);
+        this._paintBody();
+      });
+      this._tabBtns[k] = b;
+      tabs.appendChild(b);
+    }
+    this._tabBtns.overview.classList.add("on");
+
+    this._body = document.createElement("div");
+    this._body.className = "body";
+    const wrap = document.createElement("div");
+    wrap.className = "wrap";
+    this._wrap = wrap;
+    this._body.append(tabs, wrap);
+
+    root.append(style, top, this._body);
+  }
+
+  _paint() { if (this._wrap) this._paintBody(); }
+
+  _paintBody() {
+    const w = this._wrap;
+    if (!w || !this._hass) return;
+    const keep = this._body.scrollTop;
+    w.textContent = "";
+    const fn = {
+      overview: () => this._overview(),
+      aps: () => this._devTable("ap"),
+      sw: () => this._switches(),
+      clients: () => this._clients(),
+      fw: () => this._firmware(),
+    }[this._tab];
+    for (const node of fn()) w.appendChild(node);
+    this._body.scrollTop = keep;
+  }
+
+  /* ---------------------------------------------------------- helpers -- */
+
+  _card(titleText) {
+    const c = document.createElement("div");
+    c.className = "card";
+    if (titleText) {
+      const h = document.createElement("h3");
+      h.textContent = titleText;
+      c.appendChild(h);
+    }
+    return c;
+  }
+
+  _hit(text) { return !this._q || String(text).toLowerCase().indexOf(this._q) >= 0; }
+
+  /* One sortable table. `cols` is [key, label, className?]; clicking a
+   * header sorts, clicking the same one again reverses it. */
+  _table(key, cols, rows) {
+    const t = document.createElement("table");
+    const st = this._sort[key] || { col: cols[0][0], dir: 1 };
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (const [ck, label] of cols) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      if (st.col === ck) {
+        const ar = document.createElement("span");
+        ar.className = "ar";
+        ar.textContent = st.dir > 0 ? " ▲" : " ▼";
+        th.appendChild(ar);
+      }
+      th.addEventListener("click", () => {
+        this._sort[key] = { col: ck, dir: st.col === ck ? -st.dir : 1 };
+        this._paintBody();
+      });
+      htr.appendChild(th);
+    }
+    thead.appendChild(htr);
+    const tb = document.createElement("tbody");
+    for (const r of sortRows(rows, st.col, st.dir)) {
+      const tr = document.createElement("tr");
+      for (const [ck, , cls] of cols) {
+        const td = document.createElement("td");
+        const v = r[ck];
+        if (v instanceof HTMLElement || v instanceof DocumentFragment) td.appendChild(v);
+        else td.textContent = v === undefined || v === null || v === "" ? "—" : String(v);
+        const c = typeof cls === "function" ? cls(r) : cls;
+        if (c) td.className = c;
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+    t.append(thead, tb);
+    if (!rows.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = this._q ? "Nothing matches that filter." : "Nothing to show yet.";
+      const frag = document.createDocumentFragment();
+      frag.append(t, e);
+      return frag;
+    }
+    return t;
+  }
+
+  /* The buttons a device actually offers, found rather than assumed. A
+   * restart drops every client on that AP, so it asks twice. */
+  _actions(dev, ids) {
+    const box = document.createElement("div");
+    const hass = this._hass;
+    const add = (label, danger, run) => {
+      const b = document.createElement("button");
+      const armKey = `${dev.id}:${label}`;
+      const armed = this._armed === armKey;
+      b.className = danger && armed ? "act arm" : "act";
+      b.textContent = armed ? "Sure?" : label;
+      b.addEventListener("click", () => {
+        if (danger && !armed) { this._armed = armKey; this._paintBody(); return; }
+        this._armed = "";
+        Promise.resolve(run()).catch((err) => console.error("charro-unifi:", err));
+        this._paintBody();
+      });
+      box.appendChild(b);
+    };
+    for (const id of ids) {
+      const dom = id.split(".")[0];
+      const st = hass.states[id];
+      if (!st) continue;
+      if (dom === "button" && /restart|reboot/.test(id)) {
+        add("Restart", true, () => hass.callService("button", "press", { entity_id: id }));
+      } else if (dom === "button" && /locate|identify/.test(id)) {
+        add("Locate", false, () => hass.callService("button", "press", { entity_id: id }));
+      } else if (dom === "switch" && /led|locate/.test(id)) {
+        add(st.state === "on" ? "LED off" : "LED on", false,
+            () => hass.callService("switch", "toggle", { entity_id: id }));
+      } else if (dom === "update" && st.state === "on") {
+        add("Install update", true,
+            () => hass.callService("update", "install", { entity_id: id }));
+      }
+    }
+    if (!box.childElementCount) {
+      const s = document.createElement("span");
+      s.className = "pill";
+      s.textContent = "none";
+      box.appendChild(s);
+    }
+    return box;
+  }
+
+  _devStatus(ids) {
+    const hass = this._hass;
+    for (const id of ids) {
+      if (!id.startsWith("device_tracker.")) continue;
+      const st = hass.states[id];
+      if (st) return st.state === "home" ? "online" : "OFFLINE";
+    }
+    for (const id of ids) {
+      const st = hass.states[id];
+      if (st && st.state !== "unavailable") return "online";
+    }
+    return ids.length ? "OFFLINE" : "no entities";
+  }
+
+  /* ------------------------------------------------------------ tabs --- */
+
+  _overview() {
+    const hass = this._hass;
+    const devs = ubiDevices(hass);
+    const byDev = entsByDevice(hass);
+    const out = [];
+
+    const counts = {};
+    for (const d of devs) counts[ubiKind(d)] = (counts[ubiKind(d)] || 0) + 1;
+    const stats = this._card("Inventory");
+    const sw = document.createElement("div");
+    sw.className = "stat";
+    const cells = [["Devices", devs.length]];
+    for (const [k, , label] of UNIFI_KINDS) if (counts[k]) cells.push([label, counts[k]]);
+    cells.push(["Entities", devs.reduce((n, d) => n + ((byDev[d.id] || []).length), 0)]);
+    for (const [label, n] of cells) {
+      const c = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = String(n);
+      const s = document.createElement("span");
+      s.textContent = label;
+      c.append(b, s);
+      sw.appendChild(c);
+    }
+    stats.appendChild(sw);
+    out.push(stats);
+
+    const health = this._card("Health");
+    for (const [level, text] of unifiHealth(hass)) {
+      const p = document.createElement("div");
+      p.className = `msg ${level}`;
+      p.textContent = text;
+      health.appendChild(p);
+    }
+    out.push(health);
+
+    const rows = clientRows(hass).filter((r) => r.online);
+    const load = {};
+    for (const r of rows) load[r.ap] = (load[r.ap] || 0) + 1;
+    const lc = this._card("Clients per AP (from reporting devices)");
+    lc.appendChild(this._table("load",
+      [["ap", "Access point"], ["n", "Clients"]],
+      Object.keys(load).map((k) => ({ ap: k, n: load[k] }))));
+    out.push(lc);
+    return out;
+  }
+
+  _devTable(kind) {
+    const hass = this._hass;
+    const byDev = entsByDevice(hass);
+    const label = (UNIFI_KINDS.find((k) => k[0] === kind) || [, , kind])[2];
+    const areas = hass.areas || {};
+    const clients = clientRows(hass).filter((r) => r.online);
+    const load = {};
+    for (const r of clients) load[r.ap] = (load[r.ap] || 0) + 1;
+
+    const rows = ubiDevices(hass)
+      .filter((d) => ubiKind(d) === kind)
+      .filter((d) => this._hit(`${ubiName(d)} ${d.model} ${d.sw_version} ${ubiMac(d)}`))
+      .map((d) => {
+        const ids = byDev[d.id] || [];
+        return {
+          name: ubiName(d),
+          model: d.model || "",
+          area: (areas[d.area_id] || {}).name || "—",
+          fw: d.sw_version || "—",
+          ip: d.configuration_url ? String(d.configuration_url).replace(/^https?:\/\//, "") : "—",
+          mac: ubiMac(d) || "—",
+          seen: load[ubiName(d)] || 0,
+          status: this._devStatus(ids),
+          ents: ids.length,
+          act: this._actions(d, ids),
+        };
+      });
+
+    const cols = [
+      ["name", "Name"], ["model", "Model"], ["area", "Area"], ["fw", "Firmware"],
+      ["status", "Status", (r) => (r.status === "online" ? "good" : r.status === "OFFLINE" ? "bad" : "dim")],
+      ["ents", "Entities", "dim"], ["mac", "MAC", "dim"],
+    ];
+    if (kind === "ap") cols.splice(5, 0, ["seen", "Clients seen"]);
+    cols.push(["act", "Actions"]);
+
+    const c = this._card(`${label} (${rows.length})`);
+    c.appendChild(this._table(kind, cols, rows));
+    return [c];
+  }
+
+  _switches() {
+    const out = this._devTable("sw");
+    const hass = this._hass;
+    const byDev = entsByDevice(hass);
+    const ports = [];
+    for (const d of ubiDevices(hass)) {
+      for (const id of byDev[d.id] || []) {
+        if (!/^switch\..*(poe|port)/.test(id)) continue;
+        const st = hass.states[id];
+        if (!st) continue;
+        const nm = (hass.entities[id] || {}).name || id;
+        if (!this._hit(`${ubiName(d)} ${nm}`)) continue;
+        const tog = document.createElement("button");
+        tog.className = "act";
+        tog.textContent = st.state === "on" ? "Turn off" : "Turn on";
+        tog.addEventListener("click", () => {
+          hass.callService("switch", "toggle", { entity_id: id })
+            .catch((err) => console.error("charro-unifi:", err));
+        });
+        ports.push({ dev: ubiName(d), port: nm, state: st.state, act: tog });
+      }
+    }
+    const c = this._card(`PoE / ports (${ports.length})`);
+    if (!ports.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No port switches exist. They are created by the UniFi " +
+        "integration once a switch is tracked, and are disabled by default.";
+      c.appendChild(e);
+    } else {
+      c.appendChild(this._table("ports", [
+        ["dev", "Switch"], ["port", "Port"],
+        ["state", "State", (r) => (r.state === "on" ? "good" : "dim")],
+        ["act", ""],
+      ], ports));
+    }
+    out.push(c);
+    return out;
+  }
+
+  _clients() {
+    const rows = clientRows(this._hass)
+      .filter((r) => this._hit(`${r.name} ${r.ap} ${r.ssid} ${r.bssid}`));
+    const c = this._card(`Wireless clients (${rows.filter((r) => r.online).length} online)`);
+    c.appendChild(this._table("clients", [
+      ["name", "Device"], ["ssid", "Network"],
+      ["ap", "Access point", (r) => (r.online ? (r.known ? "" : "bad") : "dim")],
+      ["since", "On this AP"], ["link", "Link", "dim"], ["bssid", "BSSID", "dim"],
+    ], rows));
+    const note = document.createElement("div");
+    note.className = "msg info";
+    note.textContent = "These come from the Home Assistant companion app, not from " +
+      "UniFi, so only devices running it appear. “On this AP” is how long " +
+      "since the BSSID last changed — a number that keeps climbing while signal " +
+      "drops is a client refusing to roam.";
+    c.appendChild(note);
+    return [c];
+  }
+
+  _firmware() {
+    const hass = this._hass;
+    const byDev = entsByDevice(hass);
+    const rows = ubiDevices(hass)
+      .filter((d) => this._hit(`${ubiName(d)} ${d.model} ${d.sw_version}`))
+      .map((d) => {
+        const ids = byDev[d.id] || [];
+        const up = ids.find((i) => i.startsWith("update."));
+        const st = up && hass.states[up];
+        return {
+          name: ubiName(d),
+          model: d.model || "—",
+          kind: (UNIFI_KINDS.find((k) => k[0] === ubiKind(d)) || [, , "Other"])[2],
+          fw: d.sw_version || "—",
+          hw: d.hw_version || "—",
+          pending: st ? (st.state === "on"
+            ? (st.attributes || {}).latest_version || "yes" : "up to date") : "—",
+          act: this._actions(d, ids),
+        };
+      });
+    const c = this._card(`Firmware (${rows.length} devices)`);
+    c.appendChild(this._table("fw", [
+      ["name", "Device"], ["kind", "Kind", "dim"], ["model", "Model", "dim"],
+      ["fw", "Running"], ["hw", "Hardware", "dim"],
+      ["pending", "Available", (r) => (/^\d/.test(r.pending) ? "bad" : "dim")],
+      ["act", "Actions"],
+    ], rows));
+    return [c];
+  }
+}
+def("charro-unifi-panel", CharroUnifiPanel);
+
 
 
 /* ========================================================= HEADER TABS == */
