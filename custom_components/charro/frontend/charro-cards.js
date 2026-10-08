@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.0.0";
+const VERSION = "5.3.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2875,11 +2875,26 @@ class CharroVideoCard extends HTMLElement {
     const d = this._v.displays || [];
     return !this._v.focus && d.length === 1 ? d[0] : null;
   }
+  /* Which screen the panel is showing.
+   *
+   * A room can name an input_select as its screen picker and several do,
+   * because the physical keypads set it too. A room that doesn't shouldn't
+   * need one invented: before this, two screens and no picker left
+   * _focusName() returning "" and the whole block rendering nothing below
+   * the chips - the chips didn't even respond, since _pick had nothing to
+   * write to. The choice now falls back to the card itself, starting on the
+   * first screen, which is the same stateless treatment the view override
+   * gets: it lives with the pop-up and nothing is stored. */
   _focusName() {
     const one = this._single();
     if (one) return one.name;
-    const st = this._hass.states[this._v.focus];
-    return st ? st.state : "";
+    if (this._v.focus) {
+      const st = this._hass.states[this._v.focus];
+      return st ? st.state : "";
+    }
+    const ds = this._v.displays || [];
+    if (this._focus && ds.some((d) => d && d.name === this._focus)) return this._focus;
+    return (ds[0] && ds[0].name) || "";
   }
   _display(name) {
     return (this._v.displays || []).find((d) => d.name === name) || null;
@@ -2888,8 +2903,17 @@ class CharroVideoCard extends HTMLElement {
    * media_player, usually - it is the thing that actually knows, so the card
    * cannot drift out of step with it the way a helper could. A `select` works
    * too, which is what the RTI matrix publishes per output. */
+  /* Where "which source is live" is read from, for this screen.
+   *
+   * A room with one receiver names it once at the video level. A matrix
+   * gives every output its own select, so the screen's own field answers
+   * first - and that field is the one the room already filled in as its
+   * source select, because for a matrix they are the same entity: the thing
+   * that says what is feeding this screen, and the thing you set to change
+   * it. Keeping them as two fields only invited filling in one and
+   * wondering why the picker never appeared. */
   _sourceFrom(d) {
-    return (d && d.source_from) || this._v.source_from || "";
+    return (d && d.source_from) || this._v.source_from || (d && d.source) || "";
   }
 
   /* What the receiver says is feeding this screen, in its own words.
@@ -3007,7 +3031,11 @@ class CharroVideoCard extends HTMLElement {
   }
 
   _pick(value) {
-    if (!this._v.focus) return;
+    if (!this._v.focus) {
+      this._focus = value;        // no picker entity: the card remembers
+      this._render();
+      return;
+    }
     this._hass.callService("input_select", "select_option",
       { entity_id: this._v.focus, option: value });
   }
@@ -3040,7 +3068,8 @@ class CharroVideoCard extends HTMLElement {
       b.addEventListener("click", () => this._pick(d.name));
       row.appendChild(b);
     }
-    if (this._v.focus && (this._v.displays || []).length) {
+    if ((this._v.focus || (this._v.displays || []).length > 1)
+        && (this._v.displays || []).length) {
       const o = document.createElement("button");
       o.className = "vchip off";
       o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
@@ -4954,6 +4983,16 @@ function ago(ts) {
   return `${days} days ago`;
 }
 
+/* The room as it is on disk: without the `_remotes` template library the
+ * integration injects at load, or any other underscored scratch the editor
+ * hangs off the object. */
+function roomJson(r) {
+  const out = {};
+  for (const [k, v] of Object.entries(r || {}))
+    if (!k.startsWith("_")) out[k] = v;
+  return JSON.stringify(out, null, 2);
+}
+
 const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
                         "bath_fan_entities", "fountain_entities"];
 /* How a save gets to disk, best available first:
@@ -6400,9 +6439,15 @@ class CharroRoomsEditor extends HTMLElement {
         "HDMI-CEC, say. Then this is what the on/off button presses and what " +
         "says whether the screen is on, while Screen above keeps the remote.";
       row.appendChild(tvf);
-      row.appendChild(ent("Source select", d.source, ["input_select", "select"],
+      const srcf = ent("Its source select", d.source, ["input_select", "select"],
         (s) => { if (s) d.source = s; else delete d.source; },
-        "select.rti_vhd_8x_video_kitchen_source"));
+        "select.rti_vhd_8x_video_kitchen_source");
+      srcf.title = "The select that says what is feeding this screen, and that " +
+        "gets set when you pick a source. For the matrix that is the output\u2019s " +
+        "own source select. Leave it blank in a room where one receiver " +
+        "answers for every screen and name that receiver under Video " +
+        "switching instead.";
+      row.appendChild(srcf);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
