@@ -5798,7 +5798,39 @@ class CharroRoomsEditor extends HTMLElement {
     });
 
     const advBody = document.createElement("div");
-    advBody.append(h2, secs, h5, mc, h3, ta);
+    /* The whole room, as it is on disk. Everything above edits one corner
+     * of it; sometimes the fastest thing is to see all of it, to paste a
+     * room in from somewhere else, or to reach a key no panel has a field
+     * for yet. An escape hatch beside the UI, not instead of it. */
+    const h6 = document.createElement("h4"); h6.textContent = "Room JSON";
+    const rj = document.createElement("textarea");
+    rj.spellcheck = false;
+    rj.style.minHeight = "340px";
+    rj.value = roomJson(this._room);
+    rj.title = "The whole room file. Applies when you click away, if it parses.";
+    rj.addEventListener("change", () => {
+      const t = rj.value.trim();
+      if (!t) { this._say("Room JSON is empty \u2014 nothing applied.", "err"); return; }
+      let next;
+      try { next = JSON.parse(t); }
+      catch (err) { this._say(`Room JSON: ${err.message}`, "err"); return; }
+      if (!next || typeof next !== "object" || Array.isArray(next)) {
+        this._say("Room JSON must be an object.", "err");
+        return;
+      }
+      // `_remotes` is injected at load and is not part of the file; `room`
+      // is the file name, and a room that loses it is one nobody can find
+      const keep = this._room._remotes;
+      const key = this._room.room;
+      this._room = next;
+      if (keep) this._room._remotes = keep;
+      if (!this._room.room && key) this._room.room = key;
+      this._say("");
+      this._renderForm();          // every panel rebuilds from the new room
+      this._renderPreview();       // and this is what queues the save
+    });
+
+    advBody.append(h2, secs, h5, mc, h3, ta, h6, rj);
     const advanced = this._panel("Advanced",
       "Section order, the media card override, and raw cards", "mdi:tune",
       "_advOpen", advBody);
