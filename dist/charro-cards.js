@@ -19,7 +19,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.5.0";
+const VERSION = "5.6.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1075,6 +1075,81 @@ function roomTv(r) {
   return screens.find((p) => p.startsWith("media_player.")) || screens[0] || "";
 }
 
+/* The sensor that says a car is in the bay.
+ *
+ * `vehicle_entity` on the door still wins, but almost nobody fills it in,
+ * and for a ratgdo it is derivable: the vehicle sensor is a sibling of the
+ * cover on the same HA device. So the three Disco openers on the west side
+ * light up green with nothing configured, and the three plain openers on
+ * the east - which have no such sensor to find - simply never do.
+ *
+ * Two routes to the same sibling: the shared object id, which is a string
+ * swap and needs nothing from the registry, and failing that the device it
+ * is attached to. Scanning the registry is O(entities), so that second one
+ * is done once per device and remembered. The cache is keyed on the registry object itself rather than
+ * on time: Home Assistant replaces `hass.entities` wholesale when the
+ * registry changes, so adding the sensor later busts this by itself, and a
+ * hit costs one identity comparison. */
+let _vehReg = null;
+let _vehCache = new Map();
+
+function vehicleFor(entry, hass) {
+  const o = typeof entry === "object" && entry ? entry : {};
+  if (o.vehicle_entity) return o.vehicle_entity;
+  const id = o.entity || (typeof entry === "string" ? entry : "");
+  if (!id) return "";
+  const ents = (hass && hass.entities) || null;
+  const states = (hass && hass.states) || {};
+
+  /* The ratgdo names its entities off one object id, so the sibling is
+   * usually just the suffix swapped. Try that before walking the registry:
+   * it is two string operations, it needs no `device_id` - which not every
+   * Home Assistant build puts in this map - and it is checked against
+   * `states` so a guess that doesn't exist is no answer at all. */
+  const stem = id.slice(id.indexOf(".") + 1).replace(/_door$/, "");
+  const guess = `binary_sensor.${stem}_vehicle_detected`;
+  if (states[guess]) return guess;
+
+  const reg = ents && ents[id];
+  const dev = reg && reg.device_id;
+  if (!dev) return "";
+  if (_vehReg !== ents) { _vehReg = ents; _vehCache = new Map(); }
+  if (_vehCache.has(dev)) return _vehCache.get(dev);
+  let found = "";
+  for (const k in ents) {
+    const e = ents[k];
+    if (!e || e.device_id !== dev) continue;
+    const eid = e.entity_id || k;
+    if (eid.startsWith("binary_sensor.") && eid.endsWith("_vehicle_detected")) {
+      found = eid; break;
+    }
+  }
+  _vehCache.set(dev, found);
+  return found;
+}
+
+/* The four states a garage door can be in, decided once so the chip and the
+ * security card can't come to different conclusions about the same door.
+ * The order is the card's order: moving beats open beats a parked car. */
+function garageState(entry, hass, guarded) {
+  const o = typeof entry === "object" && entry ? entry : {};
+  const id = o.entity || (typeof entry === "string" ? entry : "");
+  const st = id && hass && hass.states && hass.states[id];
+  if (!st) return null;
+  const raw = String(st.state);
+  const s = raw.toLowerCase();
+  const veh = vehicleFor(entry, hass);
+  const car = !!(veh && hass.states[veh] && hass.states[veh].state === "on");
+  const mode = o.alert_mode || (id.startsWith("cover.") ? "open" : "violated");
+  const bad = mode === "open" ? s !== "closed" : raw === "Violated";
+  let kind = "shut";
+  // the room's guard is what stops a ratgdo's phantom Opening reaching here
+  if (!guarded && (s === "opening" || s === "closing")) kind = "move";
+  else if (!guarded && bad) kind = "open";
+  else if (car) kind = "car";
+  return { entity: id, kind, car, name: entLabel(entry, hass, "label") };
+}
+
 const garageSensors = (r, hass) =>
   (r.alert_sensors || []).filter((e) => isGarage(e, hass));
 const plainSensors = (r, hass) =>
@@ -1985,6 +2060,16 @@ const CHIP_PAL = {
   orange: { bg: "rgba(255,152,0,0.22)",   fg: "#ffb74d" },
   red:    { bg: "rgba(244,67,54,0.22)",   fg: "#ef5350" },
   off:    { bg: "transparent",            fg: "var(--disabled-text-color)" },
+  /* A garage door's own four states. These are the security page's exact
+   * values, lifted out of garage-card.json so the page and the pop-up
+   * header read the same door the same way. The page is unchanged to the
+   * hex; what moved is the chip, which used to borrow `red` and so sat a
+   * shade off the tile it was describing. Door red is deliberately not
+   * `red`: an open garage is a different claim from a violated window. */
+  door_open: { bg: "rgba(244,67,54,0.20)",   fg: "#f44336" },
+  door_car:  { bg: "rgba(76,175,80,0.20)",   fg: "#4CAF50" },
+  door_move: { bg: "rgba(255,152,0,0.22)",   fg: "#ff9800" },
+  door_shut: { bg: "rgba(255,255,255,0.12)", fg: "white" },
 };
 
 const pal = (name) => [CHIP_PAL[name].bg, CHIP_PAL[name].fg];
@@ -2036,6 +2121,9 @@ const CHIP_PURPLE = pal("purple");
 const CHIP_VIOLET = pal("violet");
 const CHIP_ORANGE = pal("orange");
 const CHIP_RED    = pal("red");
+const CHIP_DOOR_OPEN = pal("door_open");
+const CHIP_DOOR_CAR  = pal("door_car");
+const CHIP_DOOR_MOVE = pal("door_move");
 /* Elk zones say "Violated"; covers say "open"; binary sensors say "on" */
 const OPENISH = ["violated", "on", "open", "opening"];
 
@@ -2150,26 +2238,40 @@ function roomChips(r, hass) {
     if (c) out.push(c);
   }
 
-  // the one you'd want to know about from across the house
+  /* The one you'd want to know about from across the house, and now it
+   * reads like its own tile on the security page: the same four states, the
+   * same colours and the same glyphs, out of the palette they share.
+   *
+   * Grouped by state rather than one chip per door, because the west bay
+   * has three and three red chips in a row say nothing the count doesn't.
+   * A door closed over an empty bay is the one state with nothing to
+   * report, so it draws no chip - which is also why an east door, with no
+   * vehicle sensor to find, is silent until it actually opens. */
   const garages = garageSensors(r, hass);
   if (garages.length) {
-    const open = [];
+    const cs = r.confirm_sensor;
+    const csSt = cs && hass.states[cs];
+    const guarded = !!cs &&
+      !OPENISH.includes(String(csSt && csSt.state).toLowerCase());
+    const by = { move: [], open: [], car: [] };
+    let anyCar = false;
     for (const e of garages) {
-      const id = typeof e === "string" ? e : e.entity;
-      const st = hass.states[id];
-      if (!st || !OPENISH.includes(String(st.state).toLowerCase())) continue;
-      const reg = hass.entities && hass.entities[id];
-      open.push((typeof e === "object" && e.label)
-                || (reg && (reg.name || reg.original_name))
-                || (st.attributes && st.attributes.friendly_name) || id);
+      const g = garageState(e, hass, guarded);
+      if (!g) continue;
+      if (g.car) anyCar = true;
+      if (by[g.kind]) by[g.kind].push(g);
     }
-    if (open.length) {
-      out.push({ key: "garage", icon: "mdi:garage-open-variant", col: CHIP_RED,
-                 text: open.length > 1 ? String(open.length) : "",
-                 title: `${listNames(open.map((n) => ({ name: n })))} open.`,
-                 tap: { kind: "more-info",
-                        entity: (typeof garages[0] === "string"
-                                 ? garages[0] : garages[0].entity) } });
+    for (const [list, icon, col, tail] of [
+      [by.move, "mdi:garage-open", CHIP_DOOR_MOVE, "on the move."],
+      [by.open, anyCar ? "mdi:garage-open-variant" : "mdi:garage-open",
+       CHIP_DOOR_OPEN, "open."],
+      [by.car, "mdi:garage-variant", CHIP_DOOR_CAR, "shut with a car inside."],
+    ]) {
+      if (!list.length) continue;
+      out.push({ key: `garage-${tail.split(" ")[0]}`, icon, col,
+                 text: list.length > 1 ? String(list.length) : "",
+                 title: `${listNames(list)} ${tail}`,
+                 tap: { kind: "more-info", entity: list[0].entity } });
     }
   }
   return out;
@@ -3228,12 +3330,19 @@ class CharroSecurityCard extends CharroBase {
       label: c.label || "",
       icon: c.icon || (isCover ? "" : "mdi:shield-check"),
       alert_mode: c.alert_mode || (isCover ? "open" : "violated"),
-      vehicle_entity: c.vehicle_entity || "",
+      // blank on almost every door, so the sibling sensor answers for it
+      vehicle_entity: c.vehicle_entity || vehicleFor(c, this._hass),
       toggle_button: c.toggle_button || "",
+      // the door's four colours, so the template carries none of its own
+      pal: CHIP_PAL,
     };
   }
 
-  triggers() { return uniq([this._config.vehicle_entity]); }
+  /* An auto-found sensor has to be in here too, or button-card never hears
+   * the car arrive and the tile stays white until something else redraws it. */
+  triggers() {
+    return uniq([this._config.vehicle_entity || vehicleFor(this._config, this._hass)]);
+  }
   overrides() { return { entity: this._config.entity }; }
   getGridOptions() { return { columns: 6, rows: 1, min_columns: 3 }; }
 }
@@ -3259,7 +3368,7 @@ makeEditor("charro-security-card-editor", [
 }, {
   toggle_button: "What the round icon fires. A garage cover doesn't need one — " +
     "it's operated directly. Set it when a separate button works the door.",
-  vehicle_entity: "Green when a car is in the bay, white when closed and empty.",
+  vehicle_entity: "Green when a car is in the bay, white when closed and empty. Blank finds the ratgdo's own vehicle sensor, if it has one.",
 });
 
 /* ============================================================ ZONE CARD == */
