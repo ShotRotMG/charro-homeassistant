@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.7.0";
+const VERSION = "5.8.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -271,15 +271,58 @@ function checkVersion(server, hass) {
   } catch (err) { /* a toast is a nicety; the console line is the record */ }
 }
 
-function loadAll(hass) {
-  if (!_allP) {
-    _allP = hass.callWS({ type: "charro/get_rooms" })
-      .then((d) => {
-        checkVersion(d && d.version, hass);
-        return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} };
-      })
-      .catch((err) => { _allP = null; throw err; });   // let the next card retry
+/* "Unknown command." is not a failure, it is "not yet".
+ *
+ * On a Home Assistant restart the frontend reconnects its websocket as soon
+ * as core answers, and every card on an open dashboard asks for its rooms
+ * immediately - well before this integration's config entry has been set up
+ * and its websocket commands registered. Home Assistant answers
+ * unknown_command, and the card rendered that as a permanent error, so a
+ * dashboard came back from a restart as a wall of red that only a manual
+ * refresh cleared.
+ *
+ * Start order cannot be fixed from here. Home Assistant decides it from
+ * core's own stage lists, and a custom integration cannot promote itself
+ * into the early ones; even if it could, the browser reconnects earlier
+ * still. So the cards wait instead - which also covers the socket dropping
+ * partway through a restart. Two and a half minutes of patience, and after
+ * that the error is real and is shown. */
+/* The two rejections come in two different shapes, which is worth writing
+ * down because guessing it wrong makes this whole retry dead code. A
+ * command-level refusal rejects with an object -
+ * {code:"unknown_command", message:"Unknown command."} - while a
+ * connection-level failure rejects with a bare number from
+ * home-assistant-js-websocket: 1 is cannot-connect, 3 is connection-lost.
+ * Both were verified against a live instance. */
+const WS_WAIT = /unknown[_ ]command|connection[_ ]lost|not[_ ]ready/i;
+const WS_CONN_ERRS = [1, 3];
+const WS_TRIES = 30;
+
+function wsRetryable(err) {
+  if (typeof err === "number") return WS_CONN_ERRS.indexOf(err) >= 0;
+  return WS_WAIT.test(String((err && (err.code || err.message)) || err));
+}
+
+async function fetchAll(hass) {
+  let wait = 500;
+  for (let n = 0; ; n++) {
+    try {
+      const d = await hass.callWS({ type: "charro/get_rooms" });
+      if (n) console.info("charro: integration is up, cards loading");
+      checkVersion(d && d.version, hass);
+      return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} };
+    } catch (err) {
+      if (n >= WS_TRIES || !wsRetryable(err)) throw err;
+      if (!n) console.info("charro: waiting for the integration to start\u2026");
+      await new Promise((go) => setTimeout(go, wait));
+      wait = Math.min(Math.round(wait * 1.5), 5000);
+    }
   }
+}
+
+function loadAll(hass) {
+  // one wait shared by every card on the page, not one wait per card
+  if (!_allP) _allP = fetchAll(hass).catch((err) => { _allP = null; throw err; });
   return _allP;
 }
 
