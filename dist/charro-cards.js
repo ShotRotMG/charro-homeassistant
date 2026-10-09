@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.8.0";
+const VERSION = "5.9.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8009,6 +8009,21 @@ function ubiMac(d) {
   return "";
 }
 
+/* A device every one of whose entities reads unavailable is not unplugged.
+ * It is a registry entry for hardware the integration no longer provides -
+ * an access point that was swapped out, a WLAN that was deleted - and it
+ * keeps its last known firmware for ever. Calling that "offline" invites a
+ * power cycle; worse, leaving it in the firmware comparison below makes the
+ * panel invent version warnings about equipment that no longer exists. */
+function ubiStale(hass, ids) {
+  if (!ids || !ids.length) return false;
+  for (const id of ids) {
+    const st = hass.states[id];
+    if (st && st.state !== "unavailable") return false;
+  }
+  return true;
+}
+
 /* octets two to five of every AP's MAC -> that AP's name */
 function apBssidMap(hass) {
   const m = {};
@@ -8074,6 +8089,8 @@ function unifiHealth(hass) {
   const out = [];
   const devs = ubiDevices(hass);
   const byDev = entsByDevice(hass);
+  const stale = devs.filter((d) => ubiStale(hass, byDev[d.id]));
+  const liveDevs = devs.filter((d) => stale.indexOf(d) < 0);
 
   let withEnts = 0;
   for (const d of devs) if ((byDev[d.id] || []).length) withEnts++;
@@ -8083,8 +8100,16 @@ function unifiHealth(hass) {
       "then turn on “Track network devices”."]);
   }
 
-  for (const [kind, , label] of UNIFI_KINDS) {
-    const group = devs.filter((d) => ubiKind(d) === kind && d.sw_version);
+  /* Grouped by model, not by kind. A U7 Pro and an AC Pro are both access
+   * points and run completely separate firmware lines - 8.7.x against
+   * 6.8.x - so comparing them announced that four perfectly current Wi-Fi 7
+   * APs were out of date. Only identical models are comparable at all, and
+   * three of them are needed before "most of them" means anything. */
+  const byModel = {};
+  for (const d of liveDevs)
+    if (d.sw_version && d.model) (byModel[d.model] = byModel[d.model] || []).push(d);
+  for (const model in byModel) {
+    const group = byModel[model];
     if (group.length < 3) continue;
     const tally = {};
     for (const d of group) tally[d.sw_version] = (tally[d.sw_version] || 0) + 1;
@@ -8092,9 +8117,16 @@ function unifiHealth(hass) {
     for (const v in tally) if (tally[v] > bn) { bn = tally[v]; best = v; }
     const odd = group.filter((d) => d.sw_version !== best);
     if (odd.length && bn > odd.length) {
-      out.push(["warn", `${label}: ${odd.map(ubiName).join(", ")} ` +
+      out.push(["warn", `${model}: ${odd.map(ubiName).join(", ")} ` +
         `${odd.length === 1 ? "is" : "are"} not on ${best}.`]);
     }
+  }
+
+  if (stale.length) {
+    out.push(["warn", `${stale.length} device(s) are registered here but gone from ` +
+      `UniFi \u2014 ${stale.map(ubiName).join(", ")}. Every entity on them is ` +
+      "unavailable, so they are leftovers from replaced hardware and their firmware " +
+      "means nothing. Delete them under Settings \u203A Devices & Services \u203A Devices."]);
   }
 
   const weak = [];
@@ -8428,18 +8460,20 @@ class CharroUnifiPanel extends HTMLElement {
     return box;
   }
 
+  /* "stale" and "OFFLINE" are different problems with different fixes: one
+   * wants deleting in Settings, the other wants looking at. Staleness is
+   * checked first because a gone device's tracker also reads unavailable,
+   * which the old order reported as merely offline. */
   _devStatus(ids) {
     const hass = this._hass;
+    if (!ids.length) return "no entities";
+    if (ubiStale(hass, ids)) return "stale";
     for (const id of ids) {
       if (!id.startsWith("device_tracker.")) continue;
       const st = hass.states[id];
       if (st) return st.state === "home" ? "online" : "OFFLINE";
     }
-    for (const id of ids) {
-      const st = hass.states[id];
-      if (st && st.state !== "unavailable") return "online";
-    }
-    return ids.length ? "OFFLINE" : "no entities";
+    return "online";
   }
 
   /* ------------------------------------------------------------ tabs --- */
@@ -8518,8 +8552,10 @@ class CharroUnifiPanel extends HTMLElement {
         };
       });
 
+    const dimStale = (r) => (r.status === "stale" ? "dim" : "");
     const cols = [
-      ["name", "Name"], ["model", "Model"], ["area", "Area"], ["fw", "Firmware"],
+      ["name", "Name", dimStale], ["model", "Model", "dim"], ["area", "Area", "dim"],
+      ["fw", "Firmware", dimStale],
       ["status", "Status", (r) => (r.status === "online" ? "good" : r.status === "OFFLINE" ? "bad" : "dim")],
       ["ents", "Entities", "dim"], ["mac", "MAC", "dim"],
     ];
@@ -8605,6 +8641,7 @@ class CharroUnifiPanel extends HTMLElement {
           kind: (UNIFI_KINDS.find((k) => k[0] === ubiKind(d)) || [, , "Other"])[2],
           fw: d.sw_version || "—",
           hw: d.hw_version || "—",
+          status: this._devStatus(ids),
           pending: st ? (st.state === "on"
             ? (st.attributes || {}).latest_version || "yes" : "up to date") : "—",
           act: this._actions(d, ids),
@@ -8612,8 +8649,12 @@ class CharroUnifiPanel extends HTMLElement {
       });
     const c = this._card(`Firmware (${rows.length} devices)`);
     c.appendChild(this._table("fw", [
-      ["name", "Device"], ["kind", "Kind", "dim"], ["model", "Model", "dim"],
-      ["fw", "Running"], ["hw", "Hardware", "dim"],
+      ["name", "Device", (r) => (r.status === "stale" ? "dim" : "")],
+      ["kind", "Kind", "dim"], ["model", "Model", "dim"],
+      ["fw", "Running", (r) => (r.status === "stale" ? "dim" : "")],
+      ["status", "State", (r) => (r.status === "online" ? "good"
+                                  : r.status === "OFFLINE" ? "bad" : "dim")],
+      ["hw", "Hardware", "dim"],
       ["pending", "Available", (r) => (/^\d/.test(r.pending) ? "bad" : "dim")],
       ["act", "Actions"],
     ], rows));
