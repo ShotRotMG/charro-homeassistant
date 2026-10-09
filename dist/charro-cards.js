@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.9.0";
+const VERSION = "5.10.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3662,6 +3662,92 @@ class CharroVideoCard extends HTMLElement {
     return b;
   }
 
+  /* The power chip. It used to call _pick(), which only changes which
+   * screen the panel is showing - so on a room with one screen it was
+   * hidden entirely, and on a room with several it blanked the panel and
+   * turned nothing off. Theatre therefore had no way to be switched off
+   * from the card at all.
+   *
+   * Now it commands. An `Off` entry in `sources` carrying `do` actions is
+   * the real answer: direct service calls, no helper and no automation in
+   * between. Without one it falls back to telling each screen's own select
+   * that it is off, which is what the rooms built around a dropdown and a
+   * matching automation have always relied on, so nothing regresses.
+   *
+   * It only moves the view when there is a view to move: a room driven by
+   * a focus helper gets the option written to it, several screens go blank
+   * to show the room is off, and a single-screen room is left where it is.
+   * Focusing "Off" there would hide the only screen chip and strand the
+   * panel with no way back. */
+  /* What "off" would actually do in this room, worked out once so the chip
+   * is only drawn when it can do something.
+   *
+   * Three tiers. An `Off` entry in `sources` with `do` actions wins: direct
+   * service calls, no helper and no automation in between. Otherwise each
+   * screen is handled on its own - its source select is told "Off" where
+   * that is one of the options, and where it isn't the screen is switched
+   * off at its power entity instead. That second case is the RTI-fed ones:
+   * their matrix select offers DirecTV 1 through Input 8 and no Off at all,
+   * so selecting one was never going to turn a television off. The RTI
+   * power switch is what does that.
+   *
+   * A room where none of the three applies gets no chip. A button that
+   * cannot act is worse than no button. */
+  _offPlan() {
+    const v = this._v, hass = this._hass;
+    const off = v.off_option || "Off";
+    const spec = this._sourceSpec(off) || {};
+    if (spec.do && spec.do.length) return { kind: "do", steps: spec.do };
+    const jobs = [];
+    for (const d of v.displays || []) {
+      const sf = this._sourceFrom(d);
+      const st = sf && hass && hass.states[sf];
+      const opts = st && st.attributes &&
+        (st.attributes.options || st.attributes.source_list);
+      if (opts && opts.includes(off)) { jobs.push({ pick: sf, option: off }); continue; }
+      const p = screenPower(d);
+      if (p && hass && hass.states[p]) jobs.push({ power: p });
+    }
+    return { kind: "jobs", steps: jobs };
+  }
+
+  async _allOff() {
+    const v = this._v, hass = this._hass;
+    const off = v.off_option || "Off";
+    const plan = this._offPlan();
+    if (plan.kind === "do") {
+      await runActions(hass, plan.steps);
+    } else {
+      for (const job of plan.steps) {
+        try {
+          if (job.pick) {
+            const domain = job.pick.split(".")[0];
+            if (domain === "media_player")
+              await hass.callService("media_player", "select_source",
+                                     { source: job.option }, { entity_id: job.pick });
+            else
+              await hass.callService(domain, "select_option",
+                                     { option: job.option }, { entity_id: job.pick });
+          } else if (job.power) {
+            await hass.callService(job.power.split(".")[0], "turn_off",
+                                   {}, { entity_id: job.power });
+          }
+        } catch (err) { console.error("charro-video-card: off", err); }
+      }
+    }
+    /* Only move the view when there is a view to move. A focus helper gets
+     * the option written to it, several screens go blank to show the room
+     * is off, and a single-screen room is left alone - focusing "Off" there
+     * would hide its only chip and strand the panel with no way back. */
+    if (v.focus) {
+      hass.callService("input_select", "select_option",
+                       { entity_id: v.focus, option: off });
+    } else if (!this._single()) {
+      this._focus = off;
+    }
+    this._render();
+  }
+
   async _pickSource(key) {
     const spec = this._sourceSpec(key) || {};
     const d = this._display(this._focusName());
@@ -3752,16 +3838,17 @@ class CharroVideoCard extends HTMLElement {
       b.addEventListener("click", () => this._pick(d.name));
       row.appendChild(b);
     }
-    if ((this._v.focus || (this._v.displays || []).length > 1)
-        && (this._v.displays || []).length) {
+    if ((this._v.displays || []).length && this._offPlan().steps.length) {
+      const one = this._single();
       const o = document.createElement("button");
       o.className = "vchip off";
       o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
       const sp = document.createElement("span");
-      sp.textContent = "All off";
+      sp.textContent = one ? "Off" : "All off";
       o.appendChild(sp);
-      o.title = "Turn every screen in this room off";
-      o.addEventListener("click", () => this._pick(off));
+      o.title = one ? "Turn this room's screen off"
+                    : "Turn every screen in this room off";
+      o.addEventListener("click", () => this._allOff());
       row.appendChild(o);
     }
     if (row.childElementCount) this._wrap.appendChild(row);
