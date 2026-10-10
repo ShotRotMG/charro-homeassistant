@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.29.0";
+const VERSION = "5.30.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1555,6 +1555,48 @@ function securityCard(s, r) {
  * doesn't exist, which is why the source read back as "S?" — so rebuild the
  * id from the stem instead. A music_powers entry may also be an object that
  * names any of them outright. */
+/* Cameras.
+ *
+ * `picture-entity` gave a still on a refresh timer. The advanced camera
+ * card gives the live stream these cameras already advertise, so that is
+ * what a room's camera renders as now.
+ *
+ * The room names the entity and nothing else; what the card should look
+ * like is one `camera_card` on the room, templated with {{camera}} and
+ * {{title}}. A house settles on one look once rather than per camera, and
+ * since 5.14.0 a placeholder nobody filled in drops out rather than
+ * surviving as text. Without an override the card gets its documented
+ * minimum - an entity and nothing invented on top of it. */
+function cameraEntity(c) {
+  if (typeof c === "object" && c) return c.entity || c.camera || "";
+  return c || "";
+}
+
+function cameraAt(r, id) {
+  for (const c of (r && r.cameras) || []) if (cameraEntity(c) === id) return c;
+  return id;
+}
+
+function cameraName(c, hass) {
+  const o = typeof c === "object" && c ? c : {};
+  if (o.name) return o.name;
+  const id = cameraEntity(c);
+  const reg = hass && hass.entities && hass.entities[id];
+  const st = hass && hass.states && hass.states[id];
+  return (reg && (reg.name || reg.original_name))
+      || (st && st.attributes && st.attributes.friendly_name) || id;
+}
+
+function cameraCard(c, r, hass) {
+  const o = typeof c === "object" && c ? c : {};
+  if (o.card) return o.card;                       // hand-written wins
+  const id = cameraEntity(c);
+  if (!id) return null;
+  const tpl = o.camera_card || (r && r.camera_card);
+  if (tpl) return fillTemplate(clone(tpl), { camera: id, title: cameraName(c, hass) });
+  return { type: "custom:advanced-camera-card", cameras: [{ camera_entity: id }] };
+}
+
 function zoneParts(z) {
   const o = typeof z === "object" && z ? z : {};
   const power = o.entity || o.power || (typeof z === "string" ? z : "");
@@ -1712,9 +1754,9 @@ function blockCards(name, r, hass) {
   }
 
   if (name === "cameras" && (r.cameras || []).length) {
-    push({ type: "grid", columns: r.cameras.length > 1 ? 2 : 1, square: false,
-           cards: r.cameras.map((e) => ({ type: "picture-entity", entity: e,
-                                          camera_view: "auto", show_state: false })) });
+    const cams = r.cameras.map((c) => cameraCard(c, r, hass)).filter(Boolean);
+    if (cams.length)
+      push({ type: "grid", columns: cams.length > 1 ? 2 : 1, square: false, cards: cams });
   }
 
   if (name === "security" && (r.alert_sensors || []).length) {
@@ -1826,6 +1868,15 @@ function layoutBody(r, hass) {
                    cards: [securityCard(it.sensor, r)] });
       } else {
         run.push(securityCard(it.sensor, r));
+      }
+    } else if (it.camera) {
+      /* The opposite default to every other tile: a camera takes the row
+       * unless it is asked to share, because video at half width on a
+       * phone is a thumbnail of a thumbnail. `width: half` pairs two. */
+      const c = cameraCard(cameraAt(r, it.camera), r, hass);
+      if (c) {
+        if (it.width === "half") run.push(c);
+        else { flush(); out.push({ type: "grid", columns: 1, square: false, cards: [c] }); }
       }
     } else if (it.zone) {
       // a single music zone, so it can sit with its own room's lights
@@ -2010,6 +2061,10 @@ function materializeLayout(r) {
       for (const k of ["pool", "spa"]) if (heaterCard(r, k)) out.push({ heater: k });
       for (const a of r.water_actions || [])
         out.push({ water_action: a.name || a.script || a.perform_action });
+    } else if (name === "cameras") {
+      // split, so a camera can sit with the room it watches rather than in
+      // a block of its own at the bottom
+      for (const c of r.cameras || []) out.push({ camera: cameraEntity(c) });
     } else if (name === "security") {
       for (const e of r.alert_sensors || []) out.push({ sensor: e });
     } else if (name === "music") {
@@ -5454,6 +5509,15 @@ const LayoutUI = {
       if (sensors.length) cats.push({ label: "Door / motion", items: sensors });
     }
 
+    if (!usedBlocks.has("cameras")) {
+      const seenC = new Set(all.map((x) => x && x.camera).filter(Boolean));
+      const items = (r.cameras || [])
+        .map(cameraEntity)
+        .filter((e) => e && !seenC.has(e))
+        .map((e) => ({ camera: e }));
+      if (items.length) cats.push({ label: "Cameras", items });
+    }
+
     const zid = (z) => (typeof z === "string" ? z : (z && (z.entity || z.power)));
     if (!usedBlocks.has("music")) {
       const seen = new Set(all.map((x) => x && zid(x.zone)).filter(Boolean));
@@ -5553,6 +5617,12 @@ const LayoutUI = {
                      || (reg && (reg.name || reg.original_name))
                      || (st && st.attributes.friendly_name) || id,
                sub: id };
+    }
+    if (it.camera) {
+      const c = cameraAt(this._room, it.camera);
+      const o = typeof c === "object" && c ? c : {};
+      return { icon: o.icon || "mdi:cctv",
+               text: cameraName(c, this._hass), sub: it.camera };
     }
     if (it.zone) {
       const id = typeof it.zone === "string" ? it.zone : (it.zone.entity || it.zone.power);
@@ -7137,6 +7207,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._waterBox = document.createElement("div");
     this._doorsBox = document.createElement("div");
     this._gatesBox = document.createElement("div");
+    this._camsBox = document.createElement("div");
 
     const videoHost = this._panel("Media & remotes",
       "The TV, the screens, their sources, and every remote", "mdi:remote-tv",
@@ -7153,6 +7224,9 @@ class CharroRoomsEditor extends HTMLElement {
     const gatesHost = this._panel("Gates",
       "What opens each one, and whether to ask first", "mdi:gate",
       "_gatesOpen", this._gatesBox);
+    const camsHost = this._panel("Cameras",
+      "Which cameras this room shows, and what each is called", "mdi:cctv",
+      "_camsOpen", this._camsBox);
 
     /* Sections and the raw cards blob still do real work — sections orders
      * and filters the automatic body, and a room can carry cards a layout
@@ -7205,18 +7279,35 @@ class CharroRoomsEditor extends HTMLElement {
       this._renderPreview();       // and this is what queues the save
     });
 
-    advBody.append(h2, secs, h5, mc, h3, ta, h6, rj);
+    const h7 = document.createElement("h4");
+    h7.textContent = "Camera card override (JSON)";
+    const cc = document.createElement("textarea");
+    cc.spellcheck = false;
+    cc.style.minHeight = "120px";
+    cc.value = this._room.camera_card
+      ? JSON.stringify(this._room.camera_card, null, 2) : "";
+    cc.placeholder =
+      '{ "type": "custom:advanced-camera-card", "cameras": [{ "camera_entity": "{{camera}}" }] }';
+    cc.addEventListener("change", () => {
+      const t = cc.value.trim();
+      if (!t) { delete this._room.camera_card; this._say(""); this._renderPreview(); return; }
+      try { this._room.camera_card = JSON.parse(t); this._say(""); this._renderPreview(); }
+      catch (err) { this._say(`Camera card: ${err.message}`, "err"); }
+    });
+
+    advBody.append(h2, secs, h5, mc, h7, cc, h3, ta, h6, rj);
     const advanced = this._panel("Advanced",
       "Section order, the media card override, and raw cards", "mdi:tune",
       "_advOpen", advBody);
 
     this._left.append(videoHost, zoneHost, waterHost, doorsHost,
-                     gatesHost, advanced);
+                     gatesHost, camsHost, advanced);
     this._renderVideo();
     this._renderZonePlayers();
     this._renderWaterActions();
     this._renderDoors();
     this._renderGates();
+    this._renderCams();
     this._lbEnsure();
     this._lbRender();
     this._renderLights();
@@ -7423,6 +7514,51 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   /* Gates: what opens them, and whether a tap should have to be meant. */
+  /* One row per camera. Nothing here decides how a camera looks - that is
+   * the room's camera_card under Advanced - because the answer is the same
+   * for every camera in the house and typing it per camera is how two of
+   * them end up different. */
+  _renderCams() {
+    const box = this._camsBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const r = this._room;
+    const redraw = () => { this._renderCams(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    const list = r.cameras || [];
+
+    list.forEach((cRaw, i) => {
+      const c = typeof cRaw === "object" && cRaw ? cRaw : { entity: String(cRaw || "") };
+      if (typeof cRaw !== "object") r.cameras[i] = c;
+      const set = (k) => (v) => { if (v) c[k] = v; else delete c[k]; };
+      const row = f.rowBox();
+      row.appendChild(f.ent("Camera", c.entity, ["camera"], set("entity")));
+      row.appendChild(f.text("Name", c.name, set("name"),
+        cameraName(c, this._hass) || "Front Gate"));
+      row.appendChild(f.icon("Icon", c.icon, set("icon")));
+      const x = document.createElement("button");
+      x.className = "vdel";
+      x.textContent = "Remove camera";
+      x.addEventListener("click", () => {
+        r.cameras.splice(i, 1);
+        if (!r.cameras.length) delete r.cameras;
+        redraw();
+      });
+      row.appendChild(x);
+      box.appendChild(row);
+    });
+
+    box.appendChild(f.add("+ Camera", () => {
+      (r.cameras = r.cameras || []).push({ entity: "" });
+    }));
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "Each camera is its own tile in the layout, so it can sit "
+      + "anywhere \u2014 beside the lights, two to a row, wherever you drag it. "
+      + "A camera takes the full width unless you set it to half.";
+    box.appendChild(note);
+  }
+
   _renderGates() {
     const box = this._gatesBox;
     if (!box) return;
