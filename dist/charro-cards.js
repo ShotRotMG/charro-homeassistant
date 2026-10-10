@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.28.0";
+const VERSION = "5.29.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3894,9 +3894,17 @@ class CharroZoneSource extends HTMLElement {
     const cfg = this._config, hass = this._hass;
     const allow = Array.isArray(cfg.options) && cfg.options.length ? cfg.options : null;
     const out = [];
-    for (const o of opts) {
-      if (allow && allow.indexOf(String(o)) < 0) continue;
-      out.push([String(o), String(o)]);
+    for (let i = 0; i < opts.length; i++) {
+      const o = String(opts[i]);
+      if (allow) { if (allow.indexOf(o) < 0) continue; }
+      /* An amplifier always reports all eight inputs, and the bridge labels
+       * the ones nobody named after their own position - "4" is input 4
+       * with nothing plugged into it as far as anyone has said. Offering
+       * those is offering silence, so a room that has not narrowed the
+       * list still gets the named inputs only. An input really called "4"
+       * would be hidden too, and reappears the moment it is selected. */
+      else if (o === String(i + 1)) continue;
+      out.push([o, o]);
     }
     for (const x of Array.isArray(cfg.extra) ? cfg.extra : []) {
       if (!x || !x.option || opts.indexOf(x.option) < 0) continue;
