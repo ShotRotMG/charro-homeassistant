@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.20.0";
+const VERSION = "5.21.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -774,6 +774,29 @@ function hubDevices(hass, hub) {
   const st = hub && hass && hass.states && hass.states[hub];
   const list = st && st.attributes && st.attributes.devices_list;
   return Array.isArray(list) ? list.slice() : [];
+}
+
+/* The inputs a zone can be switched to, for the screen that lends it one.
+ *
+ * Which zone decides the list, so the screen names the zone first and the
+ * input second - the same order, and the same reason, as a Harmony hub and
+ * the device inside it. With no zone named, the room's first one answers:
+ * the rooms that leave it blank are the rooms with one zone. */
+function zoneSourceOptions(hass, r, power) {
+  let pick = null;
+  for (const z of (r && r.music_powers) || []) {
+    const o = typeof z === "object" && z ? z : {};
+    const pw = o.entity || o.power || (typeof z === "string" ? z : "");
+    if (!pw) continue;
+    if (!power) { pick = { o, pw }; break; }
+    if (pw === power) { pick = { o, pw }; break; }
+  }
+  if (!pick) return [];
+  const stem = String(pick.pw).replace(/^[^.]*\./, "").replace(/_power$/, "");
+  const sel = pick.o.source_entity || pick.o.source || `select.${stem}_source`;
+  const st = hass && hass.states && hass.states[sel];
+  const opts = st && st.attributes && st.attributes.options;
+  return Array.isArray(opts) ? opts.slice() : [];
 }
 
 function guessRemote(entity, templates) {
@@ -7767,20 +7790,52 @@ class CharroRoomsEditor extends HTMLElement {
       stepf.title = "Counted in the entity\u2019s own step size, so 2 on a " +
         "number that steps by 1 moves the level by 2 a press.";
       row.appendChild(stepf);
-      const asrc = field("Amplifier input this screen feeds", d.audio_source,
-        (t) => { if (t) d.audio_source = t.trim(); else delete d.audio_source; },
-        "Saloon Bar TV");
-      asrc.title = "The input the screen\u2019s own sound arrives on, named " +
-        "as the amplifier publishes it. The zone offers it in its source " +
-        "dropdown while this screen is on, labelled with the screen\u2019s " +
-        "name. Nothing switches by itself.";
-      row.appendChild(asrc);
-      const azone = ent("\u2026 to this zone", d.audio_zone, ["switch"],
+      const azone = ent("Lends its audio to this zone", d.audio_zone, ["switch"],
         (s) => { if (s) d.audio_zone = s; else delete d.audio_zone; },
         "every zone in the room");
       azone.title = "The zone\u2019s power switch, when only one of the " +
-        "room\u2019s zones should be offered it \u2014 the bar, not the stage.";
+        "room\u2019s zones should be offered it \u2014 the bar, not the " +
+        "stage. Leave it blank and every zone in the room is offered it; " +
+        "the list below then comes from the first one.";
       row.appendChild(azone);
+
+      /* The amplifier publishes what its inputs are called, so this is a
+       * list to pick from rather than a name to retype - and retyping it
+       * is the one way to get it wrong, since the zone matches on the
+       * string. Falls back to a plain box when the amplifier offers no
+       * list, which is what an unreachable bridge looks like. */
+      const asrcOpts = zoneSourceOptions(this._hass, this._room, d.audio_zone);
+      let asrc;
+      if (asrcOpts.length) {
+        asrc = document.createElement("div");
+        asrc.className = "vfield";
+        const t = document.createElement("span");
+        t.textContent = "\u2026 on amplifier input";
+        const dd = document.createElement("select");
+        const opts = [""].concat(asrcOpts);
+        if (d.audio_source && opts.indexOf(d.audio_source) < 0) opts.push(d.audio_source);
+        for (const o of opts) {
+          const op = document.createElement("option");
+          op.value = o;
+          op.textContent = o || "\u2014 none \u2014";
+          if ((d.audio_source || "") === o) op.selected = true;
+          dd.appendChild(op);
+        }
+        dd.addEventListener("change", () => {
+          if (dd.value) d.audio_source = dd.value; else delete d.audio_source;
+          changed();
+        });
+        asrc.append(t, dd);
+      } else {
+        asrc = field("\u2026 on amplifier input", d.audio_source,
+          (t) => { if (t) d.audio_source = t.trim(); else delete d.audio_source; },
+          (this._room.music_powers || []).length ? "the amplifier offers no list"
+                                                 : "the room has no music zones");
+      }
+      asrc.title = "The input the screen\u2019s own sound arrives on. The " +
+        "zone offers it in its source dropdown while this screen is on, " +
+        "labelled with the screen\u2019s name. Nothing switches by itself.";
+      row.appendChild(asrc);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
