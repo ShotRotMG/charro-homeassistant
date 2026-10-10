@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.16.0";
+const VERSION = "5.18.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -902,6 +902,56 @@ function zonePlayerCards(p, r, hass) {
   return out;
 }
 
+/* The same thing, for the whole room at once: one card per player rather
+ * than one per zone.
+ *
+ * Every zone runs through the same `zone_players` map, so a room playing
+ * one thing on two zones - the Saloon bar and the stage both on Sonos 1 -
+ * drew that now-playing card twice, once under each zone row. What you
+ * want is what is playing, once, at the top, with the zone rows underneath
+ * saying which of them is on it.
+ *
+ * So the pairs are grouped by the player they land on, and each player
+ * gets one conditional card shown when ANY zone is both on and switched to
+ * a source feeding it. A zone carrying its own `players` map joins the same
+ * grouping: two zones on different amplifiers pointed at one Sonos are
+ * still one thing playing. A room with a single zone comes out with exactly
+ * the conditions it had before. */
+function roomPlayerCards(r, hass) {
+  const order = [];
+  const seen = new Map();
+  for (const p of r.music_powers || []) {
+    const o = typeof p === "object" && p ? p : {};
+    const power = o.entity || o.power || (typeof p === "string" ? p : "");
+    if (!power) continue;
+    const stem = String(power).replace(/^[^.]*\./, "").replace(/_power$/, "");
+    const source = o.source_entity || o.source || `select.${stem}_source`;
+    const map = o.players || r.zone_players;
+    if (!map) continue;
+    for (const [value, entity] of Object.entries(map)) {
+      if (!entity) continue;
+      if (!seen.has(entity)) { seen.set(entity, []); order.push(entity); }
+      seen.get(entity).push({ condition: "and", conditions: [
+        { condition: "state", entity: power, state: "on" },
+        { condition: "state", entity: source, state: String(value) },
+      ] });
+    }
+  }
+
+  const out = [];
+  for (const entity of order) {
+    const card = playerCard(entity, hass);
+    if (!card) continue;
+    const ways = seen.get(entity);
+    out.push({ type: "conditional",
+               conditions: ways.length === 1
+                 ? ways[0].conditions
+                 : [{ condition: "or", conditions: ways }],
+               card });
+  }
+  return out;
+}
+
 /* A thermostat reads better as one line than as a panel: what it's doing and
  * what the room actually is on the left, the setpoint you came to change on
  * the right. `climate_card` replaces the whole thing.
@@ -1291,10 +1341,23 @@ function dropButtons(rows, names) {
   return out;
 }
 
+/* The matrix's CEC volume arrives as two buttons named for the direction
+ * they press - <output>_volume_up and <output>_volume_down - so either one
+ * names the pair. The editor asks for one entity rather than two fields
+ * that have to agree with each other, the same way a zone's source and
+ * volume are rebuilt from its power entity's stem. */
+function volumeButtons(id) {
+  if (/_up$/.test(id)) return { up: id, down: id.replace(/_up$/, "_down") };
+  if (/_down$/.test(id)) return { up: id.replace(/_down$/, "_up"), down: id };
+  return null;
+}
+
 function retargetVolume(card, spec) {
   const vol = (spec && spec.volume) || "";
   if (!card || !vol || vol.indexOf("media_player.") === 0) return card;
   const steppable = vol.indexOf("number.") === 0 || vol.indexOf("input_number.") === 0;
+  // a press is a press, so step size means nothing to a pair of buttons
+  const pair = vol.indexOf("button.") === 0 ? volumeButtons(vol) : null;
   const mute = (spec && spec.volume_mute) || "";
   const steps = volumeSteps(null, spec);
   const gone = [];
@@ -1309,6 +1372,14 @@ function retargetVolume(card, spec) {
       t.target = { entity_id: mute };
       t.data = {};
       a.entity_id = mute;
+      continue;
+    }
+    if (pair) {
+      const b = dir > 0 ? pair.up : pair.down;
+      setActionService(t, "button.press");
+      t.target = { entity_id: b };
+      t.data = {};
+      a.entity_id = b;
       continue;
     }
     if (!steppable) { gone.push(a.name); continue; }
@@ -1527,10 +1598,9 @@ function blockCards(name, r, hass) {
   if (name === "player") push(mediaCard(r, hass));
 
   if (name === "music") {
-    for (const p of r.music_powers || []) {
-      push(zoneCard(p, r, hass));
-      for (const c of zonePlayerCards(p, r, hass)) push(c);
-    }
+    // what is playing, once, then the zones that are on it
+    for (const c of roomPlayerCards(r, hass)) push(c);
+    for (const p of r.music_powers || []) push(zoneCard(p, r, hass));
     push(mediaCard(r, hass));
   }
 
@@ -7491,13 +7561,16 @@ class CharroRoomsEditor extends HTMLElement {
         "answers for every screen and name that receiver under Video " +
         "switching instead.";
       row.appendChild(srcf);
-      const volf = ent("Volume", d.volume, ["media_player", "number", "input_number"],
+      const volf = ent("Volume", d.volume,
+        ["media_player", "number", "input_number", "button"],
         (s) => { if (s) d.volume = s; else delete d.volume; },
         "the screen itself");
       volf.title = "What this screen\u2019s volume buttons act on. A " +
         "media_player takes them as they are; a number is stepped through " +
-        "charro.volume_step instead. Leave it blank and they fall back to " +
-        "the source\u2019s own Volume, and failing that to the screen above.";
+        "charro.volume_step; and either half of a \u2026_volume_up / " +
+        "\u2026_volume_down button pair, as the matrix publishes for CEC, " +
+        "names them both. Leave it blank and they fall back to the " +
+        "source\u2019s own Volume, and failing that to the screen above.";
       row.appendChild(volf);
       const mutef = ent("\u2026 and its mute", d.volume_mute,
         ["switch", "input_boolean"],
