@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.21.0";
+const VERSION = "5.22.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4013,33 +4013,27 @@ class CharroVideoCard extends HTMLElement {
 
   getCardSize() { return 6; }
 
-  /* focus and every source select — the remote only changes when one does */
-  /* The set of entities worth watching changes only when the registries do,
-   * so it is found once and kept. Without this the signature walked all
-   * ~2000 entities on every hass tick, which in a busy house is several
-   * thousand wasted regex tests a second for a panel that is usually shut. */
-  _scan() {
-    const h = this._hass;
-    if (this._scanDevs === h.devices && this._scanEnts === h.entities && this._watch) return;
-    this._scanDevs = h.devices;
-    this._scanEnts = h.entities;
-    this._devs = ubiDevices(h);
-    const byDev = entsByDevice(h);
-    const ids = [];
-    for (const d of this._devs) for (const e of byDev[d.id] || []) ids.push(e);
-    for (const id in h.states)
-      if (/_bssid$|_ssid$|_wifi_signal$|_connection_type$/.test(id)) ids.push(id);
-    this._watch = uniq(ids);
-  }
-
+  /* Focus and every source select - the remote only changes when one does.
+   *
+   * 5.7.0 pasted the UniFi panel's signature over this one. From then on
+   * the card redrew whenever an access point's firmware or any client's
+   * Wi-Fi signal moved, which in a house with fifteen access points is
+   * several times a minute, and did NOT redraw when a source select did.
+   * A redraw rebuilds the body and throws away where you had scrolled to,
+   * so a remote taller than the pop-up scrolled itself back to the top
+   * while you were reading it. */
   _sig() {
     const h = this._hass;
-    if (!h || !h.states || !h.devices) return "";
-    this._scan();
-    let s = "";
-    for (const d of this._devs) s += `${d.id}:${d.sw_version || ""}|`;
-    for (const id of this._watch) s += `${id}=${(h.states[id] || {}).state};`;
-    return s;
+    if (!h || !h.states) return "";
+    const v = this._v;
+    const ids = uniq([v.focus, v.source_from].concat(
+      (v.displays || []).flatMap((d) => [sourceSelect(v, d), screenPower(d)])));
+    // the receiver's input lives in an attribute, so the state alone would
+    // miss a source change entirely
+    return ids.map((e) => {
+      const st = h.states[e];
+      return `${e}=${st ? st.state : "_"}/${(st && st.attributes && st.attributes.source) || ""}`;
+    }).join(";");
   }
 
   /* A room with one screen has nothing to choose between, so it needs no
@@ -8981,18 +8975,32 @@ class CharroUnifiPanel extends HTMLElement {
   set route(r) { this._route = r; }
   set panel(p) { this._panelCfg = p; }
 
+  /* The set of entities worth watching changes only when the registries do,
+   * so it is found once and kept. Without this the signature walked all
+   * ~2000 entities on every hass tick - several thousand wasted regex tests
+   * a second for a panel that is usually shut. This is the cache 5.7.0 was
+   * supposed to put here; it went into the video card by mistake. */
+  _scan() {
+    const h = this._hass;
+    if (this._scanDevs === h.devices && this._scanEnts === h.entities && this._watch) return;
+    this._scanDevs = h.devices;
+    this._scanEnts = h.entities;
+    this._devs = ubiDevices(h);
+    const byDev = entsByDevice(h);
+    const ids = [];
+    for (const d of this._devs) for (const e of byDev[d.id] || []) ids.push(e);
+    for (const id in h.states)
+      if (/_bssid$|_ssid$|_wifi_signal$|_connection_type$/.test(id)) ids.push(id);
+    this._watch = uniq(ids);
+  }
+
   _sig() {
     const h = this._hass;
-    if (!h || !h.states) return "";
+    if (!h || !h.states || !h.devices) return "";
+    this._scan();
     let s = "";
-    for (const d of ubiDevices(h)) s += `${d.id}:${d.sw_version || ""}|`;
-    for (const id in h.states) {
-      if (/_bssid$|_ssid$|_wifi_signal$|_connection_type$/.test(id))
-        s += `${id}=${h.states[id].state};`;
-    }
-    const byDev = entsByDevice(h);
-    for (const d of ubiDevices(h)) for (const e of byDev[d.id] || [])
-      s += `${e}=${(h.states[e] || {}).state};`;
+    for (const d of this._devs) s += `${d.id}:${d.sw_version || ""}|`;
+    for (const id of this._watch) s += `${id}=${(h.states[id] || {}).state};`;
     return s;
   }
 
