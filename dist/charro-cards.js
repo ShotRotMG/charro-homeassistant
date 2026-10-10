@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.34.0";
+const VERSION = "5.35.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -704,7 +704,7 @@ function remoteCards(r, templates) {
       continue;
     }
     const spec = harmonyAlias(spec0);
-    const card = retargetVolume(fillTemplate(clone(tpl), spec), spec);
+    const card = pruneTemplate(retargetVolume(fillTemplate(clone(tpl), spec), spec));
     const watch = remoteWatch(spec);
     if (spec.always || !watch) { out.push(card); continue; }
     out.push({ type: "conditional", conditions: isOn(watch), card });
@@ -1414,6 +1414,33 @@ function volumeButtons(id) {
   if (/_up$/.test(id)) return { up: id, down: id.replace(/_up$/, "_down") };
   if (/_down$/.test(id)) return { up: id.replace(/_down$/, "_up"), down: id };
   return null;
+}
+
+/* An action Home Assistant will always refuse is worse than no action.
+ *
+ * `remote.send_command` requires `command`. The dish circlepad carries a
+ * drag_action with the repeat and delay settings and no command at all -
+ * its four direction children each have their own proper action, so the
+ * parent is left over from however the template was first written. Tapping
+ * an arrow works; dragging across the pad raises "required key not
+ * provided at 'command'" every time.
+ *
+ * Only the action is dropped, never the button: the circlepad keeps its
+ * tap and all four directions and simply stops responding to a drag. */
+function pruneTemplate(node) {
+  if (Array.isArray(node)) { node.forEach(pruneTemplate); return node; }
+  if (!node || typeof node !== "object") return node;
+  for (const k of Object.keys(node)) {
+    const v = node[k];
+    if (v && typeof v === "object" && !Array.isArray(v)
+        && (v.perform_action || v.service) === "remote.send_command"
+        && !(v.data && "command" in v.data)) {
+      delete node[k];
+      continue;
+    }
+    pruneTemplate(v);
+  }
+  return node;
 }
 
 function retargetVolume(card, spec) {
@@ -4713,7 +4740,7 @@ class CharroVideoCard extends HTMLElement {
                    volume: volumeFor(d, spec),
                    volume_mute: volumeMute(d, spec),
                    volume_steps: volumeSteps(d, spec) };
-    add(retargetVolume(fillTemplate(clone(tpl), vars), vars));
+    add(pruneTemplate(retargetVolume(fillTemplate(clone(tpl), vars), vars)));
   }
 }
 def("charro-video-card", CharroVideoCard);
