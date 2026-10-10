@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.32.0";
+const VERSION = "5.33.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -549,7 +549,29 @@ function templateVars(tpl) {
 
 /* title/remote/media_player/volume already have purpose-built fields of
  * their own above; everything else is rendered from the template. */
-const TPL_BUILTIN = ["title", "remote", "media_player", "volume"];
+/* `hub` is filled by the editor, `remote` is the entity field above it, and
+ * for a Harmony source they are the same entity wearing two hats: the
+ * templates spend {{hub}} on each button's entity_id and the circlepad's
+ * own target, and {{remote}} on the card's remote_id, which is where every
+ * button with an empty target actually sends. Two fields that have to
+ * agree is how the Saloon ended up with a working circlepad and dead
+ * everything-else, and how the Theatre ended up sending Harmony commands
+ * to a SuperBox.
+ *
+ * So one answers for the other. The hub wins when both are set, because a
+ * template only asks for {{hub}} when it drives a hub, and that is the
+ * entity the commands have to reach. */
+function harmonyEntity(spec) {
+  return (spec && (spec.hub || spec.remote)) || "";
+}
+
+function harmonyAlias(spec) {
+  const one = harmonyEntity(spec);
+  if (!one || !spec || !("hub" in spec)) return spec;
+  return { ...spec, remote: one, hub: one };
+}
+
+const TPL_BUILTIN = ["title", "remote", "media_player", "volume", "hub"];
 
 function prettyVar(k) {
   const s = String(k).replace(/[_.-]+/g, " ").trim();
@@ -661,13 +683,14 @@ function remoteWatch(spec) {
 
 function remoteCards(r, templates) {
   const out = [];
-  for (const spec of r.remotes || []) {
-    const tpl = templates[spec.use];
+  for (const spec0 of r.remotes || []) {
+    const tpl = templates[spec0.use];
     if (!tpl) {
       out.push({ type: "markdown",
                  content: `\`_remotes.json\` has no template named **${spec.use}**.` });
       continue;
     }
+    const spec = harmonyAlias(spec0);
     const card = retargetVolume(fillTemplate(clone(tpl), spec), spec);
     const watch = remoteWatch(spec);
     if (spec.always || !watch) { out.push(card); continue; }
@@ -4654,7 +4677,7 @@ class CharroVideoCard extends HTMLElement {
       return;
     }
     // the display's own volume, so the buttons act on the screen you're at
-    const vars = { title: spec.title || src, ...spec,
+    const vars = { title: spec.title || src, ...harmonyAlias(spec),
                    display: d.name,
                    display_media: displayMedia(d, spec),
                    volume: volumeFor(d, spec),
@@ -8353,8 +8376,19 @@ class CharroRoomsEditor extends HTMLElement {
 
       row.appendChild(field("Title", spec.title, (s) => {
         if (s) spec.title = s; else delete spec.title; }, key));
-      row.appendChild(ent("Remote entity", spec.remote, ["remote"], (s) => {
-        if (s) spec.remote = s; else delete spec.remote; }, "remote.charro_superbox"));
+      /* One entity for the whole source. Writing `remote` and dropping
+       * `hub` converges a room file that carried both onto the one key;
+       * reading the hub first means a file that only ever had `hub` shows
+       * the right thing here without being touched. */
+      const rem = ent("Remote entity", harmonyEntity(spec), ["remote"], (s) => {
+        if (s) spec.remote = s; else delete spec.remote;
+        delete spec.hub;
+      }, "remote.charro_superbox");
+      rem.title = "What the buttons command. A Harmony hub drives everything " +
+        "paired to it \u2014 pick the hub here and the device below says " +
+        "which of them \u2014 and anything else, a SuperBox or an Apple TV, " +
+        "is just itself.";
+      row.appendChild(rem);
       row.appendChild(ent("Media player", spec.media_player, ["media_player"], (s) => {
         if (s) spec.media_player = s; else delete spec.media_player; },
         "media_player.charro_superbox"));
@@ -8367,19 +8401,14 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(svol);
 
       /* Whatever else this template asks for, taken from the template. A
-       * hub is an entity, so it gets a picker; a device is one of the names
-       * that hub reports, so it gets that list rather than a box to mistype
-       * a Harmony id into; anything new gets a plain field and still works
-       * the day it is added. */
+       * device is one of the names its remote reports, so it gets that
+       * list rather than a box to mistype a Harmony id into; anything new
+       * gets a plain field and still works the day it is added. `hub` is
+       * not drawn: the Remote entity above is the hub. */
       for (const vk of templateVars((this._room._remotes || {})[spec.use])) {
         if (TPL_BUILTIN.indexOf(vk) >= 0) continue;
-        if (vk === "hub") {
-          row.appendChild(ent("Harmony hub", spec.hub, ["remote"], (s) => {
-            if (s) spec.hub = s; else delete spec.hub; },
-            "remote.theatre_harmonyhub"));
-          continue;
-        }
-        const names = vk === "device" ? hubDevices(this._hass, spec.hub) : null;
+        const names = vk === "device"
+          ? hubDevices(this._hass, harmonyEntity(spec)) : null;
         if (names && names.length) {
           const w = document.createElement("label");
           w.className = "vfield";
@@ -8406,7 +8435,7 @@ class CharroRoomsEditor extends HTMLElement {
         row.appendChild(field(
           vk === "device" ? "Device on that hub" : prettyVar(vk),
           spec[vk], (s) => { if (s) spec[vk] = s; else delete spec[vk]; },
-          vk === "device" ? "pick a Harmony hub first" : ""));
+          vk === "device" ? "pick the Harmony hub above first" : ""));
       }
 
       /* Which input this is on whatever reports the live source. A receiver
