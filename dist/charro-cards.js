@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.36.0";
+const VERSION = "5.37.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -572,6 +572,61 @@ function harmonyAlias(spec) {
 }
 
 const TPL_BUILTIN = ["title", "remote", "media_player", "volume", "hub"];
+
+/* What a button in a remote template actually does, in the one shape that
+ * covers almost all of them: send one named command to a hub. Anything
+ * else - a media_player volume call, a label with no action at all - is
+ * left to the JSON, and said so rather than silently shown as blank. */
+function btnService(b) {
+  const t = b && b.tap_action;
+  return (t && (t.perform_action || t.service)) || "";
+}
+
+function btnCommand(b) {
+  const t = b && b.tap_action;
+  return (t && t.data && t.data.command) || "";
+}
+
+function setBtnCommand(b, v) {
+  if (!b || !b.tap_action) return;
+  b.tap_action.data = b.tap_action.data || {};
+  if (v) b.tap_action.data.command = v;
+  else delete b.tap_action.data.command;
+}
+
+function isSendButton(b) {
+  return btnService(b) === "remote.send_command";
+}
+
+const CIRCLE_DIRS = ["up", "down", "left", "right"];
+
+/* A fresh button, in the shape the hub templates use. The placeholders are
+ * the template's own, so a new button inherits whichever hub and device
+ * the room has already named. */
+function newRemoteButton(name) {
+  return { type: "button", name,
+           entity_id: "{{hub}}",
+           icon: "",
+           tap_action: { action: "perform-action",
+                         perform_action: "remote.send_command",
+                         target: { entity_id: "{{hub}}" },
+                         data: { num_repeats: 1, delay_secs: 0.4, hold_secs: 0,
+                                 device: "{{device}}", command: "" } } };
+}
+
+/* Renaming a button has to follow it into the layout, or the row keeps
+ * pointing at a name nothing answers to and the button vanishes. */
+function renameInRows(rows, from, to) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((r) => Array.isArray(r) ? renameInRows(r, from, to)
+                       : (r === from ? to : r));
+}
+
+function dropFromRows(rows, name) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((r) => Array.isArray(r) ? dropFromRows(r, name) : r)
+             .filter((r) => r !== name);
+}
 
 function prettyVar(k) {
   const s = String(k).replace(/[_.-]+/g, " ").trim();
@@ -7406,6 +7461,99 @@ class CharroRoomsEditor extends HTMLElement {
       : "Not used by any source yet.";
     box.appendChild(un);
 
+    /* ---- the buttons, as fields ---- */
+    const acts = tpl.custom_actions = tpl.custom_actions || [];
+    const btnBox = document.createElement("div");
+    acts.forEach((b, i) => {
+      const body = document.createElement("div");
+      const row = f.rowBox();
+
+      row.appendChild(f.text("Name", b.name, (t) => {
+        const next = String(t || "").trim();
+        if (!next || next === b.name) return;
+        tpl.rows = renameInRows(tpl.rows, b.name, next);
+        b.name = next;
+      }, "dish_guide"));
+      row.appendChild(f.icon("Icon", b.icon, (v) => {
+        if (v) b.icon = v; else delete b.icon;
+      }));
+      row.appendChild(f.text("Label", b.label, (t) => {
+        if (t) b.label = t; else delete b.label;
+      }, "Guide"));
+
+      if (isSendButton(b)) {
+        row.appendChild(f.text("Command it sends", btnCommand(b),
+          (t) => setBtnCommand(b, String(t || "").trim()), "Guide"));
+      } else {
+        const n = document.createElement("div");
+        n.className = "vnote";
+        n.textContent = btnService(b)
+          ? `Calls ${btnService(b)} rather than sending a hub command — edit it `
+            + `under Advanced.`
+          : "No action of its own — a label, or the card fills it in.";
+        row.appendChild(n);
+      }
+
+      /* A circlepad is five buttons wearing one coat: a tap and four
+       * directions, each with its own command. */
+      if (b.type === "circlepad") {
+        for (const dir of CIRCLE_DIRS) {
+          const kid = b[dir];
+          if (!kid) continue;
+          row.appendChild(f.text(`\u2026 ${dir}`, btnCommand(kid),
+            (t) => setBtnCommand(kid, String(t || "").trim()), "DirectionUp"));
+        }
+      }
+
+      const del = document.createElement("button");
+      del.className = "vdel";
+      del.textContent = "Remove button";
+      del.addEventListener("click", () => {
+        tpl.rows = dropFromRows(tpl.rows, b.name);
+        acts.splice(i, 1);
+        this._renderRemote();
+      });
+      row.appendChild(del);
+      body.appendChild(row);
+
+      const sub = [b.type || "button", isSendButton(b) ? btnCommand(b) || "no command"
+                                                       : btnService(b) || "no action"]
+        .filter(Boolean).join(" \u00b7 ");
+      btnBox.appendChild(this._panel(b.name || `Button ${i + 1}`, sub,
+        b.icon || "mdi:gesture-tap-button", `_rb${i}Open`, body));
+    });
+
+    btnBox.appendChild(f.add("+ Button", () => {
+      const nm = `btn_${acts.length + 1}`;
+      acts.push(newRemoteButton(nm));
+      tpl.rows = Array.isArray(tpl.rows) ? tpl.rows : [];
+      if (tpl.rows.length) tpl.rows[tpl.rows.length - 1].push(nm);
+      else tpl.rows.push([nm]);
+    }));
+    box.appendChild(f.cap("Buttons"));
+    box.appendChild(btnBox);
+
+    /* ---- the layout ---- */
+    box.appendChild(f.cap("Rows \u2014 which buttons, in which order"));
+    const known = new Set(acts.map((b) => b.name));
+    (tpl.rows = tpl.rows || []).forEach((r, i) => {
+      const list = Array.isArray(r) ? r : [r];
+      const fld = f.text(`Row ${i + 1}`, list.join(", "), (t) => {
+        const next = String(t || "").split(",").map((x) => x.trim()).filter(Boolean);
+        if (next.length) tpl.rows[i] = next;
+        else tpl.rows.splice(i, 1);
+      }, "dish_back, dish_dvr, dish_guide");
+      const unknown = list.filter((x) => typeof x === "string" && !known.has(x));
+      if (unknown.length) {
+        fld.title = `No button is called: ${unknown.join(", ")} \u2014 these draw `
+          + `as empty cells.`;
+      }
+      box.appendChild(fld);
+    });
+    box.appendChild(f.add("+ Row", () => { (tpl.rows = tpl.rows || []).push([]); }));
+
+    /* ---- everything else ---- */
+    const adv = document.createElement("div");
     const h = document.createElement("h4");
     h.textContent = "Template (JSON)";
     const ta = document.createElement("textarea");
@@ -7415,9 +7563,13 @@ class CharroRoomsEditor extends HTMLElement {
       try {
         this._remotesAll[name] = JSON.parse(ta.value);
         this._say("");
+        this._renderRemote();
       } catch (err) { this._say(`Template: ${err.message}`, "err"); }
     });
-    box.append(h, ta);
+    adv.append(h, ta);
+    box.appendChild(this._panel("Advanced",
+      "The whole template, for anything the fields above don\u2019t cover",
+      "mdi:code-braces", "_remAdvOpen", adv));
 
     const row = document.createElement("div");
     row.className = "bar";
