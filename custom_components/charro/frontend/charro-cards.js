@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.22.0";
+const VERSION = "5.23.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4331,16 +4331,20 @@ class CharroVideoCard extends HTMLElement {
       b.addEventListener("click", () => this._pick(d.name));
       row.appendChild(b);
     }
-    if ((this._v.displays || []).length && this._offPlan().steps.length) {
-      const one = this._single();
+    /* "All off" is only worth a chip when it does more than the per-screen
+     * chips below already do. With one screen on it is the same button
+     * twice, side by side, which is what the Kitchen looked like: an "Off"
+     * chip on one row and a "TV" power chip on the next, both toggling the
+     * same matrix switch. */
+    const lit = (this._v.displays || []).filter((d) => this._isLive(d));
+    if (lit.length > 1 && this._offPlan().steps.length) {
       const o = document.createElement("button");
       o.className = "vchip off";
       o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
       const sp = document.createElement("span");
-      sp.textContent = one ? "Off" : "All off";
+      sp.textContent = "All off";
       o.appendChild(sp);
-      o.title = one ? "Turn this room's screen off"
-                    : "Turn every screen in this room off";
+      o.title = "Turn every screen in this room off";
       o.addEventListener("click", () => this._allOff());
       row.appendChild(o);
     }
@@ -4373,12 +4377,23 @@ class CharroVideoCard extends HTMLElement {
      * belongs to the box and can't turn the screen off either. Leave the
      * field blank, as an LG that answers its own remote would, and no
      * second power button appears. */
+    /* One chip per screen that is on, in the order the chips above are in,
+     * rather than one for whichever screen you happen to be looking at.
+     * Turning the Sofa off should not mean selecting the Sofa first; and a
+     * row that only lists what is running reads as status as much as
+     * control, so it is empty in a dark room and never grows past the
+     * number of televisions actually on. */
     const sepPower = !!d.power;
     if (sepPower) {
       const prow = document.createElement("div");
       prow.className = "vrow";
-      prow.appendChild(this._powerChip(d));
-      this._wrap.appendChild(prow);
+      for (const s of this._v.displays || []) {
+        if (!screenPower(s)) continue;
+        if (s.name !== d.name && !this._isLive(s)) continue;
+        const chip = this._powerChip(s);
+        if (chip) prow.appendChild(chip);
+      }
+      if (prow.childElementCount) this._wrap.appendChild(prow);
     }
 
     // ---- what's feeding it
