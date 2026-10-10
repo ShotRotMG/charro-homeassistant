@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.25.0";
+const VERSION = "5.26.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3827,42 +3827,52 @@ def("charro-zone-card", CharroZoneCard);
  * that has moved or renamed that element, and on a phone it opens the
  * operating system's picker, which is a better thing to hit with a thumb
  * than a column of 30px rows inside a pop-up. */
+/* The stylesheet goes in this element's own shadow root, not the document.
+ *
+ * 5.19.0 put it in document.head, where it styled nothing: the zone card is
+ * a button-card and this picker renders inside its shadow DOM, which a
+ * document stylesheet cannot reach. What showed up was a browser-default
+ * <select> - white, native arrow, and sized to its own text, so "Bar" and
+ * "Sonos 1" came out different widths in the same column. Custom
+ * properties do cross a shadow boundary, so the theme still comes through.
+ *
+ * `width: 100%` on a block host is what makes every zone's picker the same
+ * width, whatever the input happens to be called. */
 const ZONE_SRC_CSS = `
-select.czs {
+:host { display: block; width: 100%; }
+select {
   width: 100%; height: 30px; box-sizing: border-box;
-  padding: 0 16px 0 6px; margin: 0;
-  font: inherit; font-size: 12px; font-weight: 700;
+  padding: 0 17px 0 8px; margin: 0;
+  font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1;
   text-overflow: ellipsis; white-space: nowrap;
   color: var(--primary-text-color); background-color: transparent;
-  border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--divider-color); border-radius: 8px;
+  cursor: pointer; outline: none;
   appearance: none; -webkit-appearance: none;
   background-image:
     linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: calc(100% - 10px) 13px, calc(100% - 7px) 13px;
+  background-position: calc(100% - 11px) 13px, calc(100% - 8px) 13px;
   background-size: 3px 3px, 3px 3px;
   background-repeat: no-repeat;
 }
-select.czs:disabled { opacity: 0.5; cursor: default; background-image: none; }
-select.czs option { color: var(--primary-text-color);
-                    background-color: var(--card-background-color, #1c1c1c); }
+select:hover { background-color: rgba(127, 127, 127, 0.14); }
+select:focus-visible { border-color: var(--primary-color); }
+select.on { border: 2px solid var(--primary-color); padding: 0 16px 0 7px; }
+select:disabled { opacity: 0.5; cursor: default; background-image: none; }
+/* the open menu is painted by the platform, so it needs real colours
+   rather than a transparent background it would render black-on-black */
+option { color: var(--primary-text-color);
+         background-color: var(--card-background-color, #1c1c1c); }
 `;
-
-function zoneSrcCss() {
-  if (typeof document === "undefined") return;
-  if (document.getElementById("charro-zone-src-css")) return;
-  const el = document.createElement("style");
-  el.id = "charro-zone-src-css";
-  el.textContent = ZONE_SRC_CSS;
-  document.head.appendChild(el);
-}
 
 class CharroZoneSource extends HTMLElement {
   setConfig(config) {
     if (!config || !config.entity) throw new Error("charro-zone-source needs an entity");
     this._config = config;
     this._sel = null;
-    this.innerHTML = "";
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    this.shadowRoot.innerHTML = "";
     if (this._hass) this._render();
   }
 
@@ -3901,12 +3911,13 @@ class CharroZoneSource extends HTMLElement {
     const hass = this._hass, cfg = this._config;
     if (!hass || !cfg) return;
     const st = hass.states[cfg.entity];
-    if (!st) { this.innerHTML = ""; this._sel = null; return; }
+    if (!st) { this.shadowRoot.innerHTML = ""; this._sel = null; return; }
 
     if (!this._sel) {
-      zoneSrcCss();
+      const css = document.createElement("style");
+      css.textContent = ZONE_SRC_CSS;
+      this.shadowRoot.appendChild(css);
       const sel = document.createElement("select");
-      sel.className = "czs";
       /* The whole row behind this is a button-card with a tap action of its
        * own, and opening a menu is not asking for that. */
       for (const ev of ["click", "pointerdown", "mousedown", "touchstart"]) {
@@ -3917,7 +3928,7 @@ class CharroZoneSource extends HTMLElement {
         this._hass.callService("select", "select_option",
           { entity_id: this._config.entity, option: sel.value });
       });
-      this.appendChild(sel);
+      this.shadowRoot.appendChild(sel);
       this._sel = sel;
     }
 
@@ -3941,10 +3952,9 @@ class CharroZoneSource extends HTMLElement {
     if (sel.value !== st.state) sel.value = st.state;
 
     // the chip used to brighten with the zone; keep that
-    const on = cfg.power && hass.states[cfg.power]
-      && hass.states[cfg.power].state === "on";
-    sel.style.border = on ? "2px solid var(--primary-color)"
-                          : "1px solid var(--divider-color)";
+    const on = !!(cfg.power && hass.states[cfg.power]
+      && hass.states[cfg.power].state === "on");
+    sel.classList.toggle("on", on);
   }
 }
 def("charro-zone-source", CharroZoneSource);
