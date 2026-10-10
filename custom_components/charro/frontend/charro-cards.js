@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.14.0";
+const VERSION = "5.15.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -843,11 +843,8 @@ function videoSimpleCards(r, hass) {
       // shouldn't render a literal {{display_media}} just because the room
       // isn't using the switcher
       display: d.name || "",
-      // volume belongs to a player. A remote-only screen has none, and a
-      // template that asks for one should get a blank rather than a remote
-      // entity it will try to read a volume level off.
-      display_media: own.media_player
-                     || (tv.startsWith("media_player.") ? tv : ""),
+      display_media: displayMedia(d, own),
+      volume: volumeFor(d, own),
     });
     // waking belongs to the screen, not to whichever box is feeding it
     if (d.wake) spec.wake = d.wake;
@@ -1215,6 +1212,31 @@ function screenTv(d) {
 
 function screenPower(d) {
   return (d && (d.power || d.screen || d.media_player)) || "";
+}
+
+/* The player a screen's remote reads a volume level off.
+ *
+ * A screen fed by the matrix powers up through a `switch.`, which has no
+ * volume and no media of any kind, so a template asking for the screen's
+ * player should get a blank rather than something it will try to read a
+ * level off. The source's own player wins when it has one - a SuperBox
+ * knows its volume better than the television showing it. */
+function displayMedia(d, spec) {
+  if (spec && spec.media_player) return spec.media_player;
+  const tv = screenTv(d);
+  return tv.indexOf("media_player.") === 0 ? tv : "";
+}
+
+/* What a remote's volume buttons act on, most specific first.
+ *
+ * A room with three screens draws the same remote three times, once per
+ * screen, so a single volume entity on the source had the Sofa's volume
+ * buttons turning up the Bar. The screen's own field wins; the source is
+ * the room-wide fallback, for the rooms that really do share one amplifier;
+ * and failing both the screen itself, which is what a one-television room
+ * has always meant by volume. */
+function volumeFor(d, spec) {
+  return (d && d.volume) || (spec && spec.volume) || displayMedia(d, spec);
 }
 
 /* Fold an older screen into the two fields. The editor does this on load, so
@@ -4105,7 +4127,8 @@ class CharroVideoCard extends HTMLElement {
     // the display's own volume, so the buttons act on the screen you're at
     add(fillTemplate(clone(tpl), { title: spec.title || src, ...spec,
                                    display: d.name,
-                                   display_media: screenTv(d) }));
+                                   display_media: displayMedia(d, spec),
+                                   volume: volumeFor(d, spec) }));
   }
 }
 def("charro-video-card", CharroVideoCard);
@@ -7381,6 +7404,13 @@ class CharroRoomsEditor extends HTMLElement {
         "answers for every screen and name that receiver under Video " +
         "switching instead.";
       row.appendChild(srcf);
+      const volf = ent("Volume", d.volume, ["media_player"],
+        (s) => { if (s) d.volume = s; else delete d.volume; },
+        "the screen itself");
+      volf.title = "What this screen\u2019s volume buttons act on. Leave it " +
+        "blank and they fall back to the source\u2019s own Volume, and failing " +
+        "that to the screen above.";
+      row.appendChild(volf);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
@@ -7618,9 +7648,13 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(ent("Media player", spec.media_player, ["media_player"], (s) => {
         if (s) spec.media_player = s; else delete spec.media_player; },
         "media_player.charro_superbox"));
-      row.appendChild(ent("Volume goes to", spec.volume, ["media_player"], (s) => {
+      const svol = ent("Volume goes to", spec.volume, ["media_player"], (s) => {
         if (s) spec.volume = s; else delete spec.volume; },
-        "the screen's own media_player"));
+        "the screen\u2019s own Volume");
+      svol.title = "For a room where every screen shares one amplifier. Leave " +
+        "it blank and each screen\u2019s remote uses that screen\u2019s own " +
+        "Volume field instead.";
+      row.appendChild(svol);
 
       /* Whatever else this template asks for, taken from the template. A
        * hub is an entity, so it gets a picker; a device is one of the names
