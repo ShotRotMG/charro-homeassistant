@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.11.0";
+const VERSION = "5.12.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -665,11 +665,26 @@ async function runActions(hass, steps) {
   }
 }
 
+/* The source select a screen actually uses, in priority order: its own
+ * override, then the room's, then the screen's own `source`.
+ *
+ * One function because it used to be two. The card resolved this with the
+ * full chain everywhere it mattered, while videoIsBasic below looked only
+ * at `d.source` - so a room that set the room-level "Current source comes
+ * from" and no per-screen source was judged to have no source select at
+ * all, fell back to Basic TV, and drew no picker. Every other part of the
+ * card could see the select; the single test that decides whether the
+ * picker exists could not. Asking the same question two ways is what the
+ * bug was, so there is now only one way to ask it. */
+function sourceSelect(v, d) {
+  return (d && d.source_from) || (v && v.source_from) || (d && d.source) || "";
+}
+
 function videoIsBasic(v) {
   if (!v) return true;
   if (v.simple) return true;
   if (!Object.keys(v.sources || {}).length) return true;
-  return !(v.displays || []).some((d) => d && d.source);
+  return !(v.displays || []).some((d) => sourceSelect(v, d));
 }
 
 /* Which remote template fits a screen nobody has assigned one to.
@@ -3619,9 +3634,7 @@ class CharroVideoCard extends HTMLElement {
    * that says what is feeding this screen, and the thing you set to change
    * it. Keeping them as two fields only invited filling in one and
    * wondering why the picker never appeared. */
-  _sourceFrom(d) {
-    return (d && d.source_from) || this._v.source_from || (d && d.source) || "";
-  }
+  _sourceFrom(d) { return sourceSelect(this._v, d); }
 
   /* What the receiver says is feeding this screen, in its own words.
    * null means the room has no source_from and the old helper is in play. */
