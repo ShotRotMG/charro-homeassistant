@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.37.0";
+const VERSION = "5.38.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4199,7 +4199,7 @@ def("charro-zone-source", CharroZoneSource);
  */
 const VIDEO_CSS = `
 :host{ display:block; }
-.vwrap{ display:flex; flex-direction:column; gap:10px; }
+.vwrap{ display:flex; flex-direction:column; gap:10px; min-width:0; }
 .vrow{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .vrow .sp{ margin-left:auto; }
 .vchip{
@@ -4221,6 +4221,18 @@ const VIDEO_CSS = `
 .vchip.off{ margin-left:auto; color:#ef5350; border-color:rgba(244,67,54,.4); }
 .vchip.off:hover{ background:rgba(244,67,54,.16); }
 .vnote{ font-size:13px; color:var(--secondary-text-color); padding:2px 2px 0; }
+/* A flex item defaults to min-width:auto, which is a refusal to shrink
+ * below its own content. A remote whose labels are set at 28px is wider
+ * than a phone, so the slot held the column open and the whole pop-up
+ * scrolled sideways - every row of it, not just the remote.
+ *
+ * min-width:0 lets the column be as narrow as the pop-up, and the overflow
+ * is kept to the one card that has it. A remote that still does not fit
+ * scrolls inside its own slot, which is a far smaller annoyance than the
+ * lights and the thermostat sliding off the screen with it. The real cure
+ * is a template whose buttons are sized for a phone; this is what keeps
+ * one that is not from taking the room with it. */
+.vslot{ min-width:0; max-width:100%; overflow-x:auto; }
 .vslot > *{ display:block; }
 `;
 
