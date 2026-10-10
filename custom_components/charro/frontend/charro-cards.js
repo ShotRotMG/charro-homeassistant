@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.10.0";
+const VERSION = "5.11.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1043,6 +1043,41 @@ function charroOpenAlerts(v, states) {
   });
 }
 if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
+
+/* The tile's corner badge took its glyph from the FIRST open sensor and its
+ * number from ALL of them. A garage with one door up and the entry door ajar
+ * therefore drew a garage icon with a 2 beside it, which reads as two garage
+ * doors open. The count was right and the icon was lying.
+ *
+ * Group by glyph instead, so every number belongs to the icon next to it:
+ * one badge per kind, each counting only its own. The pop-up header has
+ * worked this way since 5.6.0 - this is the tile catching up, and the two
+ * finally describing the same room in the same language.
+ *
+ * On `window` for the same reason charroOpenAlerts is: the template needs
+ * the same answer in three places and a button-card template can only reach
+ * a shared implementation through a global. */
+function charroAlertIcon(id) {
+  if (String(id).startsWith("cover.")) return "mdi:garage-open";
+  if (String(id).includes("window")) return "mdi:window-open-variant";
+  if (String(id).includes("motion")) return "mdi:motion-sensor";
+  return "mdi:door-open";
+}
+
+function charroAlertGroups(v, states) {
+  const out = [];
+  for (const id of charroOpenAlerts(v, states)) {
+    const icon = charroAlertIcon(id);
+    const hit = out.find((g) => g[0] === icon);
+    if (hit) hit[1]++;
+    else out.push([icon, 1]);
+  }
+  return out;
+}
+if (typeof window !== "undefined") {
+  window.charroAlertIcon = charroAlertIcon;
+  window.charroAlertGroups = charroAlertGroups;
+}
 
 /* The TV a room's chip should follow.
  *
