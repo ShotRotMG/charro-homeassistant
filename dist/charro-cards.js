@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.30.0";
+const VERSION = "5.32.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -996,10 +996,18 @@ function roomPlayerCards(r, hass) {
  * for changing your mind. */
 /* The one boundary the thermostat card's shape turns on. Shared so the
  * builder and the watcher can never disagree about which side it is on. */
+/* "Not worth showing a setpoint for" - off, and also unreachable.
+ *
+ * Only `off` and a missing entity counted before, so a thermostat whose
+ * integration had stopped answering took the running branch and was given
+ * a +/- with nothing behind it. An unavailable entity publishes no
+ * hvac_modes either, so there were no mode buttons to fall back to: the
+ * tile ended up as a name, the word Unavailable, and a stepper that did
+ * nothing - the exact dead control this function exists to prevent. */
 function climateIdle(r, hass) {
   const ent = r && r.climate_entity;
   const st = ent && hass && hass.states && hass.states[ent];
-  return !st || st.state === "off";
+  return !st || OFFISH.includes(st.state);
 }
 
 function climateCard(r, hass) {
@@ -1565,8 +1573,20 @@ function securityCard(s, r) {
  * like is one `camera_card` on the room, templated with {{camera}} and
  * {{title}}. A house settles on one look once rather than per camera, and
  * since 5.14.0 a placeholder nobody filled in drops out rather than
- * surviving as text. Without an override the card gets its documented
- * minimum - an entity and nothing invented on top of it. */
+ * surviving as text.
+ *
+ * The default below is the config these cameras are already running on the
+ * dashboard, minus two keys that belong to that page rather than to a
+ * camera: `visibility`, which answered to an input_select picking which
+ * system to show, and `editor`, which is the visual editor remembering
+ * which tab it was on. `live.preload: false` stays and matters - ten
+ * cameras all opening streams because a pop-up exists is the difference
+ * between a dashboard and a load problem. */
+const CAMERA_CARD = {
+  type: "custom:advanced-camera-card",
+  cameras: [{ camera_entity: "{{camera}}", title: "{{title}}" }],
+  live: { preload: false },
+};
 function cameraEntity(c) {
   if (typeof c === "object" && c) return c.entity || c.camera || "";
   return c || "";
@@ -1578,13 +1598,20 @@ function cameraAt(r, id) {
 }
 
 function cameraName(c, hass) {
+  return cameraTitle(c, hass) || cameraEntity(c);
+}
+
+/* What a person would call it, or nothing. The entity id is a fine last
+ * resort for a label in the editor and a poor one printed across a live
+ * picture, so the card gets a blank instead and draws no title at all. */
+function cameraTitle(c, hass) {
   const o = typeof c === "object" && c ? c : {};
   if (o.name) return o.name;
   const id = cameraEntity(c);
   const reg = hass && hass.entities && hass.entities[id];
   const st = hass && hass.states && hass.states[id];
   return (reg && (reg.name || reg.original_name))
-      || (st && st.attributes && st.attributes.friendly_name) || id;
+      || (st && st.attributes && st.attributes.friendly_name) || "";
 }
 
 function cameraCard(c, r, hass) {
@@ -1592,9 +1619,8 @@ function cameraCard(c, r, hass) {
   if (o.card) return o.card;                       // hand-written wins
   const id = cameraEntity(c);
   if (!id) return null;
-  const tpl = o.camera_card || (r && r.camera_card);
-  if (tpl) return fillTemplate(clone(tpl), { camera: id, title: cameraName(c, hass) });
-  return { type: "custom:advanced-camera-card", cameras: [{ camera_entity: id }] };
+  const tpl = o.camera_card || (r && r.camera_card) || CAMERA_CARD;
+  return fillTemplate(clone(tpl), { camera: id, title: cameraTitle(c, hass) });
 }
 
 function zoneParts(z) {
