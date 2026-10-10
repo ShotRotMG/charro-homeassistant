@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.18.0";
+const VERSION = "5.19.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3748,6 +3748,113 @@ class CharroZoneCard extends CharroBase {
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
 def("charro-zone-card", CharroZoneCard);
+
+/* The zone's source, as the list of sources it actually has.
+ *
+ * The chip in zone-card.json read `S${state}` and its tap toggled between
+ * "1" and "2", which is fine for a room with two Sonos players and wrong
+ * for everything else - the Saloon bar amplifier's input 3 carries the bar
+ * television and the chip could not reach it at all. The options and their
+ * names come off the select entity, so whatever the bridge calls an input
+ * is what shows here and nothing in a room file has to be kept in step.
+ *
+ * A plain <select> rather than ha-button-menu: it needs nothing from the
+ * frontend's own component set, so it cannot break on a Home Assistant
+ * that has moved or renamed that element, and on a phone it opens the
+ * operating system's picker, which is a better thing to hit with a thumb
+ * than a column of 30px rows inside a pop-up. */
+const ZONE_SRC_CSS = `
+select.czs {
+  width: 100%; height: 30px; box-sizing: border-box;
+  padding: 0 16px 0 6px; margin: 0;
+  font: inherit; font-size: 12px; font-weight: 700;
+  text-overflow: ellipsis; white-space: nowrap;
+  color: var(--primary-text-color); background-color: transparent;
+  border-radius: 8px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 10px) 13px, calc(100% - 7px) 13px;
+  background-size: 3px 3px, 3px 3px;
+  background-repeat: no-repeat;
+}
+select.czs:disabled { opacity: 0.5; cursor: default; background-image: none; }
+select.czs option { color: var(--primary-text-color);
+                    background-color: var(--card-background-color, #1c1c1c); }
+`;
+
+function zoneSrcCss() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById("charro-zone-src-css")) return;
+  const el = document.createElement("style");
+  el.id = "charro-zone-src-css";
+  el.textContent = ZONE_SRC_CSS;
+  document.head.appendChild(el);
+}
+
+class CharroZoneSource extends HTMLElement {
+  setConfig(config) {
+    if (!config || !config.entity) throw new Error("charro-zone-source needs an entity");
+    this._config = config;
+    this._sel = null;
+    this.innerHTML = "";
+    if (this._hass) this._render();
+  }
+
+  set hass(hass) { this._hass = hass; this._render(); }
+  getCardSize() { return 1; }
+
+  _render() {
+    const hass = this._hass, cfg = this._config;
+    if (!hass || !cfg) return;
+    const st = hass.states[cfg.entity];
+    if (!st) { this.innerHTML = ""; this._sel = null; return; }
+
+    if (!this._sel) {
+      zoneSrcCss();
+      const sel = document.createElement("select");
+      sel.className = "czs";
+      /* The whole row behind this is a button-card with a tap action of its
+       * own, and opening a menu is not asking for that. */
+      for (const ev of ["click", "pointerdown", "mousedown", "touchstart"]) {
+        sel.addEventListener(ev, (e) => e.stopPropagation());
+      }
+      sel.addEventListener("change", () => {
+        if (!this._hass) return;
+        this._hass.callService("select", "select_option",
+          { entity_id: this._config.entity, option: sel.value });
+      });
+      this.appendChild(sel);
+      this._sel = sel;
+    }
+
+    const sel = this._sel;
+    const opts = (st.attributes && st.attributes.options) || [];
+    /* Rebuilding the list on every state tick would close the menu under
+     * whoever has it open, so only when the list itself has changed. */
+    const key = opts.join("\u0000");
+    if (sel._charroOpts !== key) {
+      sel.textContent = "";
+      for (const o of (opts.length ? opts : [st.state])) {
+        const n = document.createElement("option");
+        n.value = String(o);
+        n.textContent = String(o);
+        sel.appendChild(n);
+      }
+      sel._charroOpts = key;
+    }
+    sel.disabled = !opts.length;
+    if (sel.value !== st.state) sel.value = st.state;
+
+    // the chip used to brighten with the zone; keep that
+    const on = cfg.power && hass.states[cfg.power]
+      && hass.states[cfg.power].state === "on";
+    sel.style.border = on ? "2px solid var(--primary-color)"
+                          : "1px solid var(--divider-color)";
+  }
+}
+def("charro-zone-source", CharroZoneSource);
 
 /* ------------------------------------------------------- video switch --- */
 /* A room with a matrix has three separate questions — which screen, what's

@@ -48,7 +48,7 @@
         "grid-template-areas": "\"power source name vol_down vol_level vol_up\""
       },
       {
-        "grid-template-columns": "40px 45px 1fr 40px 30px 40px"
+        "grid-template-columns": "40px minmax(45px, 88px) 1fr 40px 30px 40px"
       },
       {
         "column-gap": "5px"
@@ -125,67 +125,9 @@
     },
     "source": {
       "card": {
-        "type": "custom:button-card",
-        "entity": "[[[ return entity.entity_id ]]]",
-        "name": "[[[ return `S${states[variables.source_entity]?.state ?? \"?\"}`; ]]]",
-        "show_icon": false,
-        "styles": {
-          "card": [
-            {
-              "height": "30px"
-            },
-            {
-              "width": "40px"
-            },
-            {
-              "border-radius": "8px"
-            },
-            {
-              "font-weight": 700
-            },
-            {
-              "margin-left": "8px"
-            },
-            {
-              "border": "[[[\n  return entity.state === 'on'\n    ? '2px solid var(--primary-color) !important'\n    : '1px solid var(--divider-color) !important';\n]]]\n"
-            },
-            {
-              "background": "none !important"
-            },
-            {
-              "backdrop-filter": "none !important"
-            },
-            {
-              "-webkit-backdrop-filter": "none !important"
-            },
-            {
-              "box-shadow": "none !important"
-            },
-            {
-              "--ha-card-background": "transparent"
-            },
-            {
-              "--ha-card-border-width": "0"
-            },
-            {
-              "--ha-card-box-shadow": "none"
-            },
-            {
-              "--ha-card-backdrop-filter": "none"
-            }
-          ]
-        },
-        "tap_action": {
-          "action": "call-service",
-          "service": "select.select_option",
-          "service_data": {
-            "entity_id": "[[[ return variables.source_entity ]]]",
-            "option": "[[[ return states[variables.source_entity]?.state === \"1\" ? \"2\" : \"1\"; ]]]"
-          }
-        },
-        "card_mod": {
-          "style": "ha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
-        }
+        "type": "custom:charro-zone-source",
+        "entity": "[[[ return variables.source_entity ]]]",
+        "power": "[[[ return entity.entity_id ]]]"
       }
     },
     "name": {
