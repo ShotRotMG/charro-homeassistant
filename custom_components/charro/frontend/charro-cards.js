@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.23.0";
+const VERSION = "5.24.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4281,6 +4281,27 @@ class CharroVideoCard extends HTMLElement {
     } catch (err) {
       console.error("Charro Cards: couldn\u2019t select source", opt, err);
     }
+    await this._wake(d);
+  }
+
+  /* Routing an input to a television that is off used to leave it off, and
+   * say nothing about it: the matrix switched, the room stayed dark, and
+   * the only clue was that the picture never came. Picking a source is
+   * someone saying they want to watch that, so the screen comes on with it.
+   *
+   * Only where the room named a separate power entity - a screen that
+   * answers its own remote is the remote's business, and a screen already
+   * on is left alone rather than toggled off by a second tap. */
+  async _wake(d) {
+    const p = d && d.power && screenPower(d);
+    if (!p) return;
+    const st = this._hass.states[p];
+    if (!st || !OFFISH.includes(st.state)) return;
+    try {
+      await this._hass.callService(p.split(".")[0], "turn_on", {}, { entity_id: p });
+    } catch (err) {
+      console.error("Charro Cards: couldn\u2019t turn on", p, err);
+    }
   }
   _isLive(d) {
     if (!d) return false;
@@ -4381,15 +4402,16 @@ class CharroVideoCard extends HTMLElement {
      * rather than one for whichever screen you happen to be looking at.
      * Turning the Sofa off should not mean selecting the Sofa first; and a
      * row that only lists what is running reads as status as much as
-     * control, so it is empty in a dark room and never grows past the
-     * number of televisions actually on. */
+     * control, so it is gone in a dark room and never grows past the
+     * number of televisions actually on. Nothing is stranded by that:
+     * picking a source wakes the screen, which is the one tap it used to
+     * take two of. */
     const sepPower = !!d.power;
     if (sepPower) {
       const prow = document.createElement("div");
       prow.className = "vrow";
       for (const s of this._v.displays || []) {
-        if (!screenPower(s)) continue;
-        if (s.name !== d.name && !this._isLive(s)) continue;
+        if (!screenPower(s) || !this._isLive(s)) continue;
         const chip = this._powerChip(s);
         if (chip) prow.appendChild(chip);
       }
