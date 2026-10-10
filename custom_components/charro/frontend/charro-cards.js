@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.38.0";
+const VERSION = "5.39.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2546,14 +2546,20 @@ const POPUP_CSS = `
 .charro-chip span{ flex:none; line-height:1; }
 .charro-chip:hover{ filter:brightness(1.25); }
 .charro-chip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
+/* On a phone the cluster stops being a cluster. display:contents drops
+ * .mid's own box so the icon, the name and the chips become items of the
+ * header itself, which is the only way the chips can wrap to a second line
+ * while the buttons stay up beside the name - they are not siblings
+ * otherwise. Before this the whole cluster grew until the buttons were
+ * pushed onto a line of their own, which read as a second header. */
 @media (max-width:900px){
-  .charro-pop-hd{ flex-wrap:wrap; }
-  .charro-pop-hd .mid{
-    position:static; transform:none; max-width:none; flex:1 1 auto;
-    gap:10px; min-width:0;
+  .charro-pop-hd{ flex-wrap:wrap; row-gap:8px; }
+  .charro-pop-hd .mid{ display:contents; }
+  .charro-pop-hd .t{
+    text-align:left; font-size:20px; flex:1 1 auto; min-width:0; order:1;
   }
-  .charro-pop-hd .t{ text-align:left; font-size:20px; }
-  .charro-chips{ flex-wrap:wrap; }
+  .charro-pop-hd .tail{ order:2; }
+  .charro-pop-hd .charro-chips{ order:3; flex:1 0 100%; flex-wrap:wrap; }
 }
 /* ----- room scenes --------------------------------------------------------
  * The panel hangs off the header it was opened from, so it can't be left
@@ -4664,17 +4670,23 @@ class CharroVideoCard extends HTMLElement {
      * to being the room's off switch. */
     const one = this._single();
     const dupe = !!(one && one.power);
+    let offChip = null;
     if ((this._v.displays || []).length && !dupe && this._offPlan().steps.length) {
-      const o = document.createElement("button");
-      o.className = "vchip off";
-      o.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+      offChip = document.createElement("button");
+      offChip.className = "vchip off";
+      offChip.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
       const sp = document.createElement("span");
       sp.textContent = one ? "Off" : "All off";
-      o.appendChild(sp);
-      o.title = one ? "Turn this room's screen off"
-                    : "Turn every screen in this room off";
-      o.addEventListener("click", () => this._allOff());
-      row.appendChild(o);
+      offChip.appendChild(sp);
+      offChip.title = one ? "Turn this room's screen off"
+                          : "Turn every screen in this room off";
+      offChip.addEventListener("click", () => this._allOff());
+      /* A room with screens to choose between already has a row for them,
+       * and "All off" belongs with the choosing. A room with one screen has
+       * no such row, so Off used to take a whole line of a pop-up to itself
+       * with nothing beside it - it rides the source chips instead, hard
+       * right, where margin-left:auto already puts it. */
+      if (!one) row.appendChild(offChip);
     }
     if (row.childElementCount) this._wrap.appendChild(row);
 
@@ -4739,11 +4751,20 @@ class CharroVideoCard extends HTMLElement {
         b.addEventListener("click", () => this._pickSource(key));
         srow.appendChild(b);
       }
+      if (offChip && !offChip.parentNode) srow.appendChild(offChip);
       this._wrap.appendChild(srow);
     } else if (d.source) {
       add({ type: "custom:mushroom-select-card", entity: d.source,
             name: `${d.name} source`, layout: "horizontal",
             fill_container: false, secondary_info: "none" });
+    }
+
+    /* No source row to ride on - give it the line it used to have. */
+    if (offChip && !offChip.parentNode) {
+      const orow = document.createElement("div");
+      orow.className = "vrow";
+      orow.appendChild(offChip);
+      this._wrap.appendChild(orow);
     }
 
     // ---- and the buttons for it
