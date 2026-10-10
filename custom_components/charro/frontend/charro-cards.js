@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.13.0";
+const VERSION = "5.14.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -556,20 +556,55 @@ function prettyVar(k) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function fillTemplate(node, vars) {
+/* A placeholder nobody filled in used to survive as its own text: leaving
+ * "Volume goes to" blank put the literal string "{{volume}}" into the
+ * card's entity_id, which Home Assistant then looked up and logged as a
+ * missing entity. Unset now means absent - the key carrying it drops out
+ * of the card, so a template's optional parts simply don't render and a
+ * room only has to fill in the fields it actually has an entity for.
+ *
+ * Empty objects are deliberately left behind rather than pruned: `data: {}`
+ * is load-bearing in a couple of the card configs these templates build. */
+const TPL_GONE = Symbol("charro.unset");
+
+function tplVar(k, vars) {
+  const v = vars[k];
+  return v === undefined || v === null || v === "" ? TPL_GONE : v;
+}
+
+function fillNode(node, vars) {
   if (typeof node === "string") {
     const whole = node.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
-    if (whole) return vars[whole[1]] !== undefined ? vars[whole[1]] : node;
-    return node.replace(/\{\{\s*([\w.-]+)\s*\}\}/g,
-      (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
+    if (whole) return tplVar(whole[1], vars);
+    return node.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) => {
+      const v = tplVar(k, vars);
+      return v === TPL_GONE ? "" : String(v);
+    });
   }
-  if (Array.isArray(node)) return node.map((x) => fillTemplate(x, vars));
+  if (Array.isArray(node)) {
+    const out = [];
+    for (const x of node) {
+      const v = fillNode(x, vars);
+      if (v !== TPL_GONE) out.push(v);
+    }
+    return out;
+  }
   if (node && typeof node === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(node)) out[fillTemplate(k, vars)] = fillTemplate(v, vars);
+    for (const [k, v] of Object.entries(node)) {
+      const kk = fillNode(k, vars);
+      const vv = fillNode(v, vars);
+      if (kk === TPL_GONE || vv === TPL_GONE) continue;
+      out[kk] = vv;
+    }
     return out;
   }
   return node;
+}
+
+function fillTemplate(node, vars) {
+  const out = fillNode(node, vars);
+  return out === TPL_GONE ? undefined : out;
 }
 
 const OFFISH = ["off", "unavailable", "unknown", "standby"];
