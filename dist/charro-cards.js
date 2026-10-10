@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.33.0";
+const VERSION = "5.34.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -650,6 +650,19 @@ const isOff = (e) => [{ condition: "or",
 function wakeAction(spec) {
   if (spec.wake) {
     return { action: "perform-action", perform_action: spec.wake, target: {} };
+  }
+  /* Before wake-on-LAN, because a television that answers a hub is
+   * telling you the packet route has already failed. A webOS set leaves
+   * the network entirely when it is off - its media_player goes
+   * unavailable, turn_on reaches nothing, and the magic packet needs
+   * "Mobile TV On" switched on in the set to be heard at all. Infrared
+   * through a Harmony does not care whether the set has an address. */
+  if (spec.wake_hub) {
+    const data = { num_repeats: 1, delay_secs: 0.4, hold_secs: 0,
+                   command: spec.wake_command || "PowerOn" };
+    if (spec.wake_device) data.device = spec.wake_device;
+    return { action: "perform-action", perform_action: "remote.send_command",
+             target: { entity_id: spec.wake_hub }, data };
   }
   if (spec.wake_mac) {
     const data = { mac: spec.wake_mac };
@@ -4433,13 +4446,27 @@ class CharroVideoCard extends HTMLElement {
    * on is left alone rather than toggled off by a second tap. */
   async _wake(d) {
     const p = d && d.power && screenPower(d);
-    if (!p) return;
-    const st = this._hass.states[p];
-    if (!st || !OFFISH.includes(st.state)) return;
+    const hub = d && d.wake_hub;
+    if (!p && !hub) return;
+    /* What says whether it is already on: the power entity when the room
+     * named one, otherwise the screen itself. A hub command may well be a
+     * toggle, so firing it at a set that is already on would turn the set
+     * off - the one thing picking a source must never do. */
+    const watch = p || screenTv(d);
+    const st = watch && this._hass.states[watch];
+    if (st && !OFFISH.includes(st.state)) { await this._lend(d); return; }
     try {
-      await this._hass.callService(p.split(".")[0], "turn_on", {}, { entity_id: p });
+      if (p) {
+        await this._hass.callService(p.split(".")[0], "turn_on", {}, { entity_id: p });
+      } else {
+        const act = wakeAction(d);
+        if (act.perform_action) {
+          const [dm, sv] = act.perform_action.split(".");
+          await this._hass.callService(dm, sv, act.data || {}, act.target || {});
+        }
+      }
     } catch (err) {
-      console.error("Charro Cards: couldn\u2019t turn on", p, err);
+      console.error("Charro Cards: couldn\u2019t wake", d && d.name, err);
     }
     await this._lend(d);
   }
@@ -4643,9 +4670,12 @@ class CharroVideoCard extends HTMLElement {
     if (!src || src === off) {
       const p = screenPower(d);
       if (p && !sepPower) {
+        /* wakeAction falls through to a plain toggle, so a screen with
+         * nothing configured behaves exactly as it did. */
+        const act = wakeAction(d);
         add({ type: "tile", entity: p, name: d.name,
               icon: d.off_icon || "mdi:television-off", hide_state: true,
-              tap_action: { action: "toggle" }, icon_tap_action: { action: "toggle" } });
+              tap_action: act, icon_tap_action: act });
       } else if (!p) {
         const n = document.createElement("div");
         n.className = "vnote";
@@ -8143,6 +8173,52 @@ class CharroRoomsEditor extends HTMLElement {
           "left alone \u2014 someone is listening to it \u2014 so this only " +
           "acts on a zone that is off.";
         row.appendChild(asw);
+      }
+      /* The webOS fallback. A set that is off is off the network, so the
+       * thing that turns it on cannot be the thing that needs it awake. */
+      const whub = ent("If it is unreachable, wake it with", d.wake_hub, ["remote"],
+        (s2) => { if (s2) d.wake_hub = s2; else delete d.wake_hub; },
+        "a Harmony hub, for a TV that drops off when off");
+      whub.title = "A television that leaves the network when it is off cannot " +
+        "be turned on through its own integration, and wake-on-LAN only " +
+        "reaches it if the set was left listening. Infrared through a hub " +
+        "does not care. Used by the off tile, and when a source is picked.";
+      row.appendChild(whub);
+      if (d.wake_hub) {
+        const names = hubDevices(this._hass, d.wake_hub);
+        if (names.length) {
+          const w = document.createElement("div");
+          w.className = "vfield";
+          const t2 = document.createElement("span");
+          t2.textContent = "\u2026 its device on that hub";
+          const dd = document.createElement("select");
+          const list = [""].concat(names);
+          if (d.wake_device && list.indexOf(d.wake_device) < 0) list.push(d.wake_device);
+          for (const o of list) {
+            const op = document.createElement("option");
+            op.value = o;
+            op.textContent = o || "\u2014 none \u2014";
+            if ((d.wake_device || "") === o) op.selected = true;
+            dd.appendChild(op);
+          }
+          dd.addEventListener("change", () => {
+            if (dd.value) d.wake_device = dd.value; else delete d.wake_device;
+            changed();
+          });
+          w.append(t2, dd);
+          row.appendChild(w);
+        } else {
+          row.appendChild(field("\u2026 its device on that hub", d.wake_device,
+            (t2) => { if (t2) d.wake_device = t2.trim(); else delete d.wake_device; },
+            "that remote lists no devices"));
+        }
+        const wcmd = field("\u2026 and the command", d.wake_command,
+          (t2) => { if (t2) d.wake_command = t2.trim(); else delete d.wake_command; },
+          "PowerOn");
+        wcmd.title = "Whatever the hub calls it for that device \u2014 PowerOn " +
+          "on most, PowerToggle on some. A toggle is safe here: the wake only " +
+          "fires when the screen is not already on.";
+        row.appendChild(wcmd);
       }
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
