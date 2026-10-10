@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.12.0";
+const VERSION = "5.13.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -518,6 +518,44 @@ function isMassPlayer(hass, id) {
  * {{key}} takes the value's own type, so numbers and lists survive.
  */
 
+/* Which {{placeholders}} a template actually asks for.
+ *
+ * The source editor drew a fixed set of fields, so a template wanting
+ * anything beyond them - a Harmony hub, the device inside it - could only
+ * be filled in by hand-editing the room JSON. Reading the template instead
+ * means a placeholder added to _remotes.json grows its own field, and the
+ * editor never has to know what any particular remote is for.
+ *
+ * Deliberately the same pattern fillTemplate substitutes with, so the thing
+ * that offers the fields and the thing that fills them can't disagree about
+ * what counts as a placeholder. */
+function templateVars(tpl) {
+  const out = [];
+  const walk = (n) => {
+    if (typeof n === "string") {
+      for (const m of n.match(/\{\{\s*[\w.-]+\s*\}\}/g) || []) {
+        const k = m.replace(/[^\w.-]/g, "");
+        if (k && out.indexOf(k) < 0) out.push(k);
+      }
+    } else if (Array.isArray(n)) {
+      n.forEach(walk);
+    } else if (n && typeof n === "object") {
+      for (const k in n) { walk(k); walk(n[k]); }
+    }
+  };
+  walk(tpl);
+  return out;
+}
+
+/* title/remote/media_player/volume already have purpose-built fields of
+ * their own above; everything else is rendered from the template. */
+const TPL_BUILTIN = ["title", "remote", "media_player", "volume"];
+
+function prettyVar(k) {
+  const s = String(k).replace(/[_.-]+/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function fillTemplate(node, vars) {
   if (typeof node === "string") {
     const whole = node.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
@@ -694,6 +732,15 @@ function videoIsBasic(v) {
  * look for in the entity id. It is a guess and it is treated like one: a
  * configured source always wins, and a screen that matches nothing gets a
  * plain tile rather than a remote full of buttons that go nowhere. */
+/* The devices a Harmony hub says it has. Names, not ids: remote.send_command
+ * takes either, and a name survives a re-pair and reads like the thing it
+ * drives. The hub publishes them itself, so this needs no configuration. */
+function hubDevices(hass, hub) {
+  const st = hub && hass && hass.states && hass.states[hub];
+  const list = st && st.attributes && st.attributes.devices_list;
+  return Array.isArray(list) ? list.slice() : [];
+}
+
 function guessRemote(entity, templates) {
   if (!entity) return null;
   const id = entity.replace(/^[a-z_]+\./, "");
@@ -7539,6 +7586,49 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(ent("Volume goes to", spec.volume, ["media_player"], (s) => {
         if (s) spec.volume = s; else delete spec.volume; },
         "the screen's own media_player"));
+
+      /* Whatever else this template asks for, taken from the template. A
+       * hub is an entity, so it gets a picker; a device is one of the names
+       * that hub reports, so it gets that list rather than a box to mistype
+       * a Harmony id into; anything new gets a plain field and still works
+       * the day it is added. */
+      for (const vk of templateVars((this._room._remotes || {})[spec.use])) {
+        if (TPL_BUILTIN.indexOf(vk) >= 0) continue;
+        if (vk === "hub") {
+          row.appendChild(ent("Harmony hub", spec.hub, ["remote"], (s) => {
+            if (s) spec.hub = s; else delete spec.hub; },
+            "remote.theatre_harmonyhub"));
+          continue;
+        }
+        const names = vk === "device" ? hubDevices(this._hass, spec.hub) : null;
+        if (names && names.length) {
+          const w = document.createElement("label");
+          w.className = "vfield";
+          const t = document.createElement("span");
+          t.textContent = "Device on that hub";
+          const dd = document.createElement("select");
+          const opts = [""].concat(names);
+          if (spec.device && opts.indexOf(spec.device) < 0) opts.push(spec.device);
+          for (const o of opts) {
+            const op = document.createElement("option");
+            op.value = o;
+            op.textContent = o || "\u2014 none \u2014";
+            if ((spec.device || "") === o) op.selected = true;
+            dd.appendChild(op);
+          }
+          dd.addEventListener("change", () => {
+            if (dd.value) spec.device = dd.value; else delete spec.device;
+            changed();
+          });
+          w.append(t, dd);
+          row.appendChild(w);
+          continue;
+        }
+        row.appendChild(field(
+          vk === "device" ? "Device on that hub" : prettyVar(vk),
+          spec[vk], (s) => { if (s) spec[vk] = s; else delete spec[vk]; },
+          vk === "device" ? "pick a Harmony hub first" : ""));
+      }
 
       /* Which input this is on whatever reports the live source. A receiver
        * publishes its own source_list, so this is a list of the real names
