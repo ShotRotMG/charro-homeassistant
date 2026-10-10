@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.26.0";
+const VERSION = "5.27.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1583,9 +1583,16 @@ function zoneCard(p, r, hass) {
  *
  * The Saloon bar television feeds amplifier input 3. That is not music, and
  * it has no business sitting in the zone's dropdown while the television is
- * off. So the screen names the input, the zone offers it only while that
- * screen is on, and it is labelled with the screen's name rather than the
- * input's - "Bar" says more at the bar than "3" does.
+ * off. So the screen names the input and the zone offers it only while
+ * that screen is on.
+ *
+ * 5.20.0 also relabelled it with the screen's name, on the reasoning that
+ * "Bar" beats "3" for an amplifier whose inputs were unnamed. Named them
+ * and that stops being true twice over: the real name is better, and the
+ * screen's name collides with the zone's - the Saloon's bar row read
+ * "Bar | Saloon Bar" and said nothing about what you were hearing. The
+ * input keeps the name the amplifier gave it; appearing only while the
+ * screen is on is signal enough on its own.
  *
  * Nothing switches on its own. Turning a television on while someone is
  * listening to music should not take the music away from them; the input is
@@ -1597,7 +1604,7 @@ function lentSources(r, power) {
     if (d.audio_zone && d.audio_zone !== power) continue;
     const when = screenPower(d);
     if (!when) continue;
-    out.push({ option: String(d.audio_source), label: d.name || "TV", when });
+    out.push({ option: String(d.audio_source), when });
   }
   return out;
 }
@@ -3895,6 +3902,8 @@ class CharroZoneSource extends HTMLElement {
       if (!x || !x.option || opts.indexOf(x.option) < 0) continue;
       const on = x.when && hass.states[x.when] && hass.states[x.when].state === "on";
       if (!on) continue;
+      /* A lent input the room narrowing left out still belongs in the list
+       * while it is lent, so this appends as well as relabels. */
       const label = x.label || x.option;
       const at = out.findIndex((e) => e[0] === x.option);
       if (at >= 0) out[at] = [x.option, label];
