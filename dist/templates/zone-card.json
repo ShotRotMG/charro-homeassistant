@@ -127,7 +127,9 @@
       "card": {
         "type": "custom:charro-zone-source",
         "entity": "[[[ return variables.source_entity ]]]",
-        "power": "[[[ return entity.entity_id ]]]"
+        "power": "[[[ return entity.entity_id ]]]",
+        "options": "[[[ return variables.source_options ]]]",
+        "extra": "[[[ return variables.source_extra ]]]"
       }
     },
     "name": {

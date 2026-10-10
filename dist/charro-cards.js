@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.19.0";
+const VERSION = "5.20.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1545,7 +1545,32 @@ function zoneCard(p, r, hass) {
     zone_name: o.zone_name || o.name || zoneName(power, stem, r, hass),
     source_entity: o.source_entity || o.source || `select.${stem}_source`,
     volume_entity: o.volume_entity || o.volume || `number.${stem}_volume`,
+    source_options: o.sources || r.music_sources || [],
+    source_extra: lentSources(r, power),
   };
+}
+
+/* A screen can lend the zone the amplifier input its own sound arrives on.
+ *
+ * The Saloon bar television feeds amplifier input 3. That is not music, and
+ * it has no business sitting in the zone's dropdown while the television is
+ * off. So the screen names the input, the zone offers it only while that
+ * screen is on, and it is labelled with the screen's name rather than the
+ * input's - "Bar" says more at the bar than "3" does.
+ *
+ * Nothing switches on its own. Turning a television on while someone is
+ * listening to music should not take the music away from them; the input is
+ * offered, and a person picks it. */
+function lentSources(r, power) {
+  const out = [];
+  for (const d of ((r.video && r.video.displays) || [])) {
+    if (!d || !d.audio_source) continue;
+    if (d.audio_zone && d.audio_zone !== power) continue;
+    const when = screenPower(d);
+    if (!when) continue;
+    out.push({ option: String(d.audio_source), label: d.name || "TV", when });
+  }
+  return out;
 }
 
 /* A room can drive more than one zone — the Lanai owns both Lanai and
@@ -3739,11 +3764,20 @@ class CharroZoneCard extends CharroBase {
       amp_key: c.amp_key || "",
       zone_num: c.zone_num || 0,
       volume_step: c.volume_step || 1,
+      source_options: c.source_options || [],
+      source_extra: c.source_extra || [],
       surface: cardSurface(c.surface),
     };
   }
 
-  triggers() { return uniq([this._config.source_entity, this._config.volume_entity]); }
+  /* The screens that lend this zone an input belong here too, or the
+   * dropdown would not notice one being turned on until something else
+   * redrew the card. */
+  triggers() {
+    const c = this._config;
+    return uniq([c.source_entity, c.volume_entity]
+      .concat((c.source_extra || []).map((x) => x && x.when)));
+  }
   overrides() { return { entity: this._config.entity }; }
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
@@ -3805,6 +3839,34 @@ class CharroZoneSource extends HTMLElement {
   set hass(hass) { this._hass = hass; this._render(); }
   getCardSize() { return 1; }
 
+  /* What the menu offers: the amplifier's own inputs, narrowed to the ones
+   * this room calls music, plus any a screen is lending right now. Whatever
+   * is actually selected is always in the list - a <select> holding a value
+   * it has no option for shows the wrong thing and says nothing about it. */
+  _list(opts, state) {
+    const cfg = this._config, hass = this._hass;
+    const allow = Array.isArray(cfg.options) && cfg.options.length ? cfg.options : null;
+    const out = [];
+    for (const o of opts) {
+      if (allow && allow.indexOf(String(o)) < 0) continue;
+      out.push([String(o), String(o)]);
+    }
+    for (const x of Array.isArray(cfg.extra) ? cfg.extra : []) {
+      if (!x || !x.option || opts.indexOf(x.option) < 0) continue;
+      const on = x.when && hass.states[x.when] && hass.states[x.when].state === "on";
+      if (!on) continue;
+      const label = x.label || x.option;
+      const at = out.findIndex((e) => e[0] === x.option);
+      if (at >= 0) out[at] = [x.option, label];
+      else out.push([x.option, label]);
+    }
+    if (!out.length) return [[String(state), String(state)]];
+    if (!out.some((e) => e[0] === String(state))) {
+      out.unshift([String(state), String(state)]);
+    }
+    return out;
+  }
+
   _render() {
     const hass = this._hass, cfg = this._config;
     if (!hass || !cfg) return;
@@ -3831,15 +3893,16 @@ class CharroZoneSource extends HTMLElement {
 
     const sel = this._sel;
     const opts = (st.attributes && st.attributes.options) || [];
+    const list = this._list(opts, st.state);
     /* Rebuilding the list on every state tick would close the menu under
      * whoever has it open, so only when the list itself has changed. */
-    const key = opts.join("\u0000");
+    const key = list.map((e) => e.join("\u0001")).join("\u0000");
     if (sel._charroOpts !== key) {
       sel.textContent = "";
-      for (const o of (opts.length ? opts : [st.state])) {
+      for (const [value, label] of list) {
         const n = document.createElement("option");
-        n.value = String(o);
-        n.textContent = String(o);
+        n.value = value;
+        n.textContent = label;
         sel.appendChild(n);
       }
       sel._charroOpts = key;
@@ -7131,6 +7194,17 @@ class CharroRoomsEditor extends HTMLElement {
     n1.textContent = "The chip shows how many of these are on.";
     box.appendChild(n1);
 
+    const srcs = f.text("Sources to offer", (r.music_sources || []).join(", "),
+      (t) => {
+        const list = String(t || "").split(",").map((x) => x.trim()).filter(Boolean);
+        if (list.length) r.music_sources = list; else delete r.music_sources;
+      }, "every input the amplifier has");
+    srcs.title = "Which of the amplifier's inputs belong in a zone's source " +
+      "dropdown, by the names it publishes them under, separated by commas. " +
+      "Leave it blank and every one is offered. A screen lending its own " +
+      "input joins the list on top of this, only while it is on.";
+    box.appendChild(srcs);
+
     box.appendChild(f.ent("Media player (hold the chip)", r.music_player,
       ["media_player"], (v) => { if (v) r.music_player = v; else delete r.music_player; }));
 
@@ -7693,6 +7767,20 @@ class CharroRoomsEditor extends HTMLElement {
       stepf.title = "Counted in the entity\u2019s own step size, so 2 on a " +
         "number that steps by 1 moves the level by 2 a press.";
       row.appendChild(stepf);
+      const asrc = field("Amplifier input this screen feeds", d.audio_source,
+        (t) => { if (t) d.audio_source = t.trim(); else delete d.audio_source; },
+        "Saloon Bar TV");
+      asrc.title = "The input the screen\u2019s own sound arrives on, named " +
+        "as the amplifier publishes it. The zone offers it in its source " +
+        "dropdown while this screen is on, labelled with the screen\u2019s " +
+        "name. Nothing switches by itself.";
+      row.appendChild(asrc);
+      const azone = ent("\u2026 to this zone", d.audio_zone, ["switch"],
+        (s) => { if (s) d.audio_zone = s; else delete d.audio_zone; },
+        "every zone in the room");
+      azone.title = "The zone\u2019s power switch, when only one of the " +
+        "room\u2019s zones should be offered it \u2014 the bar, not the stage.";
+      row.appendChild(azone);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
