@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.24.0";
+const VERSION = "5.25.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -785,15 +785,12 @@ function hubDevices(hass, hub) {
 function zoneSourceOptions(hass, r, power) {
   let pick = null;
   for (const z of (r && r.music_powers) || []) {
-    const o = typeof z === "object" && z ? z : {};
-    const pw = o.entity || o.power || (typeof z === "string" ? z : "");
+    const pw = zoneParts(z).power;
     if (!pw) continue;
-    if (!power) { pick = { o, pw }; break; }
-    if (pw === power) { pick = { o, pw }; break; }
+    if (!power || pw === power) { pick = { z }; break; }
   }
   if (!pick) return [];
-  const stem = String(pick.pw).replace(/^[^.]*\./, "").replace(/_power$/, "");
-  const sel = pick.o.source_entity || pick.o.source || `select.${stem}_source`;
+  const sel = zoneParts(pick.z).source;
   const st = hass && hass.states && hass.states[sel];
   const opts = st && st.attributes && st.attributes.options;
   return Array.isArray(opts) ? opts.slice() : [];
@@ -1558,16 +1555,25 @@ function securityCard(s, r) {
  * doesn't exist, which is why the source read back as "S?" — so rebuild the
  * id from the stem instead. A music_powers entry may also be an object that
  * names any of them outright. */
-function zoneCard(p, r, hass) {
-  const o = typeof p === "object" && p ? p : {};
-  const power = o.entity || o.power || (typeof p === "string" ? p : "");
+function zoneParts(z) {
+  const o = typeof z === "object" && z ? z : {};
+  const power = o.entity || o.power || (typeof z === "string" ? z : "");
   const stem = String(power).replace(/^[^.]*\./, "").replace(/_power$/, "");
+  return {
+    o, power, stem,
+    source: o.source_entity || o.source || (stem ? `select.${stem}_source` : ""),
+    volume: o.volume_entity || o.volume || (stem ? `number.${stem}_volume` : ""),
+  };
+}
+
+function zoneCard(p, r, hass) {
+  const { o, power, stem, source, volume } = zoneParts(p);
   return {
     type: "custom:charro-zone-card",
     entity: power,
     zone_name: o.zone_name || o.name || zoneName(power, stem, r, hass),
-    source_entity: o.source_entity || o.source || `select.${stem}_source`,
-    volume_entity: o.volume_entity || o.volume || `number.${stem}_volume`,
+    source_entity: source,
+    volume_entity: volume,
     source_options: o.sources || r.music_sources || [],
     source_extra: lentSources(r, power),
   };
@@ -1669,7 +1675,8 @@ function blockCards(name, r, hass) {
       }
       if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
       else push({ type: "custom:charro-video-card", video: r.video,
-                  templates: r._remotes || {} });
+                  templates: r._remotes || {},
+                  music_powers: r.music_powers || [] });
     }
 
     // A device a remote already watches doesn't want a plain tile too: the
@@ -3997,6 +4004,7 @@ class CharroVideoCard extends HTMLElement {
     this._config = config;
     this._v = config.video;
     this._templates = config.templates || {};
+    this._zones = config.music_powers || [];
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `<style>${VIDEO_CSS}</style><div class="vwrap"></div>`;
     this._wrap = this.shadowRoot.querySelector(".vwrap");
@@ -4301,6 +4309,45 @@ class CharroVideoCard extends HTMLElement {
       await this._hass.callService(p.split(".")[0], "turn_on", {}, { entity_id: p });
     } catch (err) {
       console.error("Charro Cards: couldn\u2019t turn on", p, err);
+    }
+    await this._lend(d);
+  }
+
+  /* Send the zone to this screen's input as the screen comes on - but only
+   * a zone that is off.
+   *
+   * A zone already playing is a person's choice, and a television coming on
+   * is not a reason to overrule it: someone at the bar listening to music
+   * while a score gets checked should keep their music. For them the input
+   * is still one tap away in the zone's own dropdown, which is where
+   * lentSources put it. Off means nobody is listening, so there is nothing
+   * to take away.
+   *
+   * The input is selected before the zone is powered, so the zone never
+   * comes up on whatever it was last pointed at. */
+  async _lend(d) {
+    if (!d || !d.audio_source || !d.audio_switch) return;
+    for (const z of this._zones || []) {
+      const zp = zoneParts(z);
+      if (!zp.power || !zp.source) continue;
+      if (d.audio_zone && d.audio_zone !== zp.power) continue;
+      const pst = this._hass.states[zp.power];
+      if (pst && !OFFISH.includes(pst.state)) continue;      // someone is listening
+      const sel = this._hass.states[zp.source];
+      const opts = (sel && sel.attributes && sel.attributes.options) || [];
+      if (opts.length && !opts.includes(d.audio_source)) {
+        console.warn(`Charro Cards: "${d.audio_source}" is not an input on ${zp.source}. ` +
+                     `It offers: ${opts.join(", ")}`);
+        continue;
+      }
+      try {
+        await this._hass.callService(zp.source.split(".")[0], "select_option",
+                                     { option: d.audio_source }, { entity_id: zp.source });
+        await this._hass.callService(zp.power.split(".")[0], "turn_on", {},
+                                     { entity_id: zp.power });
+      } catch (err) {
+        console.error("Charro Cards: couldn\u2019t lend", d.audio_source, "to", zp.power, err);
+      }
     }
   }
   _isLive(d) {
@@ -7865,8 +7912,30 @@ class CharroRoomsEditor extends HTMLElement {
       }
       asrc.title = "The input the screen\u2019s own sound arrives on. The " +
         "zone offers it in its source dropdown while this screen is on, " +
-        "labelled with the screen\u2019s name. Nothing switches by itself.";
+        "labelled with the screen\u2019s name.";
       row.appendChild(asrc);
+
+      /* Only worth asking once an input is named, and off by default: the
+       * offer is the safe behaviour and this is the opinionated one. */
+      if (d.audio_source) {
+        const asw = document.createElement("div");
+        asw.className = "vfield";
+        const t2 = document.createElement("span");
+        t2.textContent = "\u2026 and switch the zone to it";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!d.audio_switch;
+        cb.addEventListener("change", () => {
+          if (cb.checked) d.audio_switch = true; else delete d.audio_switch;
+          changed();
+        });
+        asw.append(t2, cb);
+        asw.title = "Switch the zone to that input as this screen comes on, " +
+          "rather than only offering it. A zone that is already playing is " +
+          "left alone \u2014 someone is listening to it \u2014 so this only " +
+          "acts on a zone that is off.";
+        row.appendChild(asw);
+      }
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");
