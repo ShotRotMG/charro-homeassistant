@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.35.0";
+const VERSION = "5.36.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6557,6 +6557,7 @@ const WS_SAVE = "charro/save_room";
 const WS_SNAPS = "charro/list_snapshots";
 const WS_SNAP = "charro/get_snapshot";
 const WS_LIST = "charro/list_rooms";
+const WS_SAVE_REMOTES = "charro/save_remotes";
 
 const RE_CSS = `
 :host{ display:block; }
@@ -6861,6 +6862,14 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   _dirty() {
+    /* The rail can be showing a template rather than a room, and the same
+     * Save button serves both. Without this, autosave compares the room
+     * nobody is editing, finds it unchanged, and a template edit sits
+     * there looking saved. */
+    if (this._mode === "remote") {
+      return !!this._remotesAll
+        && JSON.stringify(this._remotesAll) !== (this._rorig || "");
+    }
     if (!this._room) return false;
     const save = { ...this._room };
     delete save._remotes;
@@ -6961,7 +6970,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._rail.appendChild(h);
     for (const k of this._keys || []) {
       const b = document.createElement("button");
-      b.className = "railit" + (k === this._key ? " on" : "");
+      b.className = "railit" + (this._mode !== "remote" && k === this._key ? " on" : "");
       const name = document.createElement("span");
       name.textContent = k;
       b.appendChild(name);
@@ -6974,9 +6983,60 @@ class CharroRoomsEditor extends HTMLElement {
         b.appendChild(n);
       }
       b.title = k;
-      b.addEventListener("click", () => { if (k !== this._key) this._load(k); });
+      b.addEventListener("click", () => {
+        if (this._mode === "remote" || k !== this._key) this._load(k);
+      });
       this._rail.appendChild(b);
     }
+
+    /* The remote templates live in one shared file, not one per room, so
+     * they were the last thing in here that needed a file editor. They are
+     * a second list rather than a fake room because they are not rooms:
+     * every room's sources draw from the same six. */
+    const rem = this._remotesAll;
+    if (!rem) return;
+    const rh = document.createElement("div");
+    rh.className = "railhd";
+    rh.textContent = "Remotes";
+    this._rail.appendChild(rh);
+    for (const k of Object.keys(rem).sort()) {
+      const b = document.createElement("button");
+      b.className = "railit" + (this._mode === "remote" && k === this._rkey ? " on" : "");
+      const name = document.createElement("span");
+      name.textContent = k;
+      b.appendChild(name);
+      const used = this._remoteUsers(k).length;
+      if (used) {
+        const n = document.createElement("span");
+        n.className = "railbad";
+        n.style.background = "rgba(127,127,127,.3)";
+        n.textContent = String(used);
+        n.title = `used by ${used} source${used > 1 ? "s" : ""}`;
+        b.appendChild(n);
+      }
+      b.title = k;
+      b.addEventListener("click", () => this._loadRemote(k));
+      this._rail.appendChild(b);
+    }
+    const addb = document.createElement("button");
+    addb.className = "railit";
+    addb.textContent = "+ Remote";
+    addb.addEventListener("click", () => this._newRemote());
+    this._rail.appendChild(addb);
+  }
+
+  /* Which room sources name a template. Deleting one that is in use leaves
+   * those sources rendering "no template named …", so it is worth saying
+   * so before rather than after. */
+  _remoteUsers(name) {
+    const out = [];
+    for (const [rk, r] of Object.entries(this._roomsAll || {})) {
+      for (const [sk, spec] of Object.entries(((r || {}).video || {}).sources || {}))
+        if (spec && spec.use === name) out.push(`${rk} → ${sk}`);
+      for (const spec of (r || {}).remotes || [])
+        if (spec && spec.use === name) out.push(`${rk} → ${spec.title || spec.use}`);
+    }
+    return out;
   }
 
   /* ------------------------------------------------------------ chrome -- */
@@ -7032,7 +7092,10 @@ class CharroRoomsEditor extends HTMLElement {
 
     this._revert = document.createElement("button");
     this._revert.textContent = "Revert";
-    this._revert.addEventListener("click", () => this._load(this._key, true));
+    this._revert.addEventListener("click", () => {
+      if (this._mode === "remote") return this._loadRemote(this._rkey);
+      this._load(this._key, true);
+    });
     /* Autosave writes over the file 1.5s after you stop typing, so the only
      * thing standing between a mis-click and losing a room is this. Every
      * save keeps the version it replaced. */
@@ -7172,7 +7235,8 @@ class CharroRoomsEditor extends HTMLElement {
     const auto = w && this._autoOn();
     this._save.textContent = w ? (auto ? "Save now" : "Save") : "Copy JSON";
     this._save.title = w
-      ? `Writes ${this._key ? this._path(this._key) : "the room file"}`
+      ? `Writes ${this._mode === "remote" ? this._path("_remotes")
+                : this._key ? this._path(this._key) : "the room file"}`
       : "No way to write the file from here — this copies the JSON instead";
     if (!this._foot) return;
     const path = this._key ? this._path(this._key) : "/config/charro_rooms/&lt;room&gt;.json";
@@ -7199,6 +7263,9 @@ class CharroRoomsEditor extends HTMLElement {
       // always from the server, never the copy the cards are holding
       invalidateRooms();
       const { rooms, remotes } = await loadAll(this._hass);
+      this._roomsAll = rooms;
+      this._remotesAll = remotes;
+      this._mode = "room";
       const j = JSON.parse(JSON.stringify(rooms[key] || {}));
       if (!rooms[key]) throw new Error("no such room");
       // the editor always wants the template list, so the source dropdown
@@ -7219,6 +7286,164 @@ class CharroRoomsEditor extends HTMLElement {
       this._room = null;
       this._say(`Could not read ${this._path(key)} — ${err.message}`, "err");
       this._left.innerHTML = ""; this._prevWrap.innerHTML = "";
+    }
+  }
+
+  /* ----------------------------------------------------------- remotes -- */
+  async _loadRemote(name) {
+    this._mode = "remote";
+    this._rkey = name;
+    if (this._crumb) this._crumb.textContent = `remote: ${name}`;
+    try {
+      invalidateRooms();
+      const { rooms, remotes } = await loadAll(this._hass);
+      this._roomsAll = rooms;
+      this._remotesAll = JSON.parse(JSON.stringify(remotes || {}));
+      if (!(name in this._remotesAll)) this._remotesAll[name] = {};
+      this._rorig = JSON.stringify(this._remotesAll);
+      this._renderRail();
+      this._saveLabel();
+      this._renderRemote();
+      this._say("");
+    } catch (err) {
+      this._say(`Could not read the remote templates — ${err.message}`, "err");
+    }
+  }
+
+  async _newRemote() {
+    const name = (prompt("Template name (lowercase, e.g. roku)") || "").trim()
+      .toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (!name) return;
+    if (!this._remotesAll) {
+      const { rooms, remotes } = await loadAll(this._hass);
+      this._roomsAll = rooms;
+      this._remotesAll = JSON.parse(JSON.stringify(remotes || {}));
+    }
+    if (this._remotesAll[name]) {
+      this._say(`"${name}" already exists — opened it.`);
+      return this._loadRemote(name);
+    }
+    this._remotesAll[name] = { type: "custom:universal-remote-card",
+                               rows: [], custom_actions: [] };
+    this._mode = "remote";
+    this._rkey = name;
+    this._renderRail();
+    this._renderRemote();
+    this._say(`New template — Save writes it into ${this._path("_remotes")}`);
+  }
+
+  _dupRemote() {
+    const from = this._rkey;
+    const name = (prompt(`Copy "${from}" to which name?`, from + "_copy") || "")
+      .trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (!name || !this._remotesAll) return;
+    if (this._remotesAll[name]) { this._say(`"${name}" already exists.`, "err"); return; }
+    this._remotesAll[name] = JSON.parse(JSON.stringify(this._remotesAll[from]));
+    this._rkey = name;
+    this._renderRail();
+    this._renderRemote();
+    this._say(`Copied ${from} to ${name} — not written until you Save.`);
+  }
+
+  _delRemote() {
+    const name = this._rkey;
+    const used = this._remoteUsers(name);
+    const warn = used.length
+      ? `\n\nStill used by:\n${used.slice(0, 12).join("\n")}` +
+        (used.length > 12 ? `\n…and ${used.length - 12} more` : "") +
+        `\n\nThose sources will render "no template named ${name}".`
+      : "";
+    if (!confirm(`Delete the "${name}" template?${warn}`)) return;
+    delete this._remotesAll[name];
+    const left = Object.keys(this._remotesAll).sort();
+    this._rkey = left[0] || null;
+    this._renderRail();
+    if (this._rkey) this._renderRemote(); else this._left.innerHTML = "";
+    this._say(`Removed ${name} — Save to write it.`);
+  }
+
+  /* The template body, as the JSON it is. 5.37.0 puts fields in front of
+   * this; until then the point is that the file is reachable at all,
+   * because save_room refuses an underscore and nothing else here could
+   * write it. */
+  _renderRemote() {
+    const name = this._rkey;
+    const tpl = (this._remotesAll || {})[name];
+    if (!tpl) return;
+    this._left.innerHTML = "";
+    if (this._prevWrap) this._prevWrap.innerHTML = "";
+
+    const f = this._fields(() => { this._renderRemote(); });
+    const box = document.createElement("div");
+
+    box.appendChild(f.text("Template name", name, (t) => {
+      const next = String(t || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+      if (!next || next === name) return;
+      if (this._remotesAll[next]) { this._say(`"${next}" already exists.`, "err"); return; }
+      this._remotesAll[next] = this._remotesAll[name];
+      delete this._remotesAll[name];
+      this._rkey = next;
+      this._renderRail();
+      this._say(`Renamed to ${next}. Every source using "${name}" must be ` +
+                `repointed — Save writes the rename either way.`, "err");
+    }, "dish"));
+
+    const vars = templateVars(tpl);
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = vars.length
+      ? `Asks the room for: ${vars.join(", ")} — each one becomes a field on ` +
+        `every source that uses this template.`
+      : "Asks the room for nothing — the same card for every source.";
+    box.appendChild(note);
+
+    const users = this._remoteUsers(name);
+    const un = document.createElement("div");
+    un.className = "vnote";
+    un.textContent = users.length
+      ? `Used by ${users.length}: ${users.slice(0, 8).join(", ")}` +
+        (users.length > 8 ? `, and ${users.length - 8} more` : "")
+      : "Not used by any source yet.";
+    box.appendChild(un);
+
+    const h = document.createElement("h4");
+    h.textContent = "Template (JSON)";
+    const ta = document.createElement("textarea");
+    ta.spellcheck = false;
+    ta.value = JSON.stringify(tpl, null, 2);
+    ta.addEventListener("change", () => {
+      try {
+        this._remotesAll[name] = JSON.parse(ta.value);
+        this._say("");
+      } catch (err) { this._say(`Template: ${err.message}`, "err"); }
+    });
+    box.append(h, ta);
+
+    const row = document.createElement("div");
+    row.className = "bar";
+    const dup = document.createElement("button");
+    dup.textContent = "Duplicate";
+    dup.addEventListener("click", () => this._dupRemote());
+    const del = document.createElement("button");
+    del.className = "vdel";
+    del.textContent = "Delete template";
+    del.addEventListener("click", () => this._delRemote());
+    row.append(dup, del);
+    box.appendChild(row);
+
+    this._left.appendChild(box);
+  }
+
+  async _writeRemotes(quiet) {
+    try {
+      await this._hass.callWS({ type: WS_SAVE_REMOTES, config: this._remotesAll });
+      this._rorig = JSON.stringify(this._remotesAll);
+      invalidateRooms();
+      this._say(quiet ? "Autosaved the remote templates"
+                      : `Saved to ${this._path("_remotes")} — hard-refresh to see it ` +
+                        `elsewhere.`, "ok");
+    } catch (err) {
+      this._say(`Save failed: ${err.message}`, "err");
     }
   }
 
@@ -8963,7 +9188,14 @@ class CharroRoomsEditor extends HTMLElement {
 
   /* -------------------------------------------------------------- save -- */
   async _doSave(quiet) {
-    if (!this._room || !this._key || this._saving) return;
+    if (this._saving) return;
+    if (this._mode === "remote") {
+      if (!this._remotesAll) return;
+      this._saving = true;
+      try { await this._writeRemotes(quiet); } finally { this._saving = false; }
+      return;
+    }
+    if (!this._room || !this._key) return;
     this._saving = true;
     try { await this._writeRoom(quiet); } finally { this._saving = false; }
   }

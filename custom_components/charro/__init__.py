@@ -231,6 +231,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
+    websocket_api.async_register_command(hass, ws_save_remotes)
     websocket_api.async_register_command(hass, ws_delete_room)
     websocket_api.async_register_command(hass, ws_list_snapshots)
     websocket_api.async_register_command(hass, ws_get_snapshot)
@@ -590,6 +591,34 @@ async def ws_save_room(hass, connection, msg):
         connection.send_error(msg["id"], "write_failed", str(err))
         return
     connection.send_result(msg["id"], {"path": os.path.join(path, f"{key}.json")})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/save_remotes",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_save_remotes(hass, connection, msg):
+    """Write the shared remote templates. Admin only.
+
+    save_room refuses a key that starts with an underscore, which is what
+    stops a room called "_remotes" from quietly becoming the template
+    library. The library still has to be editable from the panel, so it
+    gets a command of its own rather than a hole in that rule. The write
+    goes through the same helper as a room, so it is snapshotted first and
+    replaced atomically.
+    """
+    path = _rooms_dir(hass)
+    key = REMOTES_FILE[:-5] if REMOTES_FILE.endswith(".json") else REMOTES_FILE
+    try:
+        await hass.async_add_executor_job(_write_room, path, key, msg["config"])
+    except OSError as err:
+        connection.send_error(msg["id"], "write_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"path": os.path.join(path, REMOTES_FILE)})
 
 
 @websocket_api.require_admin
