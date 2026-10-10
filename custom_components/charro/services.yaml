@@ -1,0 +1,32 @@
+volume_step:
+  name: Volume step
+  description: >-
+    Move a number-backed volume by whole steps of its own step size. For
+    audio that has no media_player of its own - an RTI amplifier zone, say -
+    where a remote button cannot read the current level to do the arithmetic
+    itself.
+  fields:
+    entity_id:
+      name: Volume
+      description: The number entity holding the level.
+      required: true
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: number
+            - domain: input_number
+    steps:
+      name: Steps
+      description: >-
+        How far to move, counted in the entity's own step size. Negative
+        turns it down. The entity's min and max are respected.
+      required: false
+      default: 1
+      example: -1
+      selector:
+        number:
+          min: -20
+          max: 20
+          step: 1
+          mode: box

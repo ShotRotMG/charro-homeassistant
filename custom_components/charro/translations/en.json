@@ -9,5 +9,21 @@
     "abort": {
       "already_configured": "Charro Cards is already set up."
     }
+  },
+  "services": {
+    "volume_step": {
+      "name": "Volume step",
+      "description": "Move a number-backed volume by whole steps of its own step size, for audio that has no media_player of its own.",
+      "fields": {
+        "entity_id": {
+          "name": "Volume",
+          "description": "The number entity holding the level."
+        },
+        "steps": {
+          "name": "Steps",
+          "description": "How far to move, counted in the entity's own step size. Negative turns it down."
+        }
+      }
+    }
   }
 }

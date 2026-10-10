@@ -25,6 +25,10 @@ PANEL_ELEMENT = "charro-rooms-panel"
 # who could reach the instance. The cards fetch them over the websocket now,
 # which is already authenticated.
 ROOMS_DIR = "charro_rooms"
+
+# Nudging a number-backed volume needs its current value, which a card's
+# static config cannot read. The remotes call this instead.
+SERVICE_VOLUME_STEP = "volume_step"
 REMOTES_FILE = "_remotes.json"
 
 # Where they used to live, so an existing install can be moved across once.

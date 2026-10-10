@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.15.0";
+const VERSION = "5.16.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -668,7 +668,7 @@ function remoteCards(r, templates) {
                  content: `\`_remotes.json\` has no template named **${spec.use}**.` });
       continue;
     }
-    const card = fillTemplate(clone(tpl), spec);
+    const card = retargetVolume(fillTemplate(clone(tpl), spec), spec);
     const watch = remoteWatch(spec);
     if (spec.always || !watch) { out.push(card); continue; }
     out.push({ type: "conditional", conditions: isOn(watch), card });
@@ -845,6 +845,8 @@ function videoSimpleCards(r, hass) {
       display: d.name || "",
       display_media: displayMedia(d, own),
       volume: volumeFor(d, own),
+      volume_mute: volumeMute(d, own),
+      volume_steps: volumeSteps(d, own),
     });
     // waking belongs to the screen, not to whichever box is feeding it
     if (d.wake) spec.wake = d.wake;
@@ -1237,6 +1239,88 @@ function displayMedia(d, spec) {
  * has always meant by volume. */
 function volumeFor(d, spec) {
   return (d && d.volume) || (spec && spec.volume) || displayMedia(d, spec);
+}
+
+/* Mute and step size belong to the audio zone, so they live on the screen.
+ * A source only ever names a media_player, which mutes and steps itself. */
+function volumeMute(d, spec) {
+  return (d && d.volume_mute) || (spec && spec.volume_mute) || "";
+}
+
+function volumeSteps(d, spec) {
+  return Number((d && d.volume_steps) || (spec && spec.volume_steps)) || 1;
+}
+
+/* Volume buttons for audio that is not a media_player.
+ *
+ * Every template drives volume with media_player.volume_up/down/mute, which
+ * is right for a television and useless for the RTI amplifier, where a
+ * zone's level is a `number` and its mute a `switch`. Rewriting the three
+ * actions once the template is filled fixes every remote at once, and
+ * _remotes.json never has to learn what a particular room's audio is.
+ *
+ * Stepping a number needs its current value, which a static card config
+ * cannot read, so up and down go through charro.volume_step and the
+ * integration honours the entity's own min, max and step. A button left
+ * with nowhere to point comes out of the card rather than sitting there
+ * looking tappable. */
+const VOL_ACTS = { "media_player.volume_up": 1,
+                   "media_player.volume_down": -1,
+                   "media_player.volume_mute": 0 };
+
+/* Templates carry both spellings: the older call-service/`service` pair and
+ * perform-action/`perform_action`. Read either, write back the one that was
+ * already there rather than converting a card out from under itself. */
+function actionService(a) {
+  return (a && (a.perform_action || a.service)) || "";
+}
+
+function setActionService(a, name) {
+  if (a.perform_action !== undefined) a.perform_action = name;
+  else a.service = name;
+}
+
+function dropButtons(rows, names) {
+  if (!Array.isArray(rows)) return rows;
+  const out = [];
+  for (const r of rows) {
+    if (Array.isArray(r)) { out.push(dropButtons(r, names)); continue; }
+    if (typeof r === "string" && names.indexOf(r) >= 0) continue;
+    out.push(r);
+  }
+  return out;
+}
+
+function retargetVolume(card, spec) {
+  const vol = (spec && spec.volume) || "";
+  if (!card || !vol || vol.indexOf("media_player.") === 0) return card;
+  const steppable = vol.indexOf("number.") === 0 || vol.indexOf("input_number.") === 0;
+  const mute = (spec && spec.volume_mute) || "";
+  const steps = volumeSteps(null, spec);
+  const gone = [];
+  for (const a of card.custom_actions || []) {
+    const t = a && a.tap_action;
+    const dir = t ? VOL_ACTS[actionService(t)] : undefined;
+    if (dir === undefined) continue;
+    if (((t.target && t.target.entity_id) || "") !== vol) continue;
+    if (!dir) {
+      if (!mute) { gone.push(a.name); continue; }
+      setActionService(t, `${mute.slice(0, mute.indexOf("."))}.toggle`);
+      t.target = { entity_id: mute };
+      t.data = {};
+      a.entity_id = mute;
+      continue;
+    }
+    if (!steppable) { gone.push(a.name); continue; }
+    setActionService(t, "charro.volume_step");
+    t.target = { entity_id: vol };
+    t.data = { steps: dir * steps };
+  }
+  if (gone.length) {
+    card.custom_actions = (card.custom_actions || []).filter((a) => gone.indexOf(a.name) < 0);
+    card.rows = dropButtons(card.rows, gone);
+  }
+  return card;
 }
 
 /* Fold an older screen into the two fields. The editor does this on load, so
@@ -4125,10 +4209,13 @@ class CharroVideoCard extends HTMLElement {
       return;
     }
     // the display's own volume, so the buttons act on the screen you're at
-    add(fillTemplate(clone(tpl), { title: spec.title || src, ...spec,
-                                   display: d.name,
-                                   display_media: displayMedia(d, spec),
-                                   volume: volumeFor(d, spec) }));
+    const vars = { title: spec.title || src, ...spec,
+                   display: d.name,
+                   display_media: displayMedia(d, spec),
+                   volume: volumeFor(d, spec),
+                   volume_mute: volumeMute(d, spec),
+                   volume_steps: volumeSteps(d, spec) };
+    add(retargetVolume(fillTemplate(clone(tpl), vars), vars));
   }
 }
 def("charro-video-card", CharroVideoCard);
@@ -7404,13 +7491,28 @@ class CharroRoomsEditor extends HTMLElement {
         "answers for every screen and name that receiver under Video " +
         "switching instead.";
       row.appendChild(srcf);
-      const volf = ent("Volume", d.volume, ["media_player"],
+      const volf = ent("Volume", d.volume, ["media_player", "number", "input_number"],
         (s) => { if (s) d.volume = s; else delete d.volume; },
         "the screen itself");
-      volf.title = "What this screen\u2019s volume buttons act on. Leave it " +
-        "blank and they fall back to the source\u2019s own Volume, and failing " +
-        "that to the screen above.";
+      volf.title = "What this screen\u2019s volume buttons act on. A " +
+        "media_player takes them as they are; a number is stepped through " +
+        "charro.volume_step instead. Leave it blank and they fall back to " +
+        "the source\u2019s own Volume, and failing that to the screen above.";
       row.appendChild(volf);
+      const mutef = ent("\u2026 and its mute", d.volume_mute,
+        ["switch", "input_boolean"],
+        (s) => { if (s) d.volume_mute = s; else delete d.volume_mute; },
+        "only for a number volume");
+      mutef.title = "The switch the mute button toggles. Only needed when " +
+        "Volume above is a number, which has no mute of its own \u2014 " +
+        "without it the mute button is left out of the remote.";
+      row.appendChild(mutef);
+      const stepf = field("\u2026 how many steps a press moves", d.volume_steps,
+        (t) => { const n = Number(t); if (n > 0) d.volume_steps = n;
+                 else delete d.volume_steps; }, "1");
+      stepf.title = "Counted in the entity\u2019s own step size, so 2 on a " +
+        "number that steps by 1 moves the level by 2 a press.";
+      row.appendChild(stepf);
       const mac = field("Wake-on-LAN MAC", d.wake_mac,
         (t) => { if (t) d.wake_mac = t.trim().toLowerCase(); else delete d.wake_mac; },
         "20:15:de:26:33:fa");

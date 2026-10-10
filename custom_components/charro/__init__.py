@@ -15,6 +15,7 @@ dashboard loads a room changes when this integration is installed.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ from .const import (
     PANEL_URL,
     REMOTES_FILE,
     ROOMS_DIR,
+    SERVICE_VOLUME_STEP,
     SNAP_DAY,
     SNAP_DIR,
     SNAP_FINE_EVERY,
@@ -58,6 +60,62 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+VOLUME_STEP_SCHEMA = vol.Schema(
+    {
+        vol.Required("entity_id"): cv.entity_ids,
+        vol.Optional("steps", default=1): vol.Coerce(float),
+    }
+)
+
+# Where a level can live, and what writes one back. A media_player is not
+# here on purpose: it steps itself, and the cards leave those alone.
+_LEVEL_DOMAINS = {"number", "input_number"}
+
+
+def _as_float(value: Any, fallback: float | None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+async def _async_volume_step(hass: HomeAssistant, call) -> None:
+    """Move a number-backed volume by whole steps of its own step size.
+
+    The RTI amplifier publishes a zone's level as a `number`, which has no
+    volume_up of its own, and a remote button cannot do the arithmetic
+    because it cannot read the current value. So it asks for a direction and
+    this reads the level, honours the entity's own min, max and step, and
+    writes the result back.
+    """
+    steps = float(call.data["steps"])
+    for entity_id in call.data["entity_id"]:
+        domain = entity_id.split(".")[0]
+        state = hass.states.get(entity_id)
+        if domain not in _LEVEL_DOMAINS or state is None:
+            _LOGGER.warning("volume_step: %s has no level to set", entity_id)
+            continue
+        current = _as_float(state.state, None)
+        if current is None:
+            _LOGGER.warning("volume_step: %s reads %r, which is not a number",
+                            entity_id, state.state)
+            continue
+        size = _as_float(state.attributes.get("step"), 1.0) or 1.0
+        low = _as_float(state.attributes.get("min"), None)
+        high = _as_float(state.attributes.get("max"), None)
+        # round off the float dust a step of 0.5 leaves behind
+        value = round(current + steps * size, 3)
+        if low is not None:
+            value = max(low, value)
+        if high is not None:
+            value = min(high, value)
+        if value == current:
+            continue
+        await hass.services.async_call(
+            domain, "set_value", {"entity_id": entity_id, "value": value},
+            blocking=False,
+        )
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -163,6 +221,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         require_admin=True,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_VOLUME_STEP,
+        functools.partial(_async_volume_step, hass),
+        schema=VOLUME_STEP_SCHEMA,
+    )
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
@@ -198,6 +263,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = hass.data.get(DOMAIN, {})
     frontend.async_remove_panel(hass, PANEL_URL)
     frontend.async_remove_panel(hass, UNIFI_PANEL_URL)
+    hass.services.async_remove(DOMAIN, SERVICE_VOLUME_STEP)
     store.pop(entry.entry_id, None)
     _drop_extra_js(hass, store.pop("extra_js", None))
     return True
