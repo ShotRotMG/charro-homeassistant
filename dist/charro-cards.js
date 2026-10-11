@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.55.0";
+const VERSION = "5.56.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10175,8 +10175,22 @@ const NT_CATS = [
   { key: "locks", name: "Locks", icon: "mdi:lock-open-variant", color: "#e5534b" },
   { key: "gates", name: "Gates", icon: "mdi:gate-open", color: "#4a9df8" },
   { key: "garage", name: "Garage", icon: "mdi:garage-open", color: "#8a7cf8" },
+  { key: "motion", name: "Motion", icon: "mdi:motion-sensor", color: "#4ac29a" },
   { key: "alarm", name: "Alarm", icon: "mdi:shield-alert", color: "#e5534b",
     armed_only: true },
+];
+
+/* What a title or message may say. Parsed once by the integration when
+ * you save, never while a door is opening. */
+const NT_FIELDS = [
+  ["{name}", "the entity's own name"],
+  ["{status}", "Opened, Closed, Unlocked, Locked, Jammed, Motion, Clear"],
+  ["{room}", "the room, when a room names this entity"],
+  ["{state}", "the raw new state"],
+  ["{was}", "the state it came from"],
+  ["{category}", "this category's name"],
+  ["{time}", "24-hour clock"],
+  ["{entity}", "the entity id"],
 ];
 
 const NT_CSS = `
@@ -10602,6 +10616,9 @@ class CharroNotifyEditor extends HTMLElement {
       row.appendChild(f.color("Colour", c.color, set("color")));
       row.appendChild(f.ent("Camera", c.camera, ["camera"], set("camera")));
       row.appendChild(f.text("Opens", c.url, set("url"), "/d-charro/security"));
+      row.appendChild(f.text("Title", c.title, set("title"), "{name}"));
+      row.appendChild(f.text("Message", c.message, set("message"),
+        "{status} \u00b7 {room}"));
       row.appendChild(f.bool("Only while armed", c.armed_only, set("armed_only")));
       row.appendChild(f.del("Remove category", () => {
         cfg.categories.splice(i, 1);
@@ -10610,6 +10627,17 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(row);
     });
     box.appendChild(f.add("+ Category", () => { cfg.categories.push({ key: "", name: "" }); }));
+    const fnote = document.createElement("div");
+    fnote.className = "vnote";
+    fnote.textContent = "Title and message take fillers: "
+      + NT_FIELDS.map(([k]) => k).join("  ")
+      + ". Blank uses {name} and \u201c{status} \u00b7 {room}\u201d. A filler that "
+      + "comes out empty takes its separator with it, so a room with no name "
+      + "reads \u201cOpened\u201d rather than \u201cOpened \u00b7 \u201d \u2014 "
+      + "though a word like \u201cin\u201d is left alone. Anything unrecognised "
+      + "stays on screen as you typed it, so a mistyped filler looks mistyped.";
+    fnote.title = NT_FIELDS.map(([k, v]) => `${k}  ${v}`).join("\n");
+    box.appendChild(fnote);
 
     /* ---- the checklist ----
      *
@@ -10628,7 +10656,7 @@ class CharroNotifyEditor extends HTMLElement {
     const items = (this._watch && this._watch.items) || [];
     const rules = (this._watch && this._watch.rules) || {};
 
-    for (const key of ["doors", "locks", "gates", "garage"]) {
+    for (const key of ["doors", "locks", "gates", "garage", "motion"]) {
       const w = watch[key] || (watch[key] = { ...(rules[key] || { on: true, cooldown: 60 }) });
       const live = items.filter((x) => x.category === key && !off.has(x.entity)).length;
       const row = f.rowBox();

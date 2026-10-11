@@ -47,11 +47,15 @@ from .const import (
     JOURNAL_KEEP_DAYS,
     JOURNAL_MAX,
     LEGACY_SUBDIR,
+    NOTIFY_FIELDS,
     NOTIFY_FILE,
     NOTIFY_LEVELS,
+    NOTIFY_MESSAGE,
     NOTIFY_PUSH_LEVEL,
     NOTIFY_RESUME_SECONDS,
     NOTIFY_RETRIES,
+    NOTIFY_TITLE,
+    NOTIFY_TRIM,
     PANEL_ELEMENT,
     PANEL_ICON,
     PANEL_TITLE,
@@ -210,6 +214,52 @@ async def _async_notify(hass: HomeAssistant, call) -> None:
     await notifier.async_send(dict(call.data))
 
 
+
+# ---------------------------------------------------------- templates --
+
+_FIELD_RE = re.compile(r"\{([a-z_]+)\}")
+
+
+def compile_template(text: str) -> tuple[tuple, bool]:
+    """Turn "{status} \u00b7 {room}" into parts, once.
+
+    Firing a notification should be a join over a short list, not a regex
+    pass per phone per door. So the scanning happens here - when the
+    config is saved - and what comes back is a tuple of (is_field, value)
+    plus whether any field is in it at all, which is the flag that says
+    whether the tidy-up below is ever needed.
+    """
+    parts: list[tuple[bool, str]] = []
+    at = 0
+    for m in _FIELD_RE.finditer(text or ""):
+        if m.start() > at:
+            parts.append((False, text[at:m.start()]))
+        key = m.group(1)
+        # an unknown {thing} is left as written rather than silently eaten,
+        # so a typo looks like a typo
+        parts.append((True, key) if key in NOTIFY_FIELDS else (False, m.group(0)))
+        at = m.end()
+    if at < len(text or ""):
+        parts.append((False, text[at:]))
+    return tuple(parts), any(p[0] for p in parts)
+
+
+def render_template(parts: tuple, values: dict) -> str:
+    """Join the parts. A field that comes back empty takes its separator."""
+    out: list[str] = []
+    for is_field, value in parts:
+        if not is_field:
+            out.append(value)
+            continue
+        got = str(values.get(value) or "")
+        if got:
+            out.append(got)
+        elif out:
+            # drop the separator this field was hanging off
+            out[-1] = out[-1].rstrip(NOTIFY_TRIM)
+    return "".join(out).strip(NOTIFY_TRIM)
+
+
 # ------------------------------------------------------------ journal --
 
 
@@ -268,11 +318,13 @@ class CharroNotifier:
         self._room_index: dict = {}
         self._unsub_watch = None
         self._last_fired: dict = {}
+        self._tpl: dict = {}
 
     # ----------------------------------------------------------- state --
 
     async def async_load(self) -> None:
         self.cfg = await self.hass.async_add_executor_job(_read_notify, self.path)
+        self._compile_templates()
         self.entries = _trim_journal(
             await self.hass.async_add_executor_job(_read_journal, self.path)
         )
@@ -281,6 +333,19 @@ class CharroNotifier:
     def set_config(self, cfg: dict) -> None:
         """The tab just saved. Nothing reads the file again until a restart."""
         self.cfg = cfg if isinstance(cfg, dict) else {}
+        self._compile_templates()
+
+    def _compile_templates(self) -> None:
+        """Every category's title and message, parsed once, here."""
+        self._tpl = {}
+        for cat in self.cfg.get("categories") or []:
+            key = cat.get("key")
+            if not key:
+                continue
+            self._tpl[key] = {
+                "title": compile_template(cat.get("title") or NOTIFY_TITLE),
+                "message": compile_template(cat.get("message") or NOTIFY_MESSAGE),
+            }
 
     def category(self, key: str) -> dict | None:
         for c in self.cfg.get("categories") or []:
@@ -686,10 +751,25 @@ class CharroNotifier:
         self._last_fired[slot] = stamp
 
         room = spec.get("room") or {}
-        title = (new.attributes.get("friendly_name") or eid).strip()
-        where = room.get("name") or ""
-        message = f"{verb} · {where}." if where else f"{verb}."
-        payload = {"category": cat, "title": title, "message": message, "entity_id": eid}
+        values = {
+            "name": (new.attributes.get("friendly_name") or eid).strip(),
+            "room": room.get("name") or "",
+            "status": verb,
+            "state": new.state,
+            "was": old.state,
+            "category": (self.category(cat) or {}).get("name") or cat,
+            "entity": eid,
+            "time": dt_util.now().strftime("%H:%M"),
+        }
+        # Already parsed, back when the config was saved. This is a join
+        # over a short list and nothing else.
+        forms = self._tpl.get(cat) or {}
+        title_parts = (forms.get("title") or compile_template(NOTIFY_TITLE))[0]
+        msg_parts = (forms.get("message") or compile_template(NOTIFY_MESSAGE))[0]
+        title = render_template(title_parts, values) or values["name"]
+        message = render_template(msg_parts, values) or verb
+        payload = {"category": cat, "title": title, "message": message,
+                   "entity_id": eid}
         if room.get("url"):
             payload["url"] = room["url"]
         self.hass.async_create_task(self.async_send(payload))

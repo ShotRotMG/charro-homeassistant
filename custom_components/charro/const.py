@@ -63,6 +63,10 @@ WATCH_DEFAULTS = {
     "locks":  {"on": True,  "cooldown": 30},
     "gates":  {"on": True,  "cooldown": 60},
     "garage": {"on": False, "cooldown": 120},
+    # Motion is the chattiest thing in the house and ships off, with a
+    # five-minute window: a hallway sensor left on a 60s cooldown would
+    # spend a 500-a-day allowance by lunchtime.
+    "motion": {"on": False, "cooldown": 300},
 }
 
 # A state that means "I don't know", which is not news and is the whole
@@ -95,12 +99,27 @@ WATCH_PRESS = ("script", "button", "input_button", "scene")
 WATCH_OPEN = ("on", "open", "opening", "violated")
 WATCH_SHUT = ("off", "closed", "normal")
 
+# What a notification is allowed to say, and what it says by default.
+# Compiled once when the config is saved, never parsed while a door is
+# opening - the whole point of precompiling is that firing is a join
+# over a short list and nothing else.
+NOTIFY_FIELDS = ("name", "room", "status", "state", "was", "category",
+                 "entity", "time")
+NOTIFY_TITLE = "{name}"
+NOTIFY_MESSAGE = "{status} \u00b7 {room}"
+
+# Characters a dangling separator can be made of, trimmed when the field
+# beside them turns out to be empty - a room that has no name should read
+# "Opened", not "Opened \u00b7 ".
+NOTIFY_TRIM = " \u00b7-\u2013\u2014,:;|"
+
 WATCH_CLASSES = {
     "lock": {None: "locks"},
     "cover": {"garage": "garage", "gate": "gates", "door": "doors"},
     "binary_sensor": {
         "door": "doors", "window": "doors", "opening": "doors",
         "garage_door": "garage",
+        "motion": "motion", "occupancy": "motion",
     },
 }
 
