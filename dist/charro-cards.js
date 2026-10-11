@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.41.0";
+const VERSION = "5.41.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1762,10 +1762,15 @@ function cameraCard(c, r, hass) {
 
 /* Locks.
  *
- * One entity, two colours, and a tap that opens more-info rather than
- * throwing the bolt: a card you might brush past on a phone should not be
- * able to unlock the house. Holding it toggles, behind a confirmation that
- * names the lock. */
+ * One entity, two colours, and the shape of the door tiles: the icon on the
+ * left throws the bolt, the lock's name and its state stack to the right of
+ * it, and both of those open more-info. The bolt is the only thing that acts
+ * and it is a 34px square, so there is nothing to brush past on a phone and
+ * no dialog in the way of the one tap you meant. `confirm: true` puts the
+ * dialog back for a lock you would rather be asked about.
+ *
+ * There is no lock.toggle - the domain offers lock, unlock and open and
+ * nothing else - so the service is templated off the current state. */
 function lockEntity(c) {
   if (typeof c === "object" && c) return c.entity || "";
   return c || "";
@@ -1794,7 +1799,7 @@ function lockCard(c, r) {
   const card = { type: "custom:charro-lock-card", entity: id };
   if (o.name) card.label = o.name;
   if (o.icon) card.icon = o.icon;
-  if (o.confirm === false) card.confirm = false;
+  if (o.confirm === true) card.confirm = true;
   return card;
 }
 
@@ -4155,11 +4160,10 @@ class CharroLockCard extends CharroBase {
       label: c.label || "",
       icon: c.icon || LOCK_ICON[state] || "mdi:lock-question",
       pal: LOCK_PAL,
-      /* The icon throws the bolt on a single tap, so it asks first unless
-       * a room says not to. `confirm: false` is for a lock you operate
-       * often enough that a dialog every time is the annoyance rather
-       * than the accident. */
-      confirm: c.confirm !== false,
+      /* Off by default: the only thing that acts is a 34px icon, which is
+       * not something you hit by accident, and a dialog on every tap is
+       * the bigger annoyance. `confirm: true` asks first. */
+      confirm: c.confirm === true,
     };
   }
 
@@ -4173,7 +4177,16 @@ makeEditor("charro-lock-card-editor", [
   { name: "label", selector: { text: {} } },
   { name: "icon", selector: { icon: {} } },
   { name: "confirm", selector: { boolean: {} } },
-]);
+], {
+  entity: "Lock",
+  label: "Name",
+  confirm: "Ask first",
+}, {
+  label: "Blank uses the lock's own name.",
+  icon: "Blank follows the state - a closed shackle locked, an open one unlocked.",
+  confirm: "A dialog before the bolt moves. Off by default; the icon is the " +
+           "only thing that acts and it is small enough not to hit by accident.",
+});
 
 /* The zone's source, as the list of sources it actually has.
  *
@@ -8407,6 +8420,20 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(f.text("Name", c.name, set("name"),
         lockName(c, this._hass) || "House Doors"));
       row.appendChild(f.icon("Icon", c.icon, set("icon")));
+
+      const ask = document.createElement("label");
+      ask.className = "vfield";
+      const at = document.createElement("span");
+      at.textContent = "Ask first";
+      const acb = document.createElement("ha-switch");
+      acb.checked = c.confirm === true;
+      acb.addEventListener("change", () => {
+        if (acb.checked) c.confirm = true; else delete c.confirm;
+        redraw();
+      });
+      ask.append(at, acb);
+      row.appendChild(ask);
+
       const x = document.createElement("button");
       x.className = "vdel";
       x.textContent = "Remove lock";
@@ -8424,8 +8451,9 @@ class CharroRoomsEditor extends HTMLElement {
     const lnote = document.createElement("div");
     lnote.className = "vnote";
     lnote.textContent = "Green when locked, red when not, amber mid-throw and a "
-      + "warning when jammed. Tap opens more-info; hold locks or unlocks, after "
-      + "asking. Leave the icon blank and it follows the state.";
+      + "warning when jammed. Tapping the icon throws the bolt; the name and the "
+      + "state beside it open more-info. Leave the icon blank and it follows the "
+      + "state.";
     box.appendChild(lnote);
 
     box.appendChild(f.cap("Only alert when this is also open"));

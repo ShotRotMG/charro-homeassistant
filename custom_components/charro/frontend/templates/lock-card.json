@@ -3,7 +3,7 @@
     "label": "",
     "icon": "",
     "pal": {},
-    "confirm": true
+    "confirm": false
   },
   "show_name": true,
   "show_icon": false,
@@ -11,25 +11,23 @@
   "tap_action": {
     "action": "more-info"
   },
-  "hold_action": {
-    "action": "call-service",
-    "service": "lock.toggle",
-    "service_data": {
-      "entity_id": "[[[ return entity.entity_id ]]]"
-    },
-    "confirmation": "[[[\n  if (!variables.confirm) return false;\n  const on = entity.state === 'locked';\n  const who = variables.label || entity.attributes.friendly_name || 'this lock';\n  return { text: `${on ? 'Unlock' : 'Lock'} ${who}?` };\n]]]\n"
-  },
   "name": "[[[ return variables.label || entity.attributes.friendly_name || entity.entity_id ]]]",
   "styles": {
     "grid": [
       {
-        "grid-template-areas": "\"i n s\""
+        "grid-template-areas": "\"i n\" \"i s\""
       },
       {
-        "grid-template-columns": "34px minmax(0, 1fr) auto"
+        "grid-template-columns": "34px minmax(0, 1fr)"
+      },
+      {
+        "grid-template-rows": "auto auto"
       },
       {
         "column-gap": "10px"
+      },
+      {
+        "row-gap": "1px"
       },
       {
         "align-items": "center"
@@ -55,6 +53,9 @@
     "name": [
       {
         "justify-self": "start"
+      },
+      {
+        "align-self": "end"
       },
       {
         "font-size": "14px"
@@ -84,21 +85,27 @@
           "justify-self": "start"
         },
         {
+          "align-self": "center"
+        },
+        {
           "width": "34px"
         },
         {
           "height": "34px"
+        },
+        {
+          "grid-row": "1 / span 2"
         }
       ],
       "s": [
         {
-          "justify-self": "end"
+          "justify-self": "start"
         },
         {
-          "padding-right": "2px"
+          "align-self": "start"
         },
         {
-          "white-space": "nowrap"
+          "min-width": "0"
         }
       ]
     }
@@ -114,7 +121,7 @@
         "icon": "[[[ return variables.icon ]]]",
         "tap_action": {
           "action": "call-service",
-          "service": "lock.toggle",
+          "service": "[[[ return entity.state === 'locked' ? 'lock.unlock' : 'lock.lock' ]]]",
           "service_data": {
             "entity_id": "[[[ return entity.entity_id ]]]"
           },
@@ -171,7 +178,7 @@
         "show_icon": false,
         "show_name": true,
         "tap_action": {
-          "action": "none"
+          "action": "more-info"
         },
         "name": "[[[\n  const s = entity.state;\n  return s === 'locked' ? 'Locked'\n       : s === 'unlocked' ? 'Unlocked'\n       : s === 'open' ? 'Open'\n       : s === 'locking' ? 'Locking\\u2026'\n       : s === 'unlocking' ? 'Unlocking\\u2026'\n       : s === 'opening' ? 'Opening\\u2026'\n       : s === 'jammed' ? 'Jammed'\n       : 'Unavailable';\n]]]\n",
         "styles": {
@@ -193,6 +200,9 @@
             },
             {
               "--ha-card-border-width": "0"
+            },
+            {
+              "cursor": "pointer"
             }
           ],
           "name": [
