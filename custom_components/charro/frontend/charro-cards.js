@@ -22,7 +22,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.45.0";
+const VERSION = "5.46.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1358,22 +1358,63 @@ function charroAlertGroups(v, states) {
     if (hit) hit[1]++;
     else out.push([icon, 1]);
   }
-  /* A lock is its own kind of open, and the one you would want to see from
-   * the other side of the house. It is last so the door it belongs to
-   * keeps its place, and it is never folded into a door's count: "shut but
-   * unlocked" and "open" are different news. A jammed lock shows the
-   * warning glyph rather than the open one, for the same reason the card
-   * does - it is not unlocked, it failed. */
-  const un = charroUnlocked(v, states);
-  if (un.length) {
-    const jam = un.some((e) => (states[e] || {}).state === "jammed");
-    out.push([jam ? "mdi:lock-alert" : "mdi:lock-open-variant", un.length]);
-  }
+  /* The lock used to be appended here as one more kind of open, which
+   * meant a locked door said nothing at all - you could not tell "shut"
+   * from "no lock configured". It has a badge of its own now, which is
+   * always on and green when everything is thrown. */
   return out;
 }
+
+/* The room card's lock badge.
+ *
+ * A lock is worth seeing shut, not only worth shouting about open: a badge
+ * that only appears when something is wrong can't tell you the house is
+ * locked up, which is the question you actually ask from the other end of
+ * it. So this returns something for any room that has a lock at all.
+ *
+ * The four readings and their colours are LOCK_PAL - the same ones the
+ * lock card and the pop-up use - so one lock never looks like two
+ * different things in two places. The worst state wins for a room with
+ * several locks, and the badge opens the one that is the reason it is
+ * red rather than whichever happens to be first. */
+const LOCK_RANK = { locked: 0, moving: 1, unknown: 2, unlocked: 3, jammed: 4 };
+const LOCK_BADGE_ICON = {
+  locked: "mdi:lock", unlocked: "mdi:lock-open-variant",
+  moving: "mdi:lock-clock", jammed: "mdi:lock-alert",
+  unknown: "mdi:lock-question",
+};
+
+function lockReading(state) {
+  return state === "locked" ? "locked"
+       : state === "unlocked" || state === "open" ? "unlocked"
+       : state === "locking" || state === "unlocking" || state === "opening" ? "moving"
+       : state === "jammed" ? "jammed" : "unknown";
+}
+
+function charroLockBadge(v, states) {
+  const ids = ((v && v.locks) || []).filter(Boolean);
+  if (!ids.length) return null;
+  let worst = "locked";
+  let n = 0;
+  for (const id of ids) {
+    const k = lockReading((states[id] || {}).state);
+    if (k === "unlocked" || k === "jammed") n++;
+    if (LOCK_RANK[k] > LOCK_RANK[worst]) worst = k;
+  }
+  const pick = ids.find((e) => lockReading((states[e] || {}).state) !== "locked") || ids[0];
+  return {
+    icon: LOCK_BADGE_ICON[worst],
+    fg: (LOCK_PAL[worst] || LOCK_PAL.unknown).fg,
+    entity: pick,
+    state: worst,
+    n,
+  };
+}
+
 if (typeof window !== "undefined") {
   window.charroAlertIcon = charroAlertIcon;
   window.charroAlertGroups = charroAlertGroups;
+  window.charroLockBadge = charroLockBadge;
 }
 
 /* The TV a room's chip should follow.

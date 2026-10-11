@@ -56,10 +56,10 @@
     ],
     "grid": [
       {
-        "grid-template-areas": "\"i n alert\" \"chips chips chips\""
+        "grid-template-areas": "\"i n alert lock\" \"chips chips chips chips\""
       },
       {
-        "grid-template-columns": "[[[\n  /* The name lives in the middle column, so the two side columns have to be\n     the same width or it centres on what is left over rather than on the\n     card. Collapsing the alert column to 0px bought a long name 31px and\n     cost every room without a badge a name sitting 15px right of centre.\n     The icon is justify-self:start, so widening its column for a room with\n     two badges does not move it off the left edge. */\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  const w = Math.max(26, 26 * groups.length);\n  return `${w}px 1fr ${w}px`;\n]]]\n"
+        "grid-template-columns": "[[[\n  /* Four columns, and the name still has to sit on the card's centre.\n     Writing out the arithmetic: with three 5px gaps, the middle column\n     runs from L+5 to W-(K+A+10), so its centre is the card's only when\n     L = A + K + 5. The room icon needs 26px whatever else is going on,\n     so L floors there and the alert column takes up the slack - empty\n     space on the right, which is what keeps a room with no badges\n     centred just as well as one with two. */\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  const lock = (window.charroLockBadge ? window.charroLockBadge(variables, states) : null);\n  const k = lock ? 26 : 0;\n  const l = Math.max(26, 26 * groups.length + k + 5);\n  return `${l}px 1fr ${l - k - 5}px ${k}px`;\n]]]\n"
       },
       {
         "grid-template-rows": "26px 22px"
@@ -117,7 +117,7 @@
         "min-width": "0"
       },
       {
-        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  /* Both side columns, both gaps and the card's own padding. The reserve is\n     symmetric now because the columns are - 26px per badge, since a room\n     with an open garage AND an open door draws two of them. */\n  const reserve = 30 + 2 * Math.max(26, 26 * groups.length);\n  /* 1.72, not 1.6: measured in Roboto Bold, these room names run about\n     10.4px per character at 18px at their widest (\"Javon\"), where 1.6\n     budgets 11.25px — so an 11-character name was shrunk a step further\n     than it had to be */\n  return `clamp(11px, calc((100cqw - ${reserve}px) / ${n} * 1.72), 18px)`;\n]]]\n"
+        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  const lock = (window.charroLockBadge ? window.charroLockBadge(variables, states) : null);\n  /* Both side columns, all three gaps and the card's own padding. The\n     left column is the whole right-hand side plus a gap, by the\n     arithmetic above, so the reserve is twice it plus the rest. */\n  const l = Math.max(26, 26 * groups.length + (lock ? 26 : 0) + 5);\n  const reserve = 30 + 2 * l;\n  /* 1.72, not 1.6: measured in Roboto Bold, these room names run about\n     10.4px per character at 18px at their widest (\"Javon\"), where 1.6\n     budgets 11.25px — so an 11-character name was shrunk a step further\n     than it had to be */\n  return `clamp(11px, calc((100cqw - ${reserve}px) / ${n} * 1.72), 18px)`;\n]]]\n"
       }
     ],
     "custom_fields": {
@@ -149,7 +149,7 @@
       ],
       "alert": [
         {
-          "justify-self": "center"
+          "justify-self": "end"
         },
         {
           "align-self": "center"
@@ -168,6 +168,26 @@
         },
         {
           "line-height": "1"
+        }
+      ],
+      "lock": [
+        {
+          "justify-self": "center"
+        },
+        {
+          "align-self": "center"
+        },
+        {
+          "width": "26px"
+        },
+        {
+          "height": "26px"
+        },
+        {
+          "display": "[[[ return (window.charroLockBadge && window.charroLockBadge(variables, states)) ? 'flex' : 'none'; ]]]"
+        },
+        {
+          "align-items": "center"
         }
       ]
     }
@@ -1301,7 +1321,65 @@
         }
       }
     },
-    "alert": "[[[\n  /* One badge per kind of thing that is open, each counting only its own.\n     Previously the glyph came from the first open sensor and the number\n     from every one of them, so a garage door plus an entry door read as\n     two garage doors. */\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  if (!groups.length) return '';\n  return groups.map(([icon, n]) =>\n    `<ha-icon icon=\"${icon}\" style=\"width:24px;height:24px;--mdc-icon-size:24px;vertical-align:-6px;\"></ha-icon>${n > 1 ? ' ' + n : ''}`\n  ).join(' ');\n]]]\n"
+    "alert": "[[[\n  /* One badge per kind of thing that is open, each counting only its own.\n     Previously the glyph came from the first open sensor and the number\n     from every one of them, so a garage door plus an entry door read as\n     two garage doors. */\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  if (!groups.length) return '';\n  return groups.map(([icon, n]) =>\n    `<ha-icon icon=\"${icon}\" style=\"width:24px;height:24px;--mdc-icon-size:24px;vertical-align:-6px;\"></ha-icon>${n > 1 ? ' ' + n : ''}`\n  ).join(' ');\n]]]\n",
+    "lock": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ const b = window.charroLockBadge ? window.charroLockBadge(variables, states) : null; return b ? b.entity : ''; ]]]",
+        "show_icon": true,
+        "show_name": false,
+        "show_state": false,
+        "icon": "[[[ const b = window.charroLockBadge ? window.charroLockBadge(variables, states) : null; return b ? b.icon : 'mdi:lock'; ]]]",
+        "tap_action": {
+          "action": "more-info"
+        },
+        "hold_action": {
+          "action": "more-info"
+        },
+        "styles": {
+          "card": [
+            {
+              "padding": "0"
+            },
+            {
+              "margin": 0
+            },
+            {
+              "width": "26px"
+            },
+            {
+              "height": "26px"
+            },
+            {
+              "background": "none"
+            },
+            {
+              "box-shadow": "none"
+            },
+            {
+              "border": "none"
+            },
+            {
+              "cursor": "pointer"
+            }
+          ],
+          "icon": [
+            {
+              "width": "22px"
+            },
+            {
+              "--mdc-icon-size": "22px"
+            },
+            {
+              "color": "[[[ const b = window.charroLockBadge ? window.charroLockBadge(variables, states) : null; return b ? b.fg : 'var(--disabled-text-color)'; ]]]"
+            }
+          ]
+        },
+        "card_mod": {
+          "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+        }
+      }
+    }
   },
   "card_mod": {
     "style": ":host {\n  display: block !important;\n  width: 100% !important;\n  min-width: 100% !important;\n}\nha-card {\n  container-type: inline-size;\n  container-name: roomcard;\n  width: 100% !important;\n  min-width: 100% !important;\n  height: 100% !important;\n  box-sizing: border-box !important;\n}\n#container { width: 100% !important; }\n"
