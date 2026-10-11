@@ -4,7 +4,7 @@ Two jobs, both of which used to need hand-editing:
 
   1. Serve `charro-cards.js` and register it with the frontend, so the cards
      exist without a Lovelace resource entry.
-  2. Put the rooms editor on the sidebar (admin only) and give it a websocket
+  2. Put the Charro Config panel on the sidebar (admin only) and give it a websocket
      command that writes room files, replacing the `shell_command` that
      otherwise had to go in configuration.yaml.
 
@@ -37,6 +37,7 @@ from homeassistant.loader import async_get_integration
 from .const import (
     BUNDLE,
     DOMAIN,
+    LEGACY_PANEL_URLS,
     LEGACY_SUBDIR,
     PANEL_ELEMENT,
     PANEL_ICON,
@@ -53,10 +54,6 @@ from .const import (
     SNAP_MAX,
     SNAP_MID_EVERY,
     STATIC_URL,
-    UNIFI_PANEL_ELEMENT,
-    UNIFI_PANEL_ICON,
-    UNIFI_PANEL_TITLE,
-    UNIFI_PANEL_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -207,19 +204,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         require_admin=True,
     )
 
-    # Second panel, same bundle and same module URL, so the browser's module
-    # map keys on it once and this costs one extra sidebar entry and nothing
-    # else. Admin only: it can restart an access point.
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name=UNIFI_PANEL_ELEMENT,
-        frontend_url_path=UNIFI_PANEL_URL,
-        sidebar_title=UNIFI_PANEL_TITLE,
-        sidebar_icon=UNIFI_PANEL_ICON,
-        module_url=url,
-        embed_iframe=False,
-        require_admin=True,
-    )
+    # The URLs this used to be two separate panels at. Registered with no
+    # sidebar title, so they stay off the sidebar but still resolve: the
+    # panel reads the path it was reached by and opens the matching tab.
+    # One sidebar entry, and nothing anybody bookmarked breaks.
+    for legacy in LEGACY_PANEL_URLS:
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name=PANEL_ELEMENT,
+            frontend_url_path=legacy,
+            module_url=url,
+            embed_iframe=False,
+            require_admin=True,
+        )
 
     hass.services.async_register(
         DOMAIN,
@@ -263,7 +260,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     store = hass.data.get(DOMAIN, {})
     frontend.async_remove_panel(hass, PANEL_URL)
-    frontend.async_remove_panel(hass, UNIFI_PANEL_URL)
+    for legacy in LEGACY_PANEL_URLS:
+        frontend.async_remove_panel(hass, legacy)
     hass.services.async_remove(DOMAIN, SERVICE_VOLUME_STEP)
     store.pop(entry.entry_id, None)
     _drop_extra_js(hass, store.pop("extra_js", None))

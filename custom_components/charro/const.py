@@ -2,22 +2,22 @@
 
 DOMAIN = "charro"
 
-# What the sidebar entry is called, and the URL it lives at.
-PANEL_URL = "charro-rooms"
-PANEL_TITLE = "Rooms"
-PANEL_ICON = "mdi:floor-plan"
+# What the sidebar entry is called, and the URL it lives at. One entry for
+# everything Charro: the rooms, the remote templates and the UniFi
+# diagnostics are tabs inside it rather than pages of their own.
+PANEL_URL = "charro-config"
+PANEL_TITLE = "Charro Config"
+PANEL_ICON = "mdi:home-cog"
 
-# The UniFi diagnostics panel is a second sidebar entry off the same bundle:
-# one module fetch serves both, so adding it costs nothing at load time.
-UNIFI_PANEL_URL = "charro-unifi"
-UNIFI_PANEL_TITLE = "UniFi"
-UNIFI_PANEL_ICON = "mdi:router-network"
-UNIFI_PANEL_ELEMENT = "charro-unifi-panel"
+# The two URLs this used to be two panels at. Still registered, but off the
+# sidebar, so a dashboard link or a bookmark to either one still lands - on
+# the tab that page became. /<url>/<tab> picks the tab directly.
+LEGACY_PANEL_URLS = ("charro-rooms", "charro-unifi")
 
 # Where the bundle is served from, and the element the panel mounts.
 STATIC_URL = "/charro_static"
 BUNDLE = "charro-cards.js"
-PANEL_ELEMENT = "charro-rooms-panel"
+PANEL_ELEMENT = "charro-config-panel"
 
 # Room files live in /config, NOT under /config/www: anything under www is
 # served at /local with no authentication at all, so a room file there - the

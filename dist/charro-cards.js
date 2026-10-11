@@ -7,7 +7,8 @@
  *   charro-all-off-card   all zones off, both amps
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *   charro-rooms-editor   edit the room files from inside Home Assistant
- *   charro-unifi-panel    UniFi diagnostics panel, at /charro-unifi
+ *   charro-unifi-panel    UniFi diagnostics, a tab of the panel below
+ *   charro-config-panel   Charro Config: rooms, remotes and UniFi, tabbed
  *
  * Installed through HACS, so the Lovelace resource is registered automatically.
  * The first four render custom:button-card with a template fetched from
@@ -20,7 +21,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.41.2";
+const VERSION = "5.42.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7092,6 +7093,9 @@ class CharroRoomsEditor extends HTMLElement {
     this._keys = (config && config.rooms) || null;   // null = discover
     this.classList.toggle("panelmode", !!this._config.panel);
     this._key = null; this._room = null; this._orig = null;
+    /* Which list the rail is showing. The Charro Config tabs drive this;
+     * a card embedding the editor just gets the rooms. */
+    this._section = "rooms";
     if (this.shadowRoot) this.shadowRoot.innerHTML = "";
     this._built = false;
     if (this._hass) this._build();
@@ -7232,6 +7236,7 @@ class CharroRoomsEditor extends HTMLElement {
   _renderRail() {
     if (!this._rail) return;
     this._rail.innerHTML = "";
+    if (this._section === "remotes") return this._railRemotes();
     const h = document.createElement("div");
     h.className = "railhd"; h.textContent = "Rooms";
     this._rail.appendChild(h);
@@ -7256,12 +7261,14 @@ class CharroRoomsEditor extends HTMLElement {
       this._rail.appendChild(b);
     }
 
-    /* The remote templates live in one shared file, not one per room, so
-     * they were the last thing in here that needed a file editor. They are
-     * a second list rather than a fake room because they are not rooms:
-     * every room's sources draw from the same six. */
-    const rem = this._remotesAll;
-    if (!rem) return;
+  }
+
+  /* The remote templates live in one shared file, not one per room, so they
+   * were the last thing in here that needed a file editor. They are their
+   * own tab rather than a second list under the rooms because they are not
+   * rooms: every room's sources draw from the same six. */
+  _railRemotes() {
+    const rem = this._remotesAll || {};
     const rh = document.createElement("div");
     rh.className = "railhd";
     rh.textContent = "Remotes";
@@ -7290,6 +7297,56 @@ class CharroRoomsEditor extends HTMLElement {
     addb.textContent = "+ Remote";
     addb.addEventListener("click", () => this._newRemote());
     this._rail.appendChild(addb);
+  }
+
+  /* The tabs in the Charro Config panel switch this. One editor element
+   * serves both tabs, so flipping between them keeps the room you had
+   * open, the autosave setting and the history - and a save that was still
+   * sitting in the 1.5s debounce is flushed on the way out rather than
+   * quietly dropped, which is the one way tabs could have lost an edit. */
+  async setSection(s) {
+    s = s === "remotes" ? "remotes" : "rooms";
+    if (!this._built || s === this._section) { this._section = s; return; }
+    if (!(await this._flush())) return;
+    this._section = s;
+    if (this._addBtn) this._addBtn.hidden = s === "remotes";
+    if (this._exp) this._exp.hidden = s === "remotes";
+    if (s === "remotes") {
+      if (!this._remotesAll) {
+        try {
+          const { rooms, remotes } = await loadAll(this._hass);
+          this._roomsAll = rooms;
+          this._remotesAll = JSON.parse(JSON.stringify(remotes || {}));
+        } catch (err) {
+          this._say(`Could not read the remote templates - ${err.message}`, "err");
+        }
+      }
+      const names = Object.keys(this._remotesAll || {}).sort();
+      const pick = names.indexOf(this._rkey) >= 0 ? this._rkey : names[0];
+      if (pick) await this._loadRemote(pick);
+      else {
+        this._mode = "remote"; this._rkey = null;
+        this._left.innerHTML = "";
+        this._renderRail();
+        this._say("No remote templates yet - \u201c+ Remote\u201d starts one.");
+      }
+    } else {
+      const k = this._key || (this._keys || [])[0];
+      if (k) await this._load(k, true);
+      else this._renderRail();
+    }
+    this._saveLabel();
+  }
+
+  /* Leaving a tab should never be the thing that loses an edit. */
+  async _flush() {
+    clearTimeout(this._autoT);
+    if (!this._dirty()) return true;
+    if (this._autoOn() && this._canWrite() && !this._saving) {
+      await this._doSave(true);
+      return true;
+    }
+    return confirm("There are unsaved changes here. Switch tabs and lose them?");
   }
 
   /* Which room sources name a template. Deleting one that is in use leaves
@@ -7328,6 +7385,7 @@ class CharroRoomsEditor extends HTMLElement {
     add.textContent = "Open / new";
     add.title = "Type a room key — opens its file if there is one, otherwise starts a new room";
     add.addEventListener("click", () => this._newRoom());
+    this._addBtn = add;
     this._exp = document.createElement("button");
     this._expanded = false;
     this._exp.textContent = "Expand all";
@@ -9675,22 +9733,81 @@ const PANEL_CSS = `
 .body{ height:calc(100% - var(--header-height, 56px)); overflow:auto; }
 `;
 
-class CharroRoomsPanel extends HTMLElement {
+/* ========================================================= CONFIG PANEL ==*/
+/*
+ * One sidebar entry for everything Charro, at /charro-config.
+ *
+ * It used to be two: "Rooms" and "UniFi", and the remote templates were a
+ * second list squeezed into the rooms rail. Three things that are all
+ * "edit the house" had no reason to be three places.
+ *
+ * The Rooms and Remotes tabs share ONE editor element and switch its
+ * section, so flipping between them keeps the open room, the autosave
+ * setting and the history. The UniFi tab is a separate element and is not
+ * built until you first open it: it walks the device and entity registries
+ * to decide what to watch, which is not work worth doing because you came
+ * here to rename a light.
+ */
+const CONFIG_TABS = [
+  ["rooms", "Rooms"],
+  ["remotes", "Remotes"],
+  ["unifi", "UniFi"],
+];
+
+const CONFIG_CSS = PANEL_CSS + `
+.tabs{
+  display:flex; align-items:stretch; height:42px; padding:0 8px;
+  box-sizing:border-box; overflow-x:auto;
+  background:var(--app-header-background-color, var(--primary-color));
+  color:var(--app-header-text-color, var(--text-primary-color, #fff));
+}
+.tabs button{
+  font:inherit; font-size:14px; font-weight:600; letter-spacing:.3px;
+  white-space:nowrap; cursor:pointer; color:inherit; background:none;
+  border:none; padding:0 18px; opacity:.72;
+  border-bottom:3px solid transparent;
+}
+.tabs button:hover{ opacity:1; }
+.tabs button.on{ opacity:1; border-bottom-color:currentColor; }
+.body{ height:calc(100% - var(--header-height, 56px) - 42px); overflow:hidden; }
+.pane{ height:100%; overflow:auto; }
+.pane[hidden]{ display:none; }
+`;
+
+class CharroConfigPanel extends HTMLElement {
   set hass(h) {
     this._hass = h;
     this._render();
-    if (this._editor) this._editor.hass = h;
+    for (const k in this._els) if (this._els[k]) this._els[k].hass = h;
   }
-  set narrow(n) { this._narrow = n; this._syncMenu(); }
-  set route(r) { this._route = r; }
+  set narrow(n) { this._narrow = n; }
+  set route(r) { this._route = r; if (this._built) this._fromRoute(); }
   set panel(p) { this._panelCfg = p; }
+
+  /* /charro-config/remotes names its tab outright. The two URLs this panel
+   * used to be two panels at are still registered, off the sidebar, so an
+   * old bookmark lands on the tab that page became. */
+  _routeTab() {
+    const r = this._route || {};
+    const seg = String(r.path || "").replace(/^\/+/, "").split("/")[0];
+    if (CONFIG_TABS.some(([k]) => k === seg)) return seg;
+    if (String(r.prefix || "").indexOf("unifi") >= 0) return "unifi";
+    return "rooms";
+  }
+
+  _fromRoute() {
+    const t = this._routeTab();
+    if (t !== this._tab) this._show(t, false);
+  }
 
   _render() {
     if (this._built) return;
     this._built = true;
+    this._panes = {};
+    this._els = {};
     const root = this.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = PANEL_CSS;
+    style.textContent = CONFIG_CSS;
 
     const top = document.createElement("div"); top.className = "top";
     this._menu = document.createElement("ha-icon-button");
@@ -9699,33 +9816,75 @@ class CharroRoomsPanel extends HTMLElement {
       this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true }));
     });
     const mi = document.createElement("ha-svg-icon");
-    // mdi:menu, inlined — a panel header shouldn't need the icon set loaded
+    // mdi:menu, inlined - a panel header shouldn't need the icon set loaded
     mi.setAttribute("path", "M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z");
     this._menu.appendChild(mi);
     const title = document.createElement("div");
     title.className = "t";
-    title.textContent = (this._panelCfg && this._panelCfg.title) || "Rooms";
+    title.textContent = (this._panelCfg && this._panelCfg.title) || "Charro Config";
     top.append(this._menu, title);
-    this._syncMenu();
 
-    const body = document.createElement("div"); body.className = "body";
-    const ed = document.createElement("charro-rooms-editor");
-    ed.setConfig({ type: "custom:charro-rooms-editor", panel: true });
-    ed.hass = this._hass;
-    this._editor = ed;
-    body.appendChild(ed);
+    const tabs = document.createElement("div"); tabs.className = "tabs";
+    this._tabBtns = {};
+    for (const [k, label] of CONFIG_TABS) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", () => this._show(k, true));
+      this._tabBtns[k] = b;
+      tabs.appendChild(b);
+    }
 
-    root.append(style, top, body);
+    this._body = document.createElement("div"); this._body.className = "body";
+    root.append(style, top, tabs, this._body);
+    this._show(this._routeTab(), false);
   }
 
-  /* Wide screens already show the sidebar, so the hamburger is only useful
-   * when it is collapsed — but HA keeps it visible there too, and a missing
-   * button is worse than a redundant one. */
-  _syncMenu() {
-    if (this._menu) this._menu.style.display = "";
+  /* Rooms and Remotes are the same element, so they are the same pane. */
+  _paneKey(tab) { return tab === "unifi" ? "unifi" : "editor"; }
+
+  _pane(key) {
+    if (this._panes[key]) return this._panes[key];
+    const box = document.createElement("div");
+    box.className = "pane";
+    let el;
+    if (key === "unifi") {
+      el = document.createElement("charro-unifi-panel");
+      el.setAttribute("embedded", "");
+      el.embedded = true;                       // before hass, which renders
+    } else {
+      el = document.createElement("charro-rooms-editor");
+      el.setConfig({ type: "custom:charro-rooms-editor", panel: true });
+    }
+    el.hass = this._hass;
+    box.appendChild(el);
+    this._body.appendChild(box);
+    this._panes[key] = box;
+    this._els[key] = el;
+    return box;
+  }
+
+  _show(tab, push) {
+    if (!CONFIG_TABS.some(([k]) => k === tab)) tab = "rooms";
+    this._tab = tab;
+    for (const k in this._tabBtns) this._tabBtns[k].classList.toggle("on", k === tab);
+    const want = this._paneKey(tab);
+    this._pane(want);
+    for (const k in this._panes) this._panes[k].hidden = k !== want;
+    const ed = this._els.editor;
+    if (want === "editor" && ed && ed.setSection) ed.setSection(tab);
+    if (push) this._url(tab);
+  }
+
+  /* replaceState rather than pushState plus location-changed: Home
+   * Assistant would hand the route straight back and we would redraw the
+   * tab we are already on. The URL is here so a reload and a bookmark
+   * land where you were, not to give the tabs a back button. */
+  _url(tab) {
+    const base = (this._route && this._route.prefix) || "/charro-config";
+    try { history.replaceState(history.state, "", `${base}/${tab}`); } catch (e) { /* no-op */ }
   }
 }
-def("charro-rooms-panel", CharroRoomsPanel);
+def("charro-config-panel", CharroConfigPanel);
 
 /* ========================================================= UNIFI PANEL == */
 /*
@@ -9970,6 +10129,16 @@ const UNIFI_CSS = `
 }
 .body{ height:calc(100% - var(--header-height, 56px)); overflow:auto; padding-bottom:40px; }
 .wrap{ padding:12px; }
+/* As a tab of Charro Config this draws no app header of its own - the
+   panel above it already has one - so the toolbar row keeps only the
+   filter box and the body takes whatever height is left. */
+:host([embedded]){ display:flex; flex-direction:column; background:none; }
+:host([embedded]) .top{
+  height:auto; padding:10px 12px 0; background:none;
+  color:var(--primary-text-color);
+}
+:host([embedded]) .top input{ background:rgba(127,127,127,.18); }
+:host([embedded]) .body{ height:auto; flex:1 1 auto; min-height:0; }
 .card{
   background:var(--ha-card-background, var(--card-background-color, #1c1c1c));
   border:1px solid var(--divider-color, rgba(255,255,255,.12));
@@ -10041,6 +10210,8 @@ class CharroUnifiPanel extends HTMLElement {
   set narrow(n) { this._narrow = n; }
   set route(r) { this._route = r; }
   set panel(p) { this._panelCfg = p; }
+  /* Set before hass, so _render knows to leave the app header off. */
+  set embedded(v) { this._embedded = !!v; }
 
   /* The set of entities worth watching changes only when the registries do,
    * so it is found once and kept. Without this the signature walked all
@@ -10100,7 +10271,7 @@ class CharroUnifiPanel extends HTMLElement {
     q.placeholder = "Filter…";
     // no redraw of the whole panel on a keystroke, or the box loses focus
     q.addEventListener("input", () => { this._q = q.value.toLowerCase(); this._paintBody(); });
-    top.append(menu, title, q);
+    if (this._embedded) top.append(q); else top.append(menu, title, q);
 
     const tabs = document.createElement("div");
     tabs.className = "tabs";
