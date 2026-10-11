@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.40.1";
+const VERSION = "5.41.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1794,6 +1794,7 @@ function lockCard(c, r) {
   const card = { type: "custom:charro-lock-card", entity: id };
   if (o.name) card.label = o.name;
   if (o.icon) card.icon = o.icon;
+  if (o.confirm === false) card.confirm = false;
   return card;
 }
 
@@ -4154,6 +4155,11 @@ class CharroLockCard extends CharroBase {
       label: c.label || "",
       icon: c.icon || LOCK_ICON[state] || "mdi:lock-question",
       pal: LOCK_PAL,
+      /* The icon throws the bolt on a single tap, so it asks first unless
+       * a room says not to. `confirm: false` is for a lock you operate
+       * often enough that a dialog every time is the annoyance rather
+       * than the accident. */
+      confirm: c.confirm !== false,
     };
   }
 
@@ -4166,6 +4172,7 @@ makeEditor("charro-lock-card-editor", [
   { name: "entity", required: true, selector: ent(["lock"]) },
   { name: "label", selector: { text: {} } },
   { name: "icon", selector: { icon: {} } },
+  { name: "confirm", selector: { boolean: {} } },
 ]);
 
 /* The zone's source, as the list of sources it actually has.
