@@ -59,7 +59,7 @@
         "grid-template-areas": "\"i n alert\" \"chips chips chips\""
       },
       {
-        "grid-template-columns": "[[[\n  /* the alert column held 26px open even with nothing in it, which is the\n     width a long room name was missing */\n  return `26px 1fr ${(window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []).length ? 'minmax(26px, auto)' : '0px'}`;\n]]]\n"
+        "grid-template-columns": "[[[\n  /* The name lives in the middle column, so the two side columns have to be\n     the same width or it centres on what is left over rather than on the\n     card. Collapsing the alert column to 0px bought a long name 31px and\n     cost every room without a badge a name sitting 15px right of centre.\n     The icon is justify-self:start, so widening its column for a room with\n     two badges does not move it off the left edge. */\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  const w = Math.max(26, 26 * groups.length);\n  return `${w}px 1fr ${w}px`;\n]]]\n"
       },
       {
         "grid-template-rows": "26px 22px"
@@ -117,7 +117,7 @@
         "min-width": "0"
       },
       {
-        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  /* icon column + gaps + card padding, and the alert column only when it is\n     actually showing something - 26px per badge, since a room with an open\n     garage AND an open door now draws two of them */\n  const reserve = groups.length ? 60 + 26 * groups.length : 60;\n  /* 1.72, not 1.6: measured in Roboto Bold, these room names run about\n     10.4px per character at 18px at their widest (\"Javon\"), where 1.6\n     budgets 11.25px — so an 11-character name was shrunk a step further\n     than it had to be */\n  return `clamp(11px, calc((100cqw - ${reserve}px) / ${n} * 1.72), 18px)`;\n]]]\n"
+        "font-size": "[[[\n  const n = Math.max((variables.room_name || '').length, 1);\n  const groups = (window.charroAlertGroups ? window.charroAlertGroups(variables, states) : []);\n  /* Both side columns, both gaps and the card's own padding. The reserve is\n     symmetric now because the columns are - 26px per badge, since a room\n     with an open garage AND an open door draws two of them. */\n  const reserve = 30 + 2 * Math.max(26, 26 * groups.length);\n  /* 1.72, not 1.6: measured in Roboto Bold, these room names run about\n     10.4px per character at 18px at their widest (\"Javon\"), where 1.6\n     budgets 11.25px — so an 11-character name was shrunk a step further\n     than it had to be */\n  return `clamp(11px, calc((100cqw - ${reserve}px) / ${n} * 1.72), 18px)`;\n]]]\n"
       }
     ],
     "custom_fields": {
