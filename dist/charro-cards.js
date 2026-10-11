@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.49.0";
+const VERSION = "5.50.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10214,6 +10214,28 @@ table.mx select.l-critical{ border-color:#e5534b; color:#e5534b; }
 .cl select{ font-size:12px; padding:3px 6px; }
 .cl input[type=checkbox]{ width:17px; height:17px; }
 .clbar{ display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+details.sec{ border-top:1px solid var(--divider-color); }
+details.sec:first-of-type{ border-top:none; }
+details.sec > summary{
+  list-style:none; cursor:pointer; display:flex; align-items:baseline; gap:10px;
+  padding:11px 2px; user-select:none;
+}
+details.sec > summary::-webkit-details-marker{ display:none; }
+details.sec > summary::before{
+  content:"▸"; font-size:11px; opacity:.55; width:10px;
+  transition:transform .12s ease;
+}
+details.sec[open] > summary::before{ transform:rotate(90deg); }
+details.sec > summary .st{
+  font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  font-weight:700; color:var(--primary-text-color);
+}
+details.sec > summary .ss{
+  font-size:12px; color:var(--secondary-text-color); margin-left:auto;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+details.sec > summary:hover .st{ color:var(--primary-color); }
+details.sec > .body{ padding:0 0 12px; }
 .clbar input[type=search]{
   flex:1 1 180px; font:inherit; font-size:13px; padding:6px 10px;
   border-radius:8px; border:1px solid var(--divider-color);
@@ -10428,14 +10450,56 @@ class CharroNotifyEditor extends HTMLElement {
     }
   }
 
+  /* Seven stacked sections was a wall. They fold now, and which ones you
+   * leave open is remembered per browser - the same way the rooms editor
+   * remembers autosave. */
+  _openSet() {
+    if (this._open) return this._open;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("charro-notify-open") || "null"); }
+    catch (e) { /* private window, or storage off */ }
+    this._open = new Set(Array.isArray(saved) ? saved : ["grid"]);
+    return this._open;
+  }
+
+  _section(root, key, title, sub) {
+    const open = this._openSet();
+    const d = document.createElement("details");
+    d.className = "sec";
+    d.open = open.has(key);
+    const sm = document.createElement("summary");
+    const t = document.createElement("span");
+    t.className = "st"; t.textContent = title;
+    const s2 = document.createElement("span");
+    s2.className = "ss"; s2.textContent = sub || "";
+    sm.append(t, s2);
+    d.appendChild(sm);
+    d.addEventListener("toggle", () => {
+      if (d.open) open.add(key); else open.delete(key);
+      try { localStorage.setItem("charro-notify-open", JSON.stringify([...open])); }
+      catch (e) { /* nothing to do, it just won't be remembered */ }
+    });
+    const body = document.createElement("div");
+    body.className = "body";
+    d.appendChild(body);
+    root.appendChild(d);
+    return body;
+  }
+
   _paint() {
     const f = fieldKit(this._hass, () => this._paint());
     const cfg = this._cfg;
-    const box = this._body;
-    box.innerHTML = "";
+    const root = this._body;
+    root.innerHTML = "";
+    const nPhones = cfg.people.length;
+    const nOff = new Set((cfg.watch || {}).off || []).size;
+    const nItems = ((this._watch && this._watch.items) || []).length;
+    let box;
 
     /* ---- the matrix, first: it is what you came here for ---- */
-    box.appendChild(f.cap("Who gets what"));
+    box = this._section(root, "grid", "Who gets what",
+      nPhones ? `${nPhones} phone${nPhones > 1 ? "s" : ""} \u00d7 ${cfg.categories.length} categories`
+              : "no phones yet");
     if (!cfg.people.length) {
       const n = document.createElement("div");
       n.className = "vnote";
@@ -10490,7 +10554,8 @@ class CharroNotifyEditor extends HTMLElement {
     }
 
     /* ---- phones ---- */
-    box.appendChild(f.cap("Phones"));
+    box = this._section(root, "phones", "Phones",
+      cfg.people.map((p) => p.name || p.key || "?").join(", ") || "none");
     cfg.people.forEach((p, i) => {
       const set = (k) => (v) => { if (v === "" || v === false || v == null) delete p[k]; else p[k] = v; };
       /* The key is what `people:` in a service call matches on, so a row
@@ -10525,7 +10590,8 @@ class CharroNotifyEditor extends HTMLElement {
     box.appendChild(f.add("+ Phone", () => { cfg.people.push({ key: "", name: "", levels: {} }); }));
 
     /* ---- categories ---- */
-    box.appendChild(f.cap("Categories"));
+    box = this._section(root, "cats", "Categories",
+      cfg.categories.map((c) => c.name || c.key).join(", "));
     cfg.categories.forEach((c, i) => {
       const set = (k) => (v) => { if (v === "" || v === false || v == null) delete c[k]; else c[k] = v; };
       const row = f.rowBox();
@@ -10554,7 +10620,8 @@ class CharroNotifyEditor extends HTMLElement {
      *
      * Only the ticked-off ones are stored, which is why this costs a few
      * entity ids in the file rather than a list of two hundred. */
-    box.appendChild(f.cap("What sets it off"));
+    box = this._section(root, "watch", "What sets it off",
+      nItems ? `${nItems - nOff} of ${nItems} ticked` : "nothing found yet");
     const watch = cfg.watch || (cfg.watch = {});
     const off = new Set(watch.off || []);
     const over = watch.cat || (watch.cat = {});
@@ -10697,7 +10764,7 @@ class CharroNotifyEditor extends HTMLElement {
      * that was missing: a list of what was sent and what each phone did
      * with it. It is the feed card, the same one you can put on a
      * dashboard, asked for a short list. */
-    box.appendChild(f.cap("Recent"));
+    box = this._section(root, "recent", "Recent", "the last ten, and who got them");
     const feed = document.createElement("charro-feed-card");
     feed.setConfig({ type: "custom:charro-feed-card", limit: 10, title: "Last ten" });
     feed.hass = this._hass;
@@ -10708,7 +10775,7 @@ class CharroNotifyEditor extends HTMLElement {
      * Everything the service takes, adjustable, sent down the real path -
      * and the same thing written out as the action block to paste into an
      * automation, so what you tested and what you ship are one thing. */
-    box.appendChild(f.cap("Try it"));
+    box = this._section(root, "try", "Try it", "send one, or copy the action");
     const t = this._test || (this._test = {
       category: (cfg.categories[0] || {}).key || "",
       title: "Front Door",
@@ -10762,7 +10829,8 @@ class CharroNotifyEditor extends HTMLElement {
     box.appendChild(tnote);
 
     /* ---- the one global ---- */
-    box.appendChild(f.cap("Only while armed"));
+    box = this._section(root, "armed", "Only while armed",
+      cfg.alarm_entity || "no alarm entity set");
     box.appendChild(f.ent("The alarm this reads", cfg.alarm_entity,
       ["alarm_control_panel"], (v) => { if (v) cfg.alarm_entity = v; else delete cfg.alarm_entity; }));
     const note = document.createElement("div");
@@ -10786,10 +10854,11 @@ class CharroNotifyEditor extends HTMLElement {
 
     const cap = document.createElement("div");
     cap.className = "vnote";
+    cap.style.paddingTop = "10px";
     cap.textContent =
       "iOS allows 500 pushes a day per phone, resetting at 00:00 UTC, and a " +
       "Quiet one still counts. Critical ones don’t.";
-    box.appendChild(cap);
+    root.appendChild(cap);
 
     this._saveLabel();
   }
