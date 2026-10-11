@@ -22,7 +22,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.44.0";
+const VERSION = "5.45.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9937,6 +9937,14 @@ table.mx select.l-off{ opacity:.45; }
 table.mx select.l-urgent{ border-color:#f2b544; }
 table.mx select.l-critical{ border-color:#e5534b; color:#e5534b; }
 .vbool{ flex-direction:row; align-items:center; gap:6px; }
+pre.yml{
+  margin:8px 0 0; padding:10px 12px; border-radius:10px; overflow-x:auto;
+  background:rgba(127,127,127,.12); border:1px solid var(--divider-color);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12.5px; line-height:1.5; white-space:pre;
+  color:var(--primary-text-color);
+}
+button.tiny{ padding:4px 10px; font-size:12.5px; align-self:flex-start; }
 `;
 
 class CharroNotifyEditor extends HTMLElement {
@@ -9953,6 +9961,25 @@ class CharroNotifyEditor extends HTMLElement {
       this._status.textContent = msg;
       this._status.className = "status " + (cls || "");
     }
+  }
+
+  /* The service reads the saved file, not this screen, so an edit that is
+   * still only on screen is the one way to set the grid correctly and get
+   * nothing. The button has to say so. */
+  _dirty() { return !!this._cfg && JSON.stringify(this._cfg) !== this._orig; }
+
+  _saveLabel() {
+    if (!this._save) return;
+    const d = this._dirty();
+    this._save.textContent = d ? "Save changes" : "Saved";
+    this._save.disabled = !d;
+    this._revert.disabled = !d;
+  }
+
+  /* Charro Config asks before switching tabs away from unsaved work. */
+  dirtyCheck() {
+    if (!this._dirty()) return true;
+    return confirm("The notification settings have unsaved changes. Leave and lose them?");
   }
 
   _build() {
@@ -10008,10 +10035,11 @@ class CharroNotifyEditor extends HTMLElement {
       invalidateRooms();
       this._orig = JSON.stringify(this._cfg);
       this._say("Saved.", "ok");
+      this._saveLabel();
     } catch (err) {
       this._say(`Save failed — ${err.message || err.code || err}`, "err");
     } finally {
-      this._save.disabled = false;
+      this._saveLabel();
     }
   }
 
@@ -10026,6 +10054,93 @@ class CharroNotifyEditor extends HTMLElement {
     return [["", "— pick a phone —"]]
       .concat(phones.map((k) => [k, k.replace("notify.mobile_app_", "")]))
       .concat(rest.map((k) => [k, k]));
+  }
+
+  /* The action block this test is, as you would paste it into an
+   * automation. Composing a notification and then retyping it somewhere
+   * else is how the two drift apart. */
+  _actionYaml() {
+    const t = this._test || {};
+    const q = (v) => {
+      const str = String(v == null ? "" : v);
+      return str !== "" && /^[\w./#:-]+$/.test(str) ? str : JSON.stringify(str);
+    };
+    const lines = ["action: charro.notify", "data:"];
+    const put = (k, v) => { if (v) lines.push(`  ${k}: ${q(v)}`); };
+    put("category", t.category);
+    put("title", t.title);
+    put("message", t.message);
+    put("entity_id", t.about);
+    put("camera", t.camera);
+    put("url", t.url);
+    put("level", t.level);
+    const p = this._person(t.who);
+    if (p && p.key) lines.push(`  people:\n    - ${q(p.key)}`);
+    return lines.join("\n");
+  }
+
+  _person(who) {
+    if (who === "" || who == null) return null;
+    return ((this._cfg || {}).people || [])[Number(who)] || null;
+  }
+
+  async _copyAction(btn) {
+    const text = this._actionYaml();
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      /* A shadow root inside a panel isn't always a permitted clipboard
+       * context, so fall back to the old way rather than failing. */
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        this.shadowRoot.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      } catch (err2) { ok = false; }
+    }
+    const was = btn.textContent;
+    btn.textContent = ok ? "Copied" : "Select it and copy";
+    setTimeout(() => { btn.textContent = was; }, 1400);
+  }
+
+  async _sendTest(whoOverride) {
+    const t = this._test || {};
+    const who = whoOverride === undefined ? t.who : whoOverride;
+    if (!t.category) { this._say("Pick a category first.", "err"); return; }
+    /* The one failure this whole section exists to prevent: the service
+     * reads the saved file, so testing over unsaved changes tests the old
+     * ones and tells you nothing. */
+    if (this._dirty()) {
+      this._say("Save first \u2014 the service reads the saved file, not this screen.", "err");
+      return;
+    }
+    const data = { category: t.category,
+                   title: t.title || "Test",
+                   message: t.message || "Test from Charro Config." };
+    if (t.about) data.entity_id = t.about;
+    if (t.camera) data.camera = t.camera;
+    if (t.url) data.url = t.url;
+    if (t.level) data.level = t.level;
+    const p = this._person(who);
+    if (p) {
+      if (!p.key) {
+        this._say(`${p.name || "That phone"} has no key, so it can't be singled out.`, "err");
+        return;
+      }
+      data.people = [p.key];
+    }
+    try {
+      await this._hass.callService("charro", "notify", data);
+      this._say(p
+        ? `Sent to ${p.name || p.key}. Nothing arriving means that cell is Off, ` +
+          `or the category is held back \u2014 the Home Assistant log says which.`
+        : "Sent to everyone who has that category switched on.", "ok");
+    } catch (err) {
+      this._say(`Send failed \u2014 ${err.message || err.code || err}`, "err");
+    }
   }
 
   _paint() {
@@ -10093,6 +10208,12 @@ class CharroNotifyEditor extends HTMLElement {
     box.appendChild(f.cap("Phones"));
     cfg.people.forEach((p, i) => {
       const set = (k) => (v) => { if (v === "" || v === false || v == null) delete p[k]; else p[k] = v; };
+      /* The key is what `people:` in a service call matches on, so a row
+       * without one can never be addressed individually. Derive it rather
+       * than leave that trap lying about; it stays editable. */
+      if (!p.key && p.name)
+        p.key = String(p.name).toLowerCase().replace(/[^a-z0-9_]+/g, "_")
+          .replace(/^_+|_+$/g, "");
       const row = f.rowBox();
       row.appendChild(f.text("Name", p.name, set("name"), "Javon"));
       row.appendChild(f.text("Key", p.key, (v) =>
@@ -10104,6 +10225,11 @@ class CharroNotifyEditor extends HTMLElement {
       row.appendChild(f.sel("During quiet hours", p.quiet_level || "quiet",
         NT_LEVELS.map(([v, l]) => [v, l]), set("quiet_level"),
         "Anything louder than this is brought down to it. Critical is never touched."));
+      const test = document.createElement("button");
+      test.className = "tiny";
+      test.textContent = "Test this phone";
+      test.addEventListener("click", () => this._sendTest(String(i)));
+      row.appendChild(test);
       row.appendChild(f.del("Remove phone", () => {
         cfg.people.splice(i, 1);
       }));
@@ -10132,6 +10258,64 @@ class CharroNotifyEditor extends HTMLElement {
     });
     box.appendChild(f.add("+ Category", () => { cfg.categories.push({ key: "", name: "" }); }));
 
+    /* ---- try it ----
+     *
+     * Everything the service takes, adjustable, sent down the real path -
+     * and the same thing written out as the action block to paste into an
+     * automation, so what you tested and what you ship are one thing. */
+    box.appendChild(f.cap("Try it"));
+    const t = this._test || (this._test = {
+      category: (cfg.categories[0] || {}).key || "",
+      title: "Front Door",
+      message: "Test from Charro Config.",
+      who: "", level: "", about: "", camera: "", url: "",
+    });
+    const trow = f.rowBox();
+    trow.appendChild(f.sel("Send to", t.who,
+      [["", "Everyone who has it on"]].concat(
+        cfg.people.map((p, i) => [String(i), p.name || p.key || `Phone ${i + 1}`])),
+      (v) => { t.who = v; }));
+    trow.appendChild(f.sel("Category", t.category,
+      cfg.categories.map((c) => [c.key, c.name || c.key]), (v) => { t.category = v; }));
+    trow.appendChild(f.sel("Urgency", t.level,
+      [["", "As set in the grid"]].concat(
+        NT_LEVELS.filter(([v]) => v !== "off").map(([v, l]) => [v, l])),
+      (v) => { t.level = v; },
+      "Forces this one message to a level, ignoring the grid."));
+    trow.appendChild(f.text("Title", t.title, (v) => { t.title = v; }, "Front Door"));
+    trow.appendChild(f.text("Message", t.message, (v) => { t.message = v; },
+      "Opened while the alarm was set."));
+    trow.appendChild(f.text("About", t.about, (v) => { t.about = v; },
+      "binary_sensor.front_door"));
+    trow.appendChild(f.ent("Camera", t.camera, ["camera"], (v) => { t.camera = v; }));
+    trow.appendChild(f.text("Opens", t.url, (v) => { t.url = v; }, "/d-charro/security"));
+    box.appendChild(trow);
+
+    const brow = document.createElement("div");
+    brow.className = "bar";
+    const send = document.createElement("button");
+    send.className = "primary";
+    send.textContent = "Send test";
+    send.addEventListener("click", () => this._sendTest());
+    const copy = document.createElement("button");
+    copy.textContent = "Copy action";
+    copy.addEventListener("click", () => this._copyAction(copy));
+    brow.append(send, copy);
+    box.appendChild(brow);
+
+    const yml = document.createElement("pre");
+    yml.className = "yml";
+    yml.textContent = this._actionYaml();
+    box.appendChild(yml);
+
+    const tnote = document.createElement("div");
+    tnote.className = "vnote";
+    tnote.textContent =
+      "Sends down the real path \u2014 the grid, the quiet hours and the phone, " +
+      "not a shortcut round them. The service reads the saved file, so save " +
+      "before you test or you are testing what was there before.";
+    box.appendChild(tnote);
+
     /* ---- the one global ---- */
     box.appendChild(f.cap("Only while armed"));
     box.appendChild(f.ent("The alarm this reads", cfg.alarm_entity,
@@ -10145,12 +10329,24 @@ class CharroNotifyEditor extends HTMLElement {
       "category and a message and names nobody.";
     box.appendChild(note);
 
+    if (!cfg.alarm_entity && cfg.categories.some((c) => c.armed_only)) {
+      const warn = document.createElement("div");
+      warn.className = "status err";
+      warn.textContent =
+        cfg.categories.filter((c) => c.armed_only).map((c) => c.name || c.key).join(", ") +
+        " \u2014 ticked \u201conly while armed\u201d with no alarm entity above, so " +
+        "nothing in those categories can ever send. Pick one, or untick them.";
+      box.appendChild(warn);
+    }
+
     const cap = document.createElement("div");
     cap.className = "vnote";
     cap.textContent =
       "iOS allows 500 pushes a day per phone, resetting at 00:00 UTC, and a " +
       "Quiet one still counts. Critical ones don’t.";
     box.appendChild(cap);
+
+    this._saveLabel();
   }
 }
 def("charro-notify-editor", CharroNotifyEditor);
@@ -10293,6 +10489,12 @@ class CharroConfigPanel extends HTMLElement {
 
   _show(tab, push) {
     if (!CONFIG_TABS.some(([k]) => k === tab)) tab = "rooms";
+    /* The notifications editor saves explicitly, so leaving it is the one
+     * place in here that can lose work. */
+    if (this._tab === "notify" && tab !== "notify") {
+      const nt = this._els && this._els.notify;
+      if (nt && nt.dirtyCheck && !nt.dirtyCheck()) return;
+    }
     this._tab = tab;
     for (const k in this._tabBtns) this._tabBtns[k].classList.toggle("on", k === tab);
     const want = this._paneKey(tab);

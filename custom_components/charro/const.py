@@ -7,7 +7,9 @@ DOMAIN = "charro"
 # diagnostics are tabs inside it rather than pages of their own.
 PANEL_URL = "charro-config"
 PANEL_TITLE = "Charro Config"
-PANEL_ICON = "mdi:home-cog"
+# mdi:home-cog, which 5.42.0 used, is not an icon that exists - the
+# sidebar drew the entry with a blank where the glyph should be.
+PANEL_ICON = "mdi:home-edit"
 
 # The two URLs this used to be two panels at. Still registered, but off the
 # sidebar, so a dashboard link or a bookmark to either one still lands - on

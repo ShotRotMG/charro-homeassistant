@@ -165,7 +165,10 @@ def _notify_payload(cat: dict, call_data: dict, tag: str) -> dict:
         data["notification_icon"] = cat["icon"]
     if cat.get("color"):
         data["color"] = cat["color"]
-    if cat.get("name"):
+    # iOS drops the subtitle on a communication notification - which is
+    # what notification_icon makes this - so the category name only earns
+    # its place when there is no glyph to carry it.
+    if cat.get("name") and not cat.get("icon"):
         data["subtitle"] = cat["name"]
     url = call_data.get("url") or cat.get("url")
     if url:
@@ -200,8 +203,19 @@ async def _async_notify(hass: HomeAssistant, call) -> None:
     # automations, and it cuts the noise more than any per-person switch.
     if cat.get("armed_only"):
         alarm = cfg.get("alarm_entity")
-        state = hass.states.get(alarm) if alarm else None
-        if state is None or state.state in ("disarmed", "unknown", "unavailable"):
+        if not alarm:
+            _LOGGER.warning(
+                "charro.notify: category %r is set to \"only while armed\" and no "
+                "alarm entity is configured, so it can never send anything",
+                key,
+            )
+            return
+        state = hass.states.get(alarm)
+        if state is None:
+            _LOGGER.warning("charro.notify: %s is not an entity this instance has", alarm)
+            return
+        if state.state in ("disarmed", "unknown", "unavailable"):
+            _LOGGER.debug("charro.notify: %r held back, %s is %s", key, alarm, state.state)
             return
 
     forced = call.data.get("level")
@@ -210,9 +224,12 @@ async def _async_notify(hass: HomeAssistant, call) -> None:
     base = _notify_payload(cat, call.data, tag)
     now = dt_util.now().strftime("%H:%M")
 
+    sent = 0
     for person in cfg.get("people") or []:
+        who = person.get("name") or person.get("key") or "a phone row"
         service = (person.get("service") or "").strip()
         if not service:
+            _LOGGER.warning("charro.notify: %s has no phone set, so it gets nothing", who)
             continue
         if only and person.get("key") not in only:
             continue
@@ -226,9 +243,12 @@ async def _async_notify(hass: HomeAssistant, call) -> None:
         ):
             cap = person.get("quiet_level") or "quiet"
             if _NOTIFY_ORDER.get(level, 0) > _NOTIFY_ORDER.get(cap, 1):
+                _LOGGER.debug("charro.notify: %s is in quiet hours, %r down to %r",
+                              who, level, cap)
                 level = cap
         push_level = NOTIFY_PUSH_LEVEL.get(level)
         if not push_level:                     # "off", or something unknown
+            _LOGGER.debug("charro.notify: %s has %r set to %r", who, key, level)
             continue
 
         data = dict(base)
@@ -249,6 +269,15 @@ async def _async_notify(hass: HomeAssistant, call) -> None:
                 "data": data,
             },
             blocking=False,
+        )
+        sent += 1
+
+    if not sent:
+        _LOGGER.info(
+            "charro.notify: %r reached nobody. Check the grid in Charro Config > "
+            "Notifications - a cell set to Off sends nothing, and the service "
+            "reads the saved file rather than an editor you have open.",
+            key,
         )
 
 
