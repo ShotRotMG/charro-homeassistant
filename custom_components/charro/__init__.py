@@ -71,6 +71,9 @@ from .const import (
     WATCH_CLASSES,
     WATCH_DEFAULTS,
     WATCH_NOISE,
+    WATCH_OPEN,
+    WATCH_ZONE_ATTRS,
+    WATCH_ZONE_PREFIX,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -260,6 +263,7 @@ class CharroNotifier:
         self._flush_at = None
         self._seq = 0
         self.watching: dict = {}
+        self._room_index: dict = {}
         self._unsub_watch = None
         self._last_fired: dict = {}
 
@@ -506,12 +510,23 @@ class CharroNotifier:
         battery and signal-strength sensor off the list.
         """
         domain = entity_id.split(".")[0]
+        attrs = state.attributes if state else {}
+
+        # An Elk zone: a `sensor` with no device class that reads Normal or
+        # Violated. Twenty-seven of this house's doors are these, so a
+        # device-class sweep alone finds none of them.
+        if all(k in attrs for k in WATCH_ZONE_ATTRS):
+            definition = str(attrs.get("definition") or "")
+            # burglar zones are doors and windows; fire, water and medical
+            # zones are a different kind of news and stay out of this list
+            return "doors" if definition.startswith(WATCH_ZONE_PREFIX) else None
+
         table = WATCH_CLASSES.get(domain)
         if not table:
             return None
         if None in table:
             return table[None]
-        dc = (state.attributes.get("device_class") if state else None) or ""
+        dc = attrs.get("device_class") or ""
         return table.get(dc)
 
     def candidates(self) -> dict[str, str]:
@@ -539,18 +554,32 @@ class CharroNotifier:
         for key, r in (rooms or {}).items():
             if not isinstance(r, dict):
                 continue
-            where = {"name": r.get("room_name") or key, "url": r.get("page_path") or ""}
-            lists = [r.get("alert_sensors"), r.get("locks")]
-            for raw in [x for lst in lists for x in (lst or [])]:
-                eid = raw if isinstance(raw, str) else (raw or {}).get("entity")
-                if eid:
-                    index.setdefault(eid, where)
+            base = {"name": r.get("room_name") or key, "url": r.get("page_path") or ""}
+            for field, cat in (("alert_sensors", "doors"), ("locks", "locks")):
+                for raw in r.get(field) or []:
+                    eid = raw if isinstance(raw, str) else (raw or {}).get("entity")
+                    if eid:
+                        index.setdefault(eid, {**base, "cat": cat})
             for raw in r.get("gates") or []:
                 g = raw if isinstance(raw, dict) else {}
                 eid = g.get("state") or g.get("entity")
                 if eid:
-                    index.setdefault(eid, where)
+                    index.setdefault(eid, {**base, "cat": "gates"})
         return index
+
+    def all_candidates(self) -> dict[str, str]:
+        """Discovery, plus anything a room already calls a door or a lock.
+
+        A room naming an entity under alert_sensors is you saying it is a
+        door, which beats anything the entity says about itself. It also
+        catches whatever the sweep gets wrong next time.
+        """
+        out = self.candidates()
+        for eid, where in (self._room_index or {}).items():
+            cat = where.get("cat")
+            if cat and eid not in out and self.hass.states.get(eid) is not None:
+                out[eid] = cat
+        return out
 
     async def async_rescan(self) -> None:
         """Resolve the checklist into a flat entity -> what-it-is map.
@@ -565,10 +594,11 @@ class CharroNotifier:
         off = set(watch_cfg.get("off") or [])
         override = watch_cfg.get("cat") or {}
         data = await self.hass.async_add_executor_job(_read_all, self.path)
-        index = self._rooms_index(data.get("rooms") or {})
+        self._room_index = self._rooms_index(data.get("rooms") or {})
+        index = self._room_index
 
         watching: dict[str, dict] = {}
-        for eid, cat in self.candidates().items():
+        for eid, cat in self.all_candidates().items():
             if eid in off:
                 continue
             watching[eid] = {
@@ -653,7 +683,7 @@ class CharroNotifier:
             if now == "jammed":
                 return "Jammed"
             return None
-        if now in ("on", "open", "opening"):
+        if now in WATCH_OPEN:
             return "Opening" if now == "opening" else "Opened"
         return None
 
@@ -1292,7 +1322,7 @@ def ws_watching(hass, connection, msg):
     override = watch_cfg.get("cat") or {}
     live = notifier.watching or {}
     items = []
-    for eid, cat in sorted(notifier.candidates().items()):
+    for eid, cat in sorted(notifier.all_candidates().items()):
         state = hass.states.get(eid)
         items.append({
             "entity": eid,

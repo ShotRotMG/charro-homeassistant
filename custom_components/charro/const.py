@@ -73,6 +73,17 @@ WATCH_NOISE = ("unavailable", "unknown", "none", "")
 # matching is watched unless it is ticked off in the checklist, so a lock
 # added next year is covered without anyone remembering to add it.
 # Classified by what the entity says it is, never by its name.
+# An ElkM1 zone is not a binary_sensor. The integration publishes it as a
+# `sensor` with no device class at all, reading "Normal" or "Violated" and
+# carrying `logical_status` and `definition` attributes - which is why a
+# device-class sweep found six garage covers, one lock and not one of this
+# house's twenty-seven door contacts.
+WATCH_ZONE_ATTRS = ("logical_status", "definition")
+WATCH_ZONE_PREFIX = "burglar"
+
+# Every way an entity in this house says "open", whatever its domain.
+WATCH_OPEN = ("on", "open", "opening", "violated")
+
 WATCH_CLASSES = {
     "lock": {None: "locks"},
     "cover": {"garage": "garage", "gate": "gates", "door": "doors"},
