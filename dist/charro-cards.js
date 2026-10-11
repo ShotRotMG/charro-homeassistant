@@ -8,6 +8,7 @@
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *   charro-rooms-editor   edit the room files from inside Home Assistant
  *   charro-unifi-panel    UniFi diagnostics, a tab of the panel below
+ *   charro-feed-card      what the house told you, and what reached a phone
  *   charro-notify-editor  who gets told what, and how loudly
  *   charro-config-panel   Charro Config, tabbed: the four above
  *
@@ -22,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.46.0";
+const VERSION = "5.49.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9923,6 +9924,224 @@ const PANEL_CSS = `
 .body{ height:calc(100% - var(--header-height, 56px)); overflow:auto; }
 `;
 
+/* ========================================================= FEED CARD == */
+/*
+ * What the house told you, and whether your phone actually got it.
+ *
+ * This exists because push cannot be made reliable. APNs holds one
+ * notification for a phone that is off the network and drops the rest,
+ * and on top of that sit Low Power Mode, Focus deferral and a 500-a-day
+ * cap. So the integration journals every event before it sends anything,
+ * records what happened to each delivery, and this reads that back. A
+ * push that never arrived is no longer a thing that never happened.
+ *
+ * The delivery line under each entry is the diagnostic that was missing
+ * the night the grid was right and nothing rang: it names each phone and
+ * says sent, retrying, failed, or that the cell was simply off.
+ */
+const WS_WATCHING = "charro/watching";
+const WS_JOURNAL = "charro/journal";
+const WS_JOURNAL_READ = "charro/journal_read";
+
+const FEED_CSS = `
+:host{ display:block; }
+ha-card{ padding:10px 12px 12px; }
+.fhd{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.fhd .t{ font-size:15px; font-weight:700; }
+.fhd .sp{ margin-left:auto; }
+.fhd button{
+  font:inherit; font-size:12.5px; cursor:pointer; padding:4px 10px;
+  border-radius:8px; border:1px solid var(--divider-color);
+  background:transparent; color:var(--primary-text-color);
+}
+.fhd .n{
+  font-size:12px; font-weight:700; padding:1px 8px; border-radius:999px;
+  background:var(--primary-color); color:var(--text-primary-color,#fff);
+}
+.row{
+  display:grid; grid-template-columns:34px minmax(0,1fr) auto;
+  column-gap:10px; align-items:start; padding:7px 0;
+  border-top:1px solid var(--divider-color);
+}
+.row:first-of-type{ border-top:none; }
+.row .disc{
+  width:30px; height:30px; border-radius:50%; display:flex;
+  align-items:center; justify-content:center; grid-row:1 / span 3;
+}
+.row .disc ha-icon{ width:18px; height:18px; --mdc-icon-size:18px; }
+.row .ttl{ font-size:13.5px; font-weight:700; }
+.row .msg{
+  font-size:13px; color:var(--primary-text-color); opacity:.85;
+  overflow-wrap:anywhere;
+}
+.row .to{ font-size:11.5px; color:var(--secondary-text-color); margin-top:1px; }
+.row .to b{ font-weight:600; }
+.row .to .bad{ color:var(--error-color); }
+.row .ago{ font-size:11.5px; color:var(--secondary-text-color); white-space:nowrap; }
+.row.unread .ttl::before{
+  content:""; display:inline-block; width:7px; height:7px; border-radius:50%;
+  background:var(--primary-color); margin-right:6px; vertical-align:1px;
+}
+.empty{ font-size:13px; color:var(--secondary-text-color); padding:6px 2px; }
+`;
+
+function feedAgo(iso) {
+  const t = Date.parse(iso || "");
+  if (!t) return "";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return "now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+class CharroFeedCard extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-feed-card", limit: 25 }; }
+  setConfig(config) {
+    this._config = config || {};
+    this._limit = Number(this._config.limit) || 25;
+  }
+  set hass(h) {
+    const first = !this._hass;
+    this._hass = h;
+    if (!this._built) this._build();
+    if (first) this._load();
+  }
+  getCardSize() { return 6; }
+  getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
+
+  _build() {
+    this._built = true;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = FEED_CSS;
+    const card = document.createElement("ha-card");
+
+    const hd = document.createElement("div"); hd.className = "fhd";
+    const t = document.createElement("div");
+    t.className = "t";
+    t.textContent = this._config.title || "Notifications";
+    this._count = document.createElement("span"); this._count.className = "n";
+    this._count.hidden = true;
+    const sp = document.createElement("div"); sp.className = "sp";
+    const refresh = document.createElement("button");
+    refresh.textContent = "Refresh";
+    refresh.addEventListener("click", () => this._load());
+    this._readBtn = document.createElement("button");
+    this._readBtn.textContent = "Mark all read";
+    this._readBtn.addEventListener("click", () => this._markRead());
+    hd.append(t, this._count, sp, refresh, this._readBtn);
+
+    this._list = document.createElement("div");
+    card.append(hd, this._list);
+    root.innerHTML = ""; root.append(style, card);
+
+    /* The feed is a record, not a live view - it only changes when the
+     * house sends something, which is rare enough that polling it on a
+     * minute is cheaper than listening to anything. */
+    clearInterval(this._tick);
+    this._tick = setInterval(() => { if (this.isConnected) this._load(); }, 60000);
+  }
+
+  disconnectedCallback() { clearInterval(this._tick); }
+
+  async _load() {
+    try {
+      const d = await this._hass.callWS({ type: WS_JOURNAL, limit: this._limit });
+      this._you = d.you || null;
+      this._paint(d);
+    } catch (err) {
+      this._list.textContent = "";
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = `Could not read the feed — ${err.message || err.code || err}`;
+      this._list.appendChild(e);
+    }
+  }
+
+  async _markRead() {
+    try {
+      await this._hass.callWS({ type: WS_JOURNAL_READ });
+      this._load();
+    } catch (err) {
+      this._readBtn.textContent = err.code === "no_person" ? "No phone row for you" : "Failed";
+      setTimeout(() => { this._readBtn.textContent = "Mark all read"; }, 2200);
+    }
+  }
+
+  _paint(d) {
+    const list = this._list;
+    list.textContent = "";
+    this._count.hidden = !d.unread;
+    this._count.textContent = String(d.unread || 0);
+    this._readBtn.hidden = !d.you;
+    if (!(d.entries || []).length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "Nothing yet. Every notification the house sends lands here, "
+                    + "whether or not a phone got it.";
+      list.appendChild(e);
+      return;
+    }
+    for (const en of d.entries) {
+      const row = document.createElement("div");
+      row.className = "row" + (this._you && !(en.read || []).includes(this._you)
+        ? " unread" : "");
+
+      const disc = document.createElement("div");
+      disc.className = "disc";
+      disc.style.background = en.color || "rgba(127,127,127,.2)";
+      const ic = document.createElement("ha-icon");
+      ic.icon = en.icon || "mdi:bell";
+      ic.style.color = "#fff";
+      disc.appendChild(ic);
+
+      const ttl = document.createElement("div");
+      ttl.className = "ttl"; ttl.textContent = en.title || en.category || "";
+      const ago = document.createElement("div");
+      ago.className = "ago"; ago.textContent = feedAgo(en.ts);
+      ago.title = en.ts || "";
+      const msg = document.createElement("div");
+      msg.className = "msg"; msg.textContent = en.message || "";
+
+      const to = document.createElement("div");
+      to.className = "to";
+      const bits = Object.values(en.to || {});
+      if (!bits.length) {
+        to.textContent = "Nobody had this category switched on.";
+      } else {
+        for (const [i, r] of bits.entries()) {
+          if (i) to.append(document.createTextNode(" · "));
+          const b = document.createElement("b");
+          b.textContent = r.name || "?";
+          const st = document.createElement("span");
+          const good = r.state === "sent";
+          st.className = good ? "" : "bad";
+          st.textContent = ` ${r.state || "pending"}${r.level ? ", " + r.level : ""}`;
+          if (r.error) st.title = r.error;
+          to.append(b, st);
+        }
+      }
+
+      row.append(disc, ttl, ago, msg, to);
+      /* message and the delivery line span the two right columns */
+      msg.style.gridColumn = "2 / span 2";
+      to.style.gridColumn = "2 / span 2";
+      if (en.url) {
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => {
+          history.pushState(null, "", en.url);
+          window.dispatchEvent(new CustomEvent("location-changed"));
+        });
+      }
+      list.appendChild(row);
+    }
+  }
+}
+def("charro-feed-card", CharroFeedCard);
+
 /* ====================================================== NOTIFY EDITOR == */
 /*
  * Who gets told what, and how loudly.
@@ -9978,6 +10197,28 @@ table.mx select.l-off{ opacity:.45; }
 table.mx select.l-urgent{ border-color:#f2b544; }
 table.mx select.l-critical{ border-color:#e5534b; color:#e5534b; }
 .vbool{ flex-direction:row; align-items:center; gap:6px; }
+.cl{ max-height:420px; overflow:auto; border:1px solid var(--divider-color);
+     border-radius:10px; margin-top:6px; }
+.cl .g{ font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--secondary-text-color); font-weight:700; padding:8px 10px 4px;
+  position:sticky; top:0; background:var(--card-background-color); z-index:1; }
+.cl label{
+  display:grid; grid-template-columns:22px minmax(0,1fr) auto auto;
+  gap:8px; align-items:center; padding:5px 10px; cursor:pointer;
+  border-top:1px solid var(--divider-color);
+}
+.cl label:hover{ background:rgba(127,127,127,.10); }
+.cl .nm{ font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cl .nm small{ display:block; opacity:.6; font-size:11px; }
+.cl .st{ font-size:11.5px; color:var(--secondary-text-color); white-space:nowrap; }
+.cl select{ font-size:12px; padding:3px 6px; }
+.cl input[type=checkbox]{ width:17px; height:17px; }
+.clbar{ display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+.clbar input[type=search]{
+  flex:1 1 180px; font:inherit; font-size:13px; padding:6px 10px;
+  border-radius:8px; border:1px solid var(--divider-color);
+  background:var(--card-background-color); color:var(--primary-text-color);
+}
 pre.yml{
   margin:8px 0 0; padding:10px 12px; border-radius:10px; overflow-x:auto;
   background:rgba(127,127,127,.12); border:1px solid var(--divider-color);
@@ -10062,6 +10303,9 @@ class CharroNotifyEditor extends HTMLElement {
         cfg.categories = JSON.parse(JSON.stringify(NT_CATS));
       this._cfg = cfg;
       this._orig = JSON.stringify(cfg);
+      try {
+        this._watch = await this._hass.callWS({ type: WS_WATCHING });
+      } catch (err) { this._watch = null; }
       this._say("");
       this._paint();
     } catch (err) {
@@ -10261,6 +10505,8 @@ class CharroNotifyEditor extends HTMLElement {
         { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
         "javon"));
       row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
+      row.appendChild(f.text("HA user", p.ha_user, set("ha_user"),
+        "the Home Assistant login"));
       row.appendChild(f.time("Quiet from", p.quiet_from, set("quiet_from")));
       row.appendChild(f.time("Quiet until", p.quiet_to, set("quiet_to")));
       row.appendChild(f.sel("During quiet hours", p.quiet_level || "quiet",
@@ -10298,6 +10544,164 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(row);
     });
     box.appendChild(f.add("+ Category", () => { cfg.categories.push({ key: "", name: "" }); }));
+
+    /* ---- the checklist ----
+     *
+     * Everything in the house that could be a door, a lock, a gate or a
+     * garage, found by what each entity says it is rather than by what it
+     * is called, and all of it on unless you tick it off. A lock added
+     * next year is covered without anyone remembering.
+     *
+     * Only the ticked-off ones are stored, which is why this costs a few
+     * entity ids in the file rather than a list of two hundred. */
+    box.appendChild(f.cap("What sets it off"));
+    const watch = cfg.watch || (cfg.watch = {});
+    const off = new Set(watch.off || []);
+    const over = watch.cat || (watch.cat = {});
+    const items = (this._watch && this._watch.items) || [];
+    const rules = (this._watch && this._watch.rules) || {};
+
+    for (const key of ["doors", "locks", "gates", "garage"]) {
+      const w = watch[key] || (watch[key] = { ...(rules[key] || { on: true, cooldown: 60 }) });
+      const live = items.filter((x) => x.category === key && !off.has(x.entity)).length;
+      const row = f.rowBox();
+      const lbl = document.createElement("div");
+      lbl.className = "vfield";
+      const nm = document.createElement("span");
+      nm.textContent = (cfg.categories.find((c) => c.key === key) || {}).name || key;
+      const cnt = document.createElement("div");
+      cnt.style.fontWeight = "600";
+      cnt.textContent = `${live} ticked`;
+      lbl.append(nm, cnt);
+      row.appendChild(lbl);
+      row.appendChild(f.bool("Watch", w.on !== false, (v) => { w.on = v; }));
+      row.appendChild(f.text("Cooldown (s)", String(w.cooldown == null ? 60 : w.cooldown),
+        (v) => { const n = Number(v); if (!isNaN(n) && n >= 0) w.cooldown = n; }, "60"));
+      box.appendChild(row);
+    }
+
+    const bar = document.createElement("div");
+    bar.className = "clbar";
+    const q = document.createElement("input");
+    q.type = "search";
+    q.placeholder = "Filter by name, entity or room\u2026";
+    q.value = this._clq || "";
+    const none = document.createElement("button");
+    none.className = "tiny"; none.textContent = "Untick shown";
+    const all = document.createElement("button");
+    all.className = "tiny"; all.textContent = "Tick shown";
+    bar.append(q, all, none);
+    box.appendChild(bar);
+
+    const cl = document.createElement("div");
+    cl.className = "cl";
+    box.appendChild(cl);
+
+    const shown = () => {
+      const term = (this._clq || "").toLowerCase();
+      return items.filter((x) => !term
+        || x.name.toLowerCase().indexOf(term) >= 0
+        || x.entity.toLowerCase().indexOf(term) >= 0
+        || (x.room || "").toLowerCase().indexOf(term) >= 0);
+    };
+    const store = () => {
+      const list = [...off].sort();
+      if (list.length) watch.off = list; else delete watch.off;
+      if (!Object.keys(over).length) delete watch.cat;
+      this._saveLabel();
+    };
+    const drawList = () => {
+      cl.textContent = "";
+      const rows = shown();
+      if (!rows.length) {
+        const e = document.createElement("div");
+        e.className = "vnote";
+        e.style.padding = "10px";
+        e.textContent = items.length
+          ? "Nothing matches that."
+          : "Nothing found. Home Assistant has no lock, no garage cover and no "
+            + "door or window binary sensor \u2014 or the integration hasn\u2019t "
+            + "restarted since this was added.";
+        cl.appendChild(e);
+        return;
+      }
+      let group = null;
+      for (const x of rows) {
+        if (x.category !== group) {
+          group = x.category;
+          const g = document.createElement("div");
+          g.className = "g";
+          g.textContent = (cfg.categories.find((c) => c.key === group) || {}).name || group;
+          cl.appendChild(g);
+        }
+        const row = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !off.has(x.entity);
+        cb.addEventListener("change", () => {
+          if (cb.checked) off.delete(x.entity); else off.add(x.entity);
+          store();
+        });
+        const nm = document.createElement("div");
+        nm.className = "nm";
+        nm.textContent = x.name;
+        const sub = document.createElement("small");
+        sub.textContent = x.entity + (x.room ? ` \u00b7 ${x.room}` : "");
+        nm.appendChild(sub);
+        const st = document.createElement("div");
+        st.className = "st";
+        st.textContent = x.state;
+        const sel = document.createElement("select");
+        for (const c of cfg.categories) {
+          const o = document.createElement("option");
+          o.value = c.key; o.textContent = c.name || c.key;
+          sel.appendChild(o);
+        }
+        sel.value = x.category;
+        sel.addEventListener("click", (ev) => ev.preventDefault());
+        sel.addEventListener("change", () => {
+          if (sel.value === x.guess) delete over[x.entity];
+          else over[x.entity] = sel.value;
+          x.category = sel.value;
+          store();
+          drawList();
+        });
+        row.append(cb, nm, st, sel);
+        cl.appendChild(row);
+      }
+    };
+    q.addEventListener("input", () => { this._clq = q.value; drawList(); });
+    all.addEventListener("click", () => {
+      for (const x of shown()) off.delete(x.entity);
+      store(); drawList();
+    });
+    none.addEventListener("click", () => {
+      for (const x of shown()) off.add(x.entity);
+      store(); drawList();
+    });
+    drawList();
+
+    const wnote = document.createElement("div");
+    wnote.className = "vnote";
+    wnote.textContent =
+      "Found by what each entity says it is \u2014 its device class \u2014 never by "
+      + "its name, so \u201cFront Door Light\u201d isn\u2019t a door. Everything is on "
+      + "unless you untick it, and only the unticked ones are saved. Openings and "
+      + "unlockings send; closings don\u2019t, and a transition to or from unavailable "
+      + "is ignored. Delete your old notify automations once this is live.";
+    box.appendChild(wnote);
+
+    /* ---- what actually happened ----
+     *
+     * The night the grid was right and nothing rang, this is the thing
+     * that was missing: a list of what was sent and what each phone did
+     * with it. It is the feed card, the same one you can put on a
+     * dashboard, asked for a short list. */
+    box.appendChild(f.cap("Recent"));
+    const feed = document.createElement("charro-feed-card");
+    feed.setConfig({ type: "custom:charro-feed-card", limit: 10, title: "Last ten" });
+    feed.hass = this._hass;
+    box.appendChild(feed);
 
     /* ---- try it ----
      *

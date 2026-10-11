@@ -43,6 +43,48 @@ NOTIFY_FILE = "_notify.json"
 # carried in push.interruption-level. These are the five settings a cell in
 # the matrix can hold, in order.
 NOTIFY_LEVELS = ("off", "quiet", "normal", "urgent", "critical")
+# APNs keeps exactly one notification for a phone that is off the network
+# and discards the rest, so "don't lose any" cannot be a promise made at
+# the push layer. The journal is the record; push is a doorbell on top of
+# it, allowed to fail because failing no longer means losing.
+JOURNAL_FILE = "_journal.json"
+JOURNAL_KEEP_DAYS = 30
+JOURNAL_MAX = 2000
+
+# A failed send is retried on this ladder, in seconds. Three attempts: past
+# that it is not a blip, and the entry stays in the feed either way.
+NOTIFY_RETRIES = (5, 30, 120)
+
+# What the watcher reads out of the room files, and the category each list
+# becomes. The rooms already say where every door, lock and gate is, so
+# nothing here has to be listed twice - and no automation has to exist.
+WATCH_DEFAULTS = {
+    "doors":  {"on": True,  "cooldown": 60},
+    "locks":  {"on": True,  "cooldown": 30},
+    "gates":  {"on": True,  "cooldown": 60},
+    "garage": {"on": False, "cooldown": 120},
+}
+
+# A state that means "I don't know", which is not news and is the whole
+# class the ratgdo false-Opening lives in.
+WATCH_NOISE = ("unavailable", "unknown", "none", "")
+
+# What counts as a candidate, and which category it lands in. Everything
+# matching is watched unless it is ticked off in the checklist, so a lock
+# added next year is covered without anyone remembering to add it.
+# Classified by what the entity says it is, never by its name.
+WATCH_CLASSES = {
+    "lock": {None: "locks"},
+    "cover": {"garage": "garage", "gate": "gates", "door": "doors"},
+    "binary_sensor": {
+        "door": "doors", "window": "doors", "opening": "doors",
+        "garage_door": "garage",
+    },
+}
+
+# How far back a restart looks for sends that never completed.
+NOTIFY_RESUME_SECONDS = 3600
+
 NOTIFY_PUSH_LEVEL = {
     "quiet": "passive",
     "normal": "active",

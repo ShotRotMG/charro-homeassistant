@@ -15,6 +15,7 @@ dashboard loads a room changes when this integration is installed.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -22,14 +23,17 @@ import os
 import re
 import shutil
 import time
+from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import event
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.loader import async_get_integration
@@ -39,10 +43,15 @@ from .const import (
     BUNDLE,
     DOMAIN,
     LEGACY_PANEL_URLS,
+    JOURNAL_FILE,
+    JOURNAL_KEEP_DAYS,
+    JOURNAL_MAX,
     LEGACY_SUBDIR,
     NOTIFY_FILE,
     NOTIFY_LEVELS,
     NOTIFY_PUSH_LEVEL,
+    NOTIFY_RESUME_SECONDS,
+    NOTIFY_RETRIES,
     PANEL_ELEMENT,
     PANEL_ICON,
     PANEL_TITLE,
@@ -59,6 +68,9 @@ from .const import (
     SNAP_MAX,
     SNAP_MID_EVERY,
     STATIC_URL,
+    WATCH_CLASSES,
+    WATCH_DEFAULTS,
+    WATCH_NOISE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -185,100 +197,492 @@ def _notify_payload(cat: dict, call_data: dict, tag: str) -> dict:
 
 
 async def _async_notify(hass: HomeAssistant, call) -> None:
-    """Send one notification to whoever asked for that category.
-
-    Every automation in the house calls this and names nobody: who is on
-    the list, and how loudly it lands for each of them, is the matrix in
-    _notify.json that the Notifications tab writes. A phone that wants out
-    of garage doors turns one cell off instead of muting the lot.
-    """
-    cfg = await hass.async_add_executor_job(_read_notify, _rooms_dir(hass))
-    key = call.data["category"]
-    cat = next((c for c in cfg.get("categories") or [] if c.get("key") == key), None)
-    if cat is None:
-        _LOGGER.warning("charro.notify: no category %r in %s", key, NOTIFY_FILE)
+    """The service is now a thin door onto the notifier."""
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is None:
+        _LOGGER.error("charro.notify: the integration is not loaded")
         return
+    await notifier.async_send(dict(call.data))
 
-    # "Only while the alarm is set" belongs here rather than in forty
-    # automations, and it cuts the noise more than any per-person switch.
-    if cat.get("armed_only"):
-        alarm = cfg.get("alarm_entity")
-        if not alarm:
-            _LOGGER.warning(
-                "charro.notify: category %r is set to \"only while armed\" and no "
-                "alarm entity is configured, so it can never send anything",
+
+# ------------------------------------------------------------ journal --
+
+
+def _read_journal(path: str) -> list[dict]:
+    try:
+        with open(os.path.join(path, JOURNAL_FILE), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _write_journal(path: str, entries: list[dict]) -> None:
+    os.makedirs(path, exist_ok=True)
+    target = os.path.join(path, JOURNAL_FILE)
+    tmp = f"{target}.tmp.json"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, indent=1)
+    os.replace(tmp, target)
+
+
+def _trim_journal(entries: list[dict]) -> list[dict]:
+    """Newest last, nothing older than a month, never more than the cap."""
+    cutoff = dt_util.utcnow() - timedelta(days=JOURNAL_KEEP_DAYS)
+    out = []
+    for e in entries:
+        when = dt_util.parse_datetime(e.get("ts") or "")
+        if when is None or when >= cutoff:
+            out.append(e)
+    return out[-JOURNAL_MAX:]
+
+
+class CharroNotifier:
+    """Routing, delivery and the journal for every notification the house sends.
+
+    The shape of this is set by one fact: push delivery cannot be made
+    reliable. A phone that is off the network gets the single most recent
+    notification APNs held for it and none of the ones before, and on top
+    of that sit Low Power Mode, Focus deferral and a 500-a-day cap. So the
+    record is kept here, every delivery attempt is recorded against it, and
+    the feed card lets a phone catch up on whatever its push missed.
+
+    The configuration lives in memory. It used to be read off the disk on
+    every single call, which is not a thing to do on the path between a
+    door opening and a phone ringing.
+    """
+
+    def __init__(self, hass: HomeAssistant, path: str) -> None:
+        self.hass = hass
+        self.path = path
+        self.cfg: dict = {}
+        self.entries: list[dict] = []
+        self._flush_at = None
+        self._seq = 0
+        self.watching: dict = {}
+        self._unsub_watch = None
+        self._last_fired: dict = {}
+
+    # ----------------------------------------------------------- state --
+
+    async def async_load(self) -> None:
+        self.cfg = await self.hass.async_add_executor_job(_read_notify, self.path)
+        self.entries = _trim_journal(
+            await self.hass.async_add_executor_job(_read_journal, self.path)
+        )
+        await self._async_resume()
+
+    def set_config(self, cfg: dict) -> None:
+        """The tab just saved. Nothing reads the file again until a restart."""
+        self.cfg = cfg if isinstance(cfg, dict) else {}
+
+    def category(self, key: str) -> dict | None:
+        for c in self.cfg.get("categories") or []:
+            if c.get("key") == key:
+                return c
+        return None
+
+    # --------------------------------------------------------- journal --
+
+    @callback
+    def _schedule_flush(self) -> None:
+        """Debounced, because a burst of doors is one write, not six.
+
+        The entry is in memory the moment it exists, so nothing waits on a
+        disk write to be delivered - blocking a 3am alarm on an fsync is
+        the wrong trade. The window a crash could cost is the couple of
+        seconds below, and a stop flushes it.
+        """
+        if self._flush_at is not None:
+            return
+        self._flush_at = event.async_call_later(self.hass, 2, self._flush_cb)
+
+    @callback
+    def _flush_cb(self, _now) -> None:
+        self._flush_at = None
+        self.hass.async_create_task(self.async_flush())
+
+    async def async_flush(self, *_args) -> None:
+        if self._flush_at is not None:
+            self._flush_at()
+            self._flush_at = None
+        self.entries = _trim_journal(self.entries)
+        snapshot = list(self.entries)
+        try:
+            await self.hass.async_add_executor_job(_write_journal, self.path, snapshot)
+        except OSError as err:
+            _LOGGER.error("charro: could not write the notification journal: %s", err)
+
+    def _new_id(self) -> str:
+        self._seq += 1
+        return f"{int(dt_util.utcnow().timestamp())}-{self._seq:04d}"
+
+    # ---------------------------------------------------------- sending --
+
+    async def async_send(self, data: dict) -> str | None:
+        """One event: journalled, then fanned out to everyone who wants it."""
+        cfg = self.cfg
+        key = data["category"]
+        cat = self.category(key)
+        if cat is None:
+            _LOGGER.warning("charro.notify: no category %r in %s", key, NOTIFY_FILE)
+            return None
+
+        if cat.get("armed_only"):
+            alarm = cfg.get("alarm_entity")
+            if not alarm:
+                _LOGGER.warning(
+                    "charro.notify: category %r is set to \"only while armed\" and "
+                    "no alarm entity is configured, so it can never send anything",
+                    key,
+                )
+                return None
+            state = self.hass.states.get(alarm)
+            if state is None:
+                _LOGGER.warning("charro.notify: %s is not an entity this instance has", alarm)
+                return None
+            if state.state in ("disarmed", "unknown", "unavailable"):
+                _LOGGER.debug("charro.notify: %r held back, %s is %s", key, alarm, state.state)
+                return None
+
+        entry = {
+            "id": self._new_id(),
+            "ts": dt_util.utcnow().isoformat(),
+            "category": key,
+            "entity": data.get("entity_id") or "",
+            "title": data["title"],
+            "message": data["message"],
+            "icon": cat.get("icon") or "",
+            "color": cat.get("color") or "",
+            "url": data.get("url") or cat.get("url") or "",
+            "to": {},
+            "read": [],
+        }
+        self.entries.append(entry)
+        self._schedule_flush()
+
+        targets = self._targets(key, data)
+        if not targets:
+            _LOGGER.info(
+                "charro.notify: %r reached nobody. Check the grid in Charro Config > "
+                "Notifications - a cell set to Off sends nothing. It is in the feed "
+                "either way.",
                 key,
             )
-            return
-        state = hass.states.get(alarm)
-        if state is None:
-            _LOGGER.warning("charro.notify: %s is not an entity this instance has", alarm)
-            return
-        if state.state in ("disarmed", "unknown", "unavailable"):
-            _LOGGER.debug("charro.notify: %r held back, %s is %s", key, alarm, state.state)
-            return
+            return entry["id"]
 
-    forced = call.data.get("level")
-    only = set(call.data.get("people") or [])
-    tag = f"charro-{key}-{call.data.get('entity_id') or 'all'}"
-    base = _notify_payload(cat, call.data, tag)
-    now = dt_util.now().strftime("%H:%M")
+        # Concurrently: the fourth phone should not wait behind the first.
+        await asyncio.gather(*(
+            self._async_deliver(entry, person, level, cat, data)
+            for person, level in targets
+        ))
+        self._schedule_flush()
+        return entry["id"]
 
-    sent = 0
-    for person in cfg.get("people") or []:
-        who = person.get("name") or person.get("key") or "a phone row"
-        service = (person.get("service") or "").strip()
-        if not service:
-            _LOGGER.warning("charro.notify: %s has no phone set, so it gets nothing", who)
-            continue
-        if only and person.get("key") not in only:
-            continue
-        level = forced or (person.get("levels") or {}).get(key, "off")
+    def _targets(self, key: str, data: dict) -> list[tuple[dict, str]]:
+        forced = data.get("level")
+        only = set(data.get("people") or [])
+        now = dt_util.now().strftime("%H:%M")
+        out = []
+        for person in self.cfg.get("people") or []:
+            who = person.get("name") or person.get("key") or "a phone row"
+            if not (person.get("service") or "").strip():
+                _LOGGER.warning("charro.notify: %s has no phone set, so it gets nothing", who)
+                continue
+            if only and person.get("key") not in only:
+                continue
+            level = forced or (person.get("levels") or {}).get(key, "off")
+            if level != "critical" and _in_window(
+                now, person.get("quiet_from"), person.get("quiet_to")
+            ):
+                cap = person.get("quiet_level") or "quiet"
+                if _NOTIFY_ORDER.get(level, 0) > _NOTIFY_ORDER.get(cap, 1):
+                    _LOGGER.debug("charro.notify: %s is in quiet hours, %r down to %r",
+                                  who, level, cap)
+                    level = cap
+            if level not in NOTIFY_PUSH_LEVEL:
+                _LOGGER.debug("charro.notify: %s has %r set to %r", who, key, level)
+                continue
+            out.append((person, level))
+        return out
 
-        # Quiet hours lower the urgency rather than dropping the message,
-        # so what happened is still there in the morning. Critical is the
-        # one thing they don't touch - that is what critical is for.
-        if level != "critical" and _in_window(
-            now, person.get("quiet_from"), person.get("quiet_to")
-        ):
-            cap = person.get("quiet_level") or "quiet"
-            if _NOTIFY_ORDER.get(level, 0) > _NOTIFY_ORDER.get(cap, 1):
-                _LOGGER.debug("charro.notify: %s is in quiet hours, %r down to %r",
-                              who, level, cap)
-                level = cap
-        push_level = NOTIFY_PUSH_LEVEL.get(level)
-        if not push_level:                     # "off", or something unknown
-            _LOGGER.debug("charro.notify: %s has %r set to %r", who, key, level)
-            continue
+    async def _async_deliver(self, entry, person, level, cat, data, attempt=0) -> None:
+        pk = person.get("key") or person.get("service") or "?"
+        rec = entry["to"].setdefault(pk, {"name": person.get("name") or pk, "level": level})
+        rec["level"] = level
+        rec["tries"] = attempt + 1
 
-        data = dict(base)
-        data["push"] = {"interruption-level": push_level}
+        payload = _notify_payload(cat, data, f"charro-{entry['category']}-{entry['entity'] or 'all'}")
+        payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
         if level == "critical":
             volume = person.get("critical_volume")
-            data["push"]["sound"] = {
-                "name": "default",
-                "critical": 1,
+            payload["push"]["sound"] = {
+                "name": "default", "critical": 1,
                 "volume": float(volume) if volume is not None else 1.0,
             }
-        await hass.services.async_call(
-            "notify",
-            service.split(".")[-1],
-            {
-                "title": call.data["title"],
-                "message": call.data["message"],
-                "data": data,
-            },
-            blocking=False,
-        )
-        sent += 1
+        service = (person.get("service") or "").split(".")[-1]
+        try:
+            # blocking, so a failure is something we know about rather than
+            # something that vanishes - the whole point of recording state.
+            await self.hass.services.async_call(
+                "notify", service,
+                {"title": entry["title"], "message": entry["message"], "data": payload},
+                blocking=True,
+            )
+        except Exception as err:            # noqa: BLE001 - any transport failure
+            rec["state"] = "failed"
+            rec["error"] = str(err)[:200]
+            if attempt < len(NOTIFY_RETRIES):
+                rec["state"] = "retrying"
+                delay = NOTIFY_RETRIES[attempt]
+                _LOGGER.warning("charro.notify: %s failed for %s, retrying in %ss: %s",
+                                entry["category"], pk, delay, err)
+                self._later(delay, entry, person, level, cat, data, attempt + 1)
+            else:
+                _LOGGER.error("charro.notify: %s gave up for %s after %s tries: %s",
+                              entry["category"], pk, rec["tries"], err)
+            self._schedule_flush()
+            return
+        rec["state"] = "sent"
+        rec["at"] = dt_util.utcnow().isoformat()
+        rec.pop("error", None)
+        self._schedule_flush()
 
-    if not sent:
-        _LOGGER.info(
-            "charro.notify: %r reached nobody. Check the grid in Charro Config > "
-            "Notifications - a cell set to Off sends nothing, and the service "
-            "reads the saved file rather than an editor you have open.",
-            key,
-        )
+    @callback
+    def _later(self, delay, entry, person, level, cat, data, attempt) -> None:
+        @callback
+        def _go(_now):
+            self.hass.async_create_task(
+                self._async_deliver(entry, person, level, cat, data, attempt)
+            )
+        event.async_call_later(self.hass, delay, _go)
+
+    async def _async_resume(self) -> None:
+        """Anything still unsent when Home Assistant went down.
+
+        Without this a restart mid-retry is a notification that silently
+        never happens, which is exactly the failure the journal exists to
+        make impossible.
+        """
+        cutoff = dt_util.utcnow() - timedelta(seconds=NOTIFY_RESUME_SECONDS)
+        resumed = 0
+        for entry in self.entries:
+            when = dt_util.parse_datetime(entry.get("ts") or "")
+            if when is None or when < cutoff:
+                continue
+            cat = self.category(entry.get("category"))
+            if cat is None:
+                continue
+            for pk, rec in (entry.get("to") or {}).items():
+                if rec.get("state") == "sent":
+                    continue
+                person = next((p for p in self.cfg.get("people") or []
+                               if p.get("key") == pk), None)
+                if not person:
+                    continue
+                resumed += 1
+                self._later(2, entry, person, rec.get("level") or "normal", cat,
+                            {"category": entry.get("category")}, 0)
+        if resumed:
+            _LOGGER.info("charro: resuming %s notification(s) that were in flight "
+                         "when Home Assistant stopped", resumed)
+
+
+    # ---------------------------------------------------------- watcher --
+
+    def watch_cfg(self, key: str) -> dict:
+        got = ((self.cfg.get("watch") or {}).get(key)) or {}
+        base = dict(WATCH_DEFAULTS.get(key) or {})
+        base.update(got)
+        return base
+
+    @staticmethod
+    def classify(entity_id: str, state) -> str | None:
+        """Which category an entity belongs to, by what it says it is.
+
+        Device class, never the name: "Front Door Light" is not a door and
+        a sensor called "sensor_12" might be. An entity whose domain is
+        here but whose device class is not stays out, which keeps every
+        battery and signal-strength sensor off the list.
+        """
+        domain = entity_id.split(".")[0]
+        table = WATCH_CLASSES.get(domain)
+        if not table:
+            return None
+        if None in table:
+            return table[None]
+        dc = (state.attributes.get("device_class") if state else None) or ""
+        return table.get(dc)
+
+    def candidates(self) -> dict[str, str]:
+        """Everything that could be watched, as entity -> category.
+
+        One pass over the state machine, and only when something asks:
+        at a rescan, or when the tab draws the checklist. Never on the
+        path between a door opening and a phone ringing.
+        """
+        out = {}
+        for state in self.hass.states.async_all():
+            cat = self.classify(state.entity_id, state)
+            if cat:
+                out[state.entity_id] = cat
+        return out
+
+    def _rooms_index(self, rooms: dict) -> dict[str, dict]:
+        """Entity -> which room mentions it, for the label only.
+
+        Membership is the checklist's business, not a room's. This is here
+        so a notification can still say "Opened - Frontyard" when the room
+        files happen to know, and say nothing extra when they don't.
+        """
+        index: dict[str, dict] = {}
+        for key, r in (rooms or {}).items():
+            if not isinstance(r, dict):
+                continue
+            where = {"name": r.get("room_name") or key, "url": r.get("page_path") or ""}
+            lists = [r.get("alert_sensors"), r.get("locks")]
+            for raw in [x for lst in lists for x in (lst or [])]:
+                eid = raw if isinstance(raw, str) else (raw or {}).get("entity")
+                if eid:
+                    index.setdefault(eid, where)
+            for raw in r.get("gates") or []:
+                g = raw if isinstance(raw, dict) else {}
+                eid = g.get("state") or g.get("entity")
+                if eid:
+                    index.setdefault(eid, where)
+        return index
+
+    async def async_rescan(self) -> None:
+        """Resolve the checklist into a flat entity -> what-it-is map.
+
+        Everything the hot path needs is decided here, once: which
+        entities are watched, what category each is, and what room name to
+        put in the message. The state callback then does a dict lookup and
+        nothing else - no registry walk, no room file, no classification,
+        no string matching per event.
+        """
+        watch_cfg = self.cfg.get("watch") or {}
+        off = set(watch_cfg.get("off") or [])
+        override = watch_cfg.get("cat") or {}
+        data = await self.hass.async_add_executor_job(_read_all, self.path)
+        index = self._rooms_index(data.get("rooms") or {})
+
+        watching: dict[str, dict] = {}
+        for eid, cat in self.candidates().items():
+            if eid in off:
+                continue
+            watching[eid] = {
+                "category": override.get(eid) or cat,
+                "room": index.get(eid) or {},
+            }
+
+        self.watching = watching
+        if self._unsub_watch:
+            self._unsub_watch()
+            self._unsub_watch = None
+        ids = sorted(watching)
+        if ids:
+            # One subscription for the lot. Home Assistant dispatches a
+            # state change through a dict keyed on entity id, so watching
+            # four hundred entities costs the same per event as watching
+            # four: anything not in it never reaches this integration.
+            self._unsub_watch = event.async_track_state_change_event(
+                self.hass, ids, self._on_state
+            )
+        _LOGGER.debug("charro: watching %s of %s candidate entities",
+                      len(ids), len(ids) + len(off))
+
+    @callback
+    def _on_state(self, ev) -> None:
+        old = ev.data.get("old_state")
+        new = ev.data.get("new_state")
+        if new is None or old is None:
+            return
+        was = (old.state or "").lower()
+        now = (new.state or "").lower()
+        if now == was:
+            return
+        # Neither end of a transition may be "I don't know". A ratgdo that
+        # drops offline and comes back is not a door that opened.
+        if was in WATCH_NOISE or now in WATCH_NOISE:
+            return
+
+        eid = ev.data["entity_id"]
+        spec = (self.watching or {}).get(eid)
+        if not spec:
+            return
+        cat = spec["category"]
+        rules = self.watch_cfg(cat)
+        if not rules.get("on"):
+            return
+
+        verb = self._verb(cat, now, was)
+        if not verb:
+            return
+
+        # One door that can't make up its mind shouldn't ring four phones
+        # four times.
+        gap = float(rules.get("cooldown") or 0)
+        last = self._last_fired.get(eid)
+        stamp = time.monotonic()
+        if gap and last is not None and stamp - last < gap:
+            _LOGGER.debug("charro: %s %s within its %ss cooldown, skipped", eid, verb, gap)
+            return
+        self._last_fired[eid] = stamp
+
+        room = spec.get("room") or {}
+        title = (new.attributes.get("friendly_name") or eid).strip()
+        where = room.get("name") or ""
+        message = f"{verb} · {where}." if where else f"{verb}."
+        payload = {"category": cat, "title": title, "message": message, "entity_id": eid}
+        if room.get("url"):
+            payload["url"] = room["url"]
+        self.hass.async_create_task(self.async_send(payload))
+
+    @staticmethod
+    def _verb(category: str, now: str, was: str) -> str | None:
+        """What to call what just happened, or None if it isn't news.
+
+        Closing is deliberately quiet. A door tells you something when it
+        opens; the other half of every pair is twice the notifications for
+        no information, and it is what eats a 500-a-day allowance.
+        """
+        if category == "locks":
+            if now == "unlocked" or now == "open":
+                return "Unlocked"
+            if now == "jammed":
+                return "Jammed"
+            return None
+        if now in ("on", "open", "opening"):
+            return "Opening" if now == "opening" else "Opened"
+        return None
+
+    # ------------------------------------------------------------ read --
+
+    def person_for_user(self, user) -> str | None:
+        """Which phone row the signed-in user is, if any."""
+        name = (getattr(user, "name", "") or "").strip().lower()
+        for p in self.cfg.get("people") or []:
+            tag = (p.get("ha_user") or "").strip().lower()
+            if tag and tag == name:
+                return p.get("key")
+        for p in self.cfg.get("people") or []:
+            if name and (p.get("name") or "").strip().lower() == name:
+                return p.get("key")
+        return None
+
+    def mark_read(self, person: str, ids=None) -> int:
+        n = 0
+        for entry in self.entries:
+            if ids is not None and entry.get("id") not in ids:
+                continue
+            seen = entry.setdefault("read", [])
+            if person not in seen:
+                seen.append(person)
+                n += 1
+        if n:
+            self._schedule_flush()
+        return n
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -399,11 +803,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=NOTIFY_SCHEMA,
     )
 
+    # The routing table and the journal, both in memory from here on. A
+    # door opening no longer reads a file to find out who wants telling.
+    notifier = CharroNotifier(hass, _rooms_dir(hass))
+    await notifier.async_load()
+    await notifier.async_rescan()
+    store["notifier"] = notifier
+    store["notifier_stop"] = hass.bus.async_listen_once(
+        EVENT_HOMEASSISTANT_STOP, notifier.async_flush
+    )
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_save_remotes)
     websocket_api.async_register_command(hass, ws_save_notify)
+    websocket_api.async_register_command(hass, ws_watching)
+    websocket_api.async_register_command(hass, ws_journal)
+    websocket_api.async_register_command(hass, ws_journal_read)
     websocket_api.async_register_command(hass, ws_delete_room)
     websocket_api.async_register_command(hass, ws_list_snapshots)
     websocket_api.async_register_command(hass, ws_get_snapshot)
@@ -438,6 +855,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for legacy in LEGACY_PANEL_URLS:
         frontend.async_remove_panel(hass, legacy)
     hass.services.async_remove(DOMAIN, SERVICE_VOLUME_STEP)
+    hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
+    unsub = store.pop("notifier_stop", None)
+    if unsub:
+        unsub()
+    notifier = store.pop("notifier", None)
+    if notifier is not None:
+        if notifier._unsub_watch:
+            notifier._unsub_watch()
+            notifier._unsub_watch = None
+        # whatever is in memory and not yet on disk, before the door shuts
+        await notifier.async_flush()
     store.pop(entry.entry_id, None)
     _drop_extra_js(hass, store.pop("extra_js", None))
     return True
@@ -780,6 +1208,11 @@ async def ws_save_room(hass, connection, msg):
     except OSError as err:
         connection.send_error(msg["id"], "write_failed", str(err))
         return
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is not None:
+        # a sensor added to a room in the editor is watched from the save,
+        # not from the next restart
+        hass.async_create_task(notifier.async_rescan())
     connection.send_result(msg["id"], {"path": os.path.join(path, f"{key}.json")})
 
 
@@ -834,7 +1267,103 @@ async def ws_save_notify(hass, connection, msg):
     except OSError as err:
         connection.send_error(msg["id"], "write_failed", str(err))
         return
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is not None:
+        notifier.set_config(msg["config"])
+        # the checklist lives in this file, so a save is what re-subscribes
+        hass.async_create_task(notifier.async_rescan())
     connection.send_result(msg["id"], {"path": os.path.join(path, NOTIFY_FILE)})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "charro/watching"})
+@callback
+def ws_watching(hass, connection, msg):
+    """The checklist: every candidate in the house, ticked or not.
+
+    Built on demand rather than kept - the tab asks for it when you open
+    it, and nothing walks the state machine at any other time.
+    """
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is None:
+        connection.send_result(msg["id"], {"items": [], "rules": {}})
+        return
+    watch_cfg = notifier.cfg.get("watch") or {}
+    off = set(watch_cfg.get("off") or [])
+    override = watch_cfg.get("cat") or {}
+    live = notifier.watching or {}
+    items = []
+    for eid, cat in sorted(notifier.candidates().items()):
+        state = hass.states.get(eid)
+        items.append({
+            "entity": eid,
+            "name": (state.attributes.get("friendly_name") if state else "") or eid,
+            "state": state.state if state else "missing",
+            "category": override.get(eid) or cat,
+            "guess": cat,
+            "on": eid not in off,
+            "room": ((live.get(eid) or {}).get("room") or {}).get("name") or "",
+        })
+    connection.send_result(msg["id"], {
+        "items": items,
+        "rules": {k: notifier.watch_cfg(k) for k in WATCH_DEFAULTS},
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/journal",
+        vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=500)),
+    }
+)
+@callback
+def ws_journal(hass, connection, msg):
+    """The feed: what happened, and whether each phone actually got it.
+
+    Not admin-only, deliberately. The whole point is that somebody whose
+    push was dropped - which APNs does routinely to a phone that was off
+    the network - can open the dashboard and see what they missed.
+    """
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is None:
+        connection.send_result(msg["id"], {"entries": [], "you": None, "unread": 0})
+        return
+    you = notifier.person_for_user(connection.user)
+    recent = notifier.entries[-msg["limit"]:]
+    unread = 0
+    if you:
+        unread = sum(1 for e in notifier.entries if you not in (e.get("read") or []))
+    connection.send_result(msg["id"], {
+        "entries": list(reversed(recent)),        # newest first, as it reads
+        "you": you,
+        "unread": unread,
+        "total": len(notifier.entries),
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/journal_read",
+        vol.Optional("ids"): [cv.string],
+        vol.Optional("person"): cv.string,
+    }
+)
+@callback
+def ws_journal_read(hass, connection, msg):
+    """Mark entries read for whoever is signed in. No ids means all of them."""
+    notifier = hass.data.get(DOMAIN, {}).get("notifier")
+    if notifier is None:
+        connection.send_result(msg["id"], {"marked": 0})
+        return
+    person = msg.get("person") or notifier.person_for_user(connection.user)
+    if not person:
+        connection.send_error(
+            msg["id"], "no_person",
+            "no phone row matches this Home Assistant user - set its \"HA user\" "
+            "field in Charro Config > Notifications",
+        )
+        return
+    marked = notifier.mark_read(person, msg.get("ids"))
+    connection.send_result(msg["id"], {"marked": marked, "person": person})
 
 
 @websocket_api.require_admin
