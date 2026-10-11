@@ -30,8 +30,8 @@ import voluptuous as vol
 
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import event
 from homeassistant.helpers.typing import ConfigType
@@ -849,6 +849,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         EVENT_HOMEASSISTANT_STOP, notifier.async_flush
     )
 
+    # And again once everything else has finished starting.
+    #
+    # The scan above runs during setup, which is a race this integration
+    # loses: the Elk zones are twenty-seven `sensor` entities that do not
+    # exist yet while elkm1 is still connecting, so the first scan sees
+    # six garage covers and the locks and subscribes to those alone.
+    # Nothing complains - the checklist looks right, because the panel
+    # rebuilds it live - but no door would ever have fired until the next
+    # time anything saved. Which is the worst shape a bug can have.
+    async def _rescan_when_up(_event) -> None:
+        await notifier.async_rescan()
+
+    if hass.state is CoreState.running:
+        await notifier.async_rescan()
+    else:
+        store["notifier_started"] = hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _rescan_when_up
+        )
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
@@ -892,9 +911,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         frontend.async_remove_panel(hass, legacy)
     hass.services.async_remove(DOMAIN, SERVICE_VOLUME_STEP)
     hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
-    unsub = store.pop("notifier_stop", None)
-    if unsub:
-        unsub()
+    for key in ("notifier_stop", "notifier_started"):
+        unsub = store.pop(key, None)
+        if unsub:
+            unsub()
     notifier = store.pop("notifier", None)
     if notifier is not None:
         if notifier._unsub_watch:
