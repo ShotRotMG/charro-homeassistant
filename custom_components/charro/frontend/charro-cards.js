@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.40.0";
+const VERSION = "5.40.1";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1329,6 +1329,14 @@ function charroAlertIcon(id) {
   return "mdi:door-open";
 }
 
+function charroUnlocked(v, states) {
+  return ((v && v.locks) || []).filter((e) => {
+    const st = states[e] && states[e].state;
+    return st && st !== "locked" && st !== "unavailable" && st !== "unknown";
+  });
+}
+if (typeof window !== "undefined") window.charroUnlocked = charroUnlocked;
+
 function charroAlertGroups(v, states) {
   const out = [];
   for (const id of charroOpenAlerts(v, states)) {
@@ -1336,6 +1344,17 @@ function charroAlertGroups(v, states) {
     const hit = out.find((g) => g[0] === icon);
     if (hit) hit[1]++;
     else out.push([icon, 1]);
+  }
+  /* A lock is its own kind of open, and the one you would want to see from
+   * the other side of the house. It is last so the door it belongs to
+   * keeps its place, and it is never folded into a door's count: "shut but
+   * unlocked" and "open" are different news. A jammed lock shows the
+   * warning glyph rather than the open one, for the same reason the card
+   * does - it is not unlocked, it failed. */
+  const un = charroUnlocked(v, states);
+  if (un.length) {
+    const jam = un.some((e) => (states[e] || {}).state === "jammed");
+    out.push([jam ? "mdi:lock-alert" : "mdi:lock-open-variant", un.length]);
   }
   return out;
 }
@@ -2968,6 +2987,26 @@ function roomChips(r, hass) {
                  tap: { kind: "more-info", entity: list[0].entity } });
     }
   }
+
+  /* Beside the doors, in the doors' own red: a shut door that is unlocked
+   * is the thing the open-door chip cannot tell you. Silent when every
+   * lock is thrown, and silent when a lock is unavailable - an unreachable
+   * lock is not an unlocked one, and saying so would train you to ignore
+   * the chip. */
+  const open = (r.locks || []).filter((c) => {
+    const st = hass.states[lockEntity(c)];
+    return st && st.state !== "locked"
+        && st.state !== "unavailable" && st.state !== "unknown";
+  });
+  if (open.length) {
+    const jam = open.some((c) => hass.states[lockEntity(c)].state === "jammed");
+    const names = open.map((c) => ({ name: lockName(c, hass) }));
+    out.push({ key: "locks", icon: jam ? "mdi:lock-alert" : "mdi:lock-open-variant",
+               col: CHIP_DOOR_OPEN,
+               text: open.length > 1 ? String(open.length) : "",
+               title: `${listNames(names)} ${jam ? "jammed." : "unlocked."}`,
+               tap: { kind: "more-info", entity: lockEntity(open[0]) } });
+  }
   return out;
 }
 
@@ -3077,6 +3116,7 @@ class RoomPopup {
       lightIds(r.light_entities), lightIds(r.landscape_entities),
       lightIds(r.fan_entities), lightIds(r.bath_fan_entities),
       lightIds(r.fountain_entities), r.alert_sensors || [],
+      (r.locks || []).map(lockEntity),
       (r.music_powers || []).map((p) => typeof p === "string" ? p : (p && (p.entity || p.power))),
       [r.media_player, roomTv(r), r.projector_entity, r.receiver_entity, r.climate_entity],
     ).filter(Boolean);
@@ -3695,6 +3735,7 @@ function wireRoomHash() {
 const ROOM_LISTS = [
   "light_entities", "landscape_entities", "fan_entities",
   "bath_fan_entities", "music_powers", "alert_sensors", "fountain_entities",
+  "locks",
 ];
 const ROOM_SINGLES = ["climate_entity", "confirm_sensor",
                       "tv_entity", "projector_entity", "receiver_entity",
