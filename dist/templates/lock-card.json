@@ -1,0 +1,90 @@
+{
+  "variables": {
+    "label": "",
+    "icon": "",
+    "pal": {}
+  },
+  "show_name": true,
+  "show_icon": true,
+  "show_state": false,
+  "tap_action": { "action": "more-info" },
+  "hold_action": {
+    "action": "call-service",
+    "service": "lock.toggle",
+    "service_data": { "entity_id": "[[[ return entity.entity_id ]]]" },
+    "confirmation": {
+      "text": "[[[\n  const on = entity.state === 'locked';\n  const who = variables.label || entity.attributes.friendly_name || 'this lock';\n  return `${on ? 'Unlock' : 'Lock'} ${who}?`;\n]]]\n"
+    }
+  },
+  "name": "[[[ return variables.label || entity.attributes.friendly_name || entity.entity_id ]]]",
+  "styles": {
+    "grid": [
+      { "grid-template-areas": "\"i n s\"" },
+      { "grid-template-columns": "34px 1fr auto" },
+      { "column-gap": "10px" },
+      { "align-items": "center" }
+    ],
+    "card": [
+      { "padding": "10px 12px" },
+      { "border-radius": "14px" },
+      { "box-shadow": "none" },
+      { "border": "none" },
+      {
+        "background": "[[[\n  const s = entity.state;\n  const p = variables.pal || {};\n  const k = s === 'locked' ? 'locked'\n          : (s === 'unlocked' || s === 'open') ? 'unlocked'\n          : (s === 'locking' || s === 'unlocking' || s === 'opening') ? 'moving'\n          : s === 'jammed' ? 'jammed' : 'unknown';\n  return (p[k] || {}).bg || 'rgba(255,255,255,0.10)';\n]]]\n"
+      }
+    ],
+    "name": [
+      { "justify-self": "start" },
+      { "font-size": "14px" },
+      { "font-weight": "600" },
+      { "color": "var(--primary-text-color)" },
+      { "white-space": "nowrap" },
+      { "overflow": "hidden" },
+      { "text-overflow": "ellipsis" }
+    ],
+    "img_cell": [
+      { "justify-self": "start" },
+      { "width": "34px" },
+      { "height": "34px" },
+      { "border-radius": "10px" },
+      {
+        "background": "[[[\n  const s = entity.state;\n  const p = variables.pal || {};\n  const k = s === 'locked' ? 'locked'\n          : (s === 'unlocked' || s === 'open') ? 'unlocked'\n          : (s === 'locking' || s === 'unlocking' || s === 'opening') ? 'moving'\n          : s === 'jammed' ? 'jammed' : 'unknown';\n  return (p[k] || {}).bg || 'rgba(255,255,255,0.10)';\n]]]\n"
+      }
+    ],
+    "icon": [
+      { "width": "20px" },
+      {
+        "color": "[[[\n  const s = entity.state;\n  const p = variables.pal || {};\n  const k = s === 'locked' ? 'locked'\n          : (s === 'unlocked' || s === 'open') ? 'unlocked'\n          : (s === 'locking' || s === 'unlocking' || s === 'opening') ? 'moving'\n          : s === 'jammed' ? 'jammed' : 'unknown';\n  return (p[k] || {}).fg || 'var(--secondary-text-color)';\n]]]\n"
+      }
+    ]
+  },
+  "custom_fields": {
+    "s": {
+      "card": {
+        "type": "custom:button-card",
+        "entity": "[[[ return entity.entity_id ]]]",
+        "show_icon": false,
+        "show_name": true,
+        "tap_action": { "action": "none" },
+        "name": "[[[\n  const s = entity.state;\n  return s === 'locked' ? 'Locked'\n       : s === 'unlocked' ? 'Unlocked'\n       : s === 'open' ? 'Open'\n       : s === 'locking' ? 'Locking\\u2026'\n       : s === 'unlocking' ? 'Unlocking\\u2026'\n       : s === 'opening' ? 'Opening\\u2026'\n       : s === 'jammed' ? 'Jammed'\n       : 'Unavailable';\n]]]\n",
+        "styles": {
+          "card": [
+            { "background": "none !important" },
+            { "box-shadow": "none !important" },
+            { "border": "none !important" },
+            { "padding": "0" },
+            { "--ha-card-background": "transparent" },
+            { "--ha-card-border-width": "0" }
+          ],
+          "name": [
+            { "font-size": "12.5px" },
+            { "font-weight": "600" },
+            {
+              "color": "[[[\n  const s = entity.state;\n  const p = variables.pal || {};\n  const k = s === 'locked' ? 'locked'\n          : (s === 'unlocked' || s === 'open') ? 'unlocked'\n          : (s === 'locking' || s === 'unlocking' || s === 'opening') ? 'moving'\n          : s === 'jammed' ? 'jammed' : 'unknown';\n  return (p[k] || {}).fg || 'var(--secondary-text-color)';\n]]]\n"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

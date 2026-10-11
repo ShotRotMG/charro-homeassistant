@@ -20,7 +20,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.39.0";
+const VERSION = "5.40.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1741,6 +1741,43 @@ function cameraCard(c, r, hass) {
   return fillTemplate(clone(tpl), { camera: id, title: cameraTitle(c, hass) });
 }
 
+/* Locks.
+ *
+ * One entity, two colours, and a tap that opens more-info rather than
+ * throwing the bolt: a card you might brush past on a phone should not be
+ * able to unlock the house. Holding it toggles, behind a confirmation that
+ * names the lock. */
+function lockEntity(c) {
+  if (typeof c === "object" && c) return c.entity || "";
+  return c || "";
+}
+
+function lockAt(r, id) {
+  for (const c of (r && r.locks) || []) if (lockEntity(c) === id) return c;
+  return id;
+}
+
+function lockName(c, hass) {
+  const o = typeof c === "object" && c ? c : {};
+  if (o.name) return o.name;
+  const id = lockEntity(c);
+  const reg = hass && hass.entities && hass.entities[id];
+  const st = hass && hass.states && hass.states[id];
+  return (reg && (reg.name || reg.original_name))
+      || (st && st.attributes && st.attributes.friendly_name) || id;
+}
+
+function lockCard(c, r) {
+  const o = typeof c === "object" && c ? c : {};
+  if (o.card) return o.card;
+  const id = lockEntity(c);
+  if (!id) return null;
+  const card = { type: "custom:charro-lock-card", entity: id };
+  if (o.name) card.label = o.name;
+  if (o.icon) card.icon = o.icon;
+  return card;
+}
+
 function zoneParts(z) {
   const o = typeof z === "object" && z ? z : {};
   const power = o.entity || o.power || (typeof z === "string" ? z : "");
@@ -1908,6 +1945,15 @@ function blockCards(name, r, hass) {
            cards: r.alert_sensors.map((e) => securityCard(e, r)) });
   }
 
+  /* With the doors rather than in a block of their own: "is it shut" and
+   * "is it locked" are the same question asked twice, and a room that
+   * answers one and not the other beside it is the worst of both. */
+  if (name === "security" && (r.locks || []).length) {
+    const cards = r.locks.map((c) => lockCard(c, r)).filter(Boolean);
+    if (cards.length)
+      push({ type: "grid", columns: cards.length > 1 ? 2 : 1, square: false, cards });
+  }
+
   return out;
 }
 
@@ -2012,6 +2058,14 @@ function layoutBody(r, hass) {
                    cards: [securityCard(it.sensor, r)] });
       } else {
         run.push(securityCard(it.sensor, r));
+      }
+    } else if (it.lock) {
+      const c = lockCard(lockAt(r, it.lock), r);
+      if (c) {
+        if (it.width === "full") {
+          flush();
+          out.push({ type: "grid", columns: 1, square: false, cards: [c] });
+        } else { run.push(c); }
       }
     } else if (it.camera) {
       /* The opposite default to every other tile: a camera takes the row
@@ -2211,6 +2265,7 @@ function materializeLayout(r) {
       for (const c of r.cameras || []) out.push({ camera: cameraEntity(c) });
     } else if (name === "security") {
       for (const e of r.alert_sensors || []) out.push({ sensor: e });
+      for (const c of r.locks || []) out.push({ lock: lockEntity(c) });
     } else if (name === "music") {
       // split, so each zone can be dragged to the room it belongs to
       for (const p of r.music_powers || []) out.push({ zone: p });
@@ -2669,6 +2724,26 @@ function listNames(rows) {
  * 0.18 alphas of its own. The template no longer carries any colour: it is
  * handed this object as `variables.pal` and reads it, so there is exactly
  * one place to change a chip colour and no way for the two to disagree. */
+/* A lock has more than two states and the two extra ones are the two worth
+ * seeing. Green for locked and red for unlocked is the ask; `moving` keeps
+ * a motor-driven bolt from flickering between them mid-throw, and `jammed`
+ * is the state that must never be allowed to read as either - a lock that
+ * failed to throw showing green is the one way this card could actually
+ * cost something. */
+const LOCK_PAL = {
+  locked:   { bg: "rgba(76,175,80,0.20)",   fg: "var(--green-color, #4caf50)" },
+  unlocked: { bg: "rgba(244,67,54,0.20)",   fg: "#ef5350" },
+  moving:   { bg: "rgba(255,152,0,0.22)",   fg: "#ffb74d" },
+  jammed:   { bg: "rgba(244,67,54,0.34)",   fg: "#ff5252" },
+  unknown:  { bg: "rgba(255,255,255,0.08)", fg: "var(--disabled-text-color)" },
+};
+
+const LOCK_ICON = {
+  locked: "mdi:lock", unlocked: "mdi:lock-open-variant", open: "mdi:lock-open-variant",
+  locking: "mdi:lock-clock", unlocking: "mdi:lock-clock", opening: "mdi:lock-clock",
+  jammed: "mdi:lock-alert",
+};
+
 const CHIP_PAL = {
   amber:  { bg: "rgba(255,193,7,0.22)",   fg: "var(--state-light-active-color, #ffc107)" },
   green:  { bg: "rgba(76,175,80,0.22)",   fg: "var(--green-color, #4caf50)" },
@@ -4024,6 +4099,33 @@ class CharroZoneCard extends CharroBase {
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
 def("charro-zone-card", CharroZoneCard);
+
+class CharroLockCard extends CharroBase {
+  static getConfigElement() { return document.createElement("charro-lock-card-editor"); }
+  static getStubConfig() { return { type: "custom:charro-lock-card", entity: "" }; }
+  templateName() { return "lock-card.json"; }
+
+  variables() {
+    const c = this._config;
+    const st = this._hass && this._hass.states[c.entity];
+    const state = (st && st.state) || "";
+    return {
+      label: c.label || "",
+      icon: c.icon || LOCK_ICON[state] || "mdi:lock-question",
+      pal: LOCK_PAL,
+    };
+  }
+
+  overrides() { return { entity: this._config.entity }; }
+  getGridOptions() { return { columns: 6, rows: 1, min_columns: 3 }; }
+}
+def("charro-lock-card", CharroLockCard);
+
+makeEditor("charro-lock-card-editor", [
+  { name: "entity", required: true, selector: ent(["lock"]) },
+  { name: "label", selector: { text: {} } },
+  { name: "icon", selector: { icon: {} } },
+]);
 
 /* The zone's source, as the list of sources it actually has.
  *
@@ -5703,6 +5805,15 @@ const LayoutUI = {
       if (sensors.length) cats.push({ label: "Door / motion", items: sensors });
     }
 
+    if (!usedBlocks.has("security")) {
+      const seenL = new Set(all.map((x) => x && x.lock).filter(Boolean));
+      const items = (r.locks || [])
+        .map(lockEntity)
+        .filter((e) => e && !seenL.has(e))
+        .map((e) => ({ lock: e }));
+      if (items.length) cats.push({ label: "Locks", items });
+    }
+
     if (!usedBlocks.has("cameras")) {
       const seenC = new Set(all.map((x) => x && x.camera).filter(Boolean));
       const items = (r.cameras || [])
@@ -5749,7 +5860,7 @@ const LayoutUI = {
     // a section is only offered when the room has something to put in it
     const has = {
       climate: () => !!r.climate_entity,
-      security: () => (r.alert_sensors || []).length,
+      security: () => (r.alert_sensors || []).length + (r.locks || []).length,
       cameras: () => (r.cameras || []).length,
       media: () => !!(r.tv_entity || r.projector_entity || r.receiver_entity
                       || (r.remotes || []).length || r.video),
@@ -5811,6 +5922,13 @@ const LayoutUI = {
                      || (reg && (reg.name || reg.original_name))
                      || (st && st.attributes.friendly_name) || id,
                sub: id };
+    }
+    if (it.lock) {
+      const c = lockAt(this._room, it.lock);
+      const o = typeof c === "object" && c ? c : {};
+      const st = this._hass.states[it.lock];
+      return { icon: o.icon || (st && LOCK_ICON[st.state]) || "mdi:lock",
+               text: lockName(c, this._hass), sub: it.lock };
     }
     if (it.camera) {
       const c = cameraAt(this._room, it.camera);
@@ -8228,6 +8346,39 @@ class CharroRoomsEditor extends HTMLElement {
     box.appendChild(f.add("+ Sensor", () => {
       (r.alert_sensors = r.alert_sensors || []).push("");
     }));
+
+    /* Locks live in this panel because this is the panel you open when you
+     * are thinking about whether the house is shut. */
+    box.appendChild(f.cap("Locks"));
+    (r.locks || []).forEach((cRaw, i) => {
+      const c = typeof cRaw === "object" && cRaw ? cRaw : { entity: String(cRaw || "") };
+      if (typeof cRaw !== "object") r.locks[i] = c;
+      const set = (k) => (v) => { if (v) c[k] = v; else delete c[k]; };
+      const row = f.rowBox();
+      row.appendChild(f.ent("Lock", c.entity, ["lock"], set("entity")));
+      row.appendChild(f.text("Name", c.name, set("name"),
+        lockName(c, this._hass) || "House Doors"));
+      row.appendChild(f.icon("Icon", c.icon, set("icon")));
+      const x = document.createElement("button");
+      x.className = "vdel";
+      x.textContent = "Remove lock";
+      x.addEventListener("click", () => {
+        r.locks.splice(i, 1);
+        if (!r.locks.length) delete r.locks;
+        redraw();
+      });
+      row.appendChild(x);
+      box.appendChild(row);
+    });
+    box.appendChild(f.add("+ Lock", () => {
+      (r.locks = r.locks || []).push({ entity: "" });
+    }));
+    const lnote = document.createElement("div");
+    lnote.className = "vnote";
+    lnote.textContent = "Green when locked, red when not, amber mid-throw and a "
+      + "warning when jammed. Tap opens more-info; hold locks or unlocks, after "
+      + "asking. Leave the icon blank and it follows the state.";
+    box.appendChild(lnote);
 
     box.appendChild(f.cap("Only alert when this is also open"));
     box.appendChild(f.ent("The room's guard sensor", r.confirm_sensor,
@@ -10751,6 +10902,8 @@ window.customCards.push(
     description: "Elk zone or garage door, coloured client-side.", preview: false },
   { type: "charro-zone-card", name: "Charro Zone Card",
     description: "RTI AD-8x single-line zone control.", preview: false },
+  { type: "charro-lock-card", name: "Charro Lock Card",
+    description: "A lock, green when locked and red when not.", preview: false },
   { type: "charro-all-off-card", name: "Charro All Zones Off",
     description: "Turn every RTI zone off on both amps.", preview: false },
   { type: "charro-lights-card", name: "Charro Lights Card",
