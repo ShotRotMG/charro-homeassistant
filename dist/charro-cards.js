@@ -22,7 +22,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.43.0";
+const VERSION = "5.44.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -349,6 +349,16 @@ const roomHash = (c) => {
   let h = c.popup_hash || (c.room_name ? "#" + slugify(c.room_name) : "");
   if (h && !h.startsWith("#")) h = "#" + h;
   return h;
+};
+
+/* The screens pop-up, for rooms that have screens. The TV chip opens this
+ * rather than more-info: more-info on a television is a volume slider and
+ * a source list that mean nothing when the thing on screen is a Dish box
+ * the matrix is feeding it. A room with no video block has no such pop-up
+ * and its chip keeps more-info. */
+const tvHash = (c) => {
+  const h = roomHash(c);
+  return h && c.video && (c.video.displays || []).length ? `${h}-tv` : "";
 };
 
 /* A light may be a plain id or {entity, name, icon, dim}. */
@@ -3778,7 +3788,7 @@ class CharroRoomCard extends CharroBase {
     if (this._pageCards) for (const c of this._pageCards) c.hass = hass;
     if (this._card) this._card.hass = hass;
     else this._build();
-    if (first && (this._hash || this._mediaHash)) _syncHash();
+    if (first && (this._hash || this._mediaHash || this._tvHash)) _syncHash();
   }
 
   connectedCallback() {
@@ -3879,14 +3889,18 @@ class CharroRoomCard extends CharroBase {
     // the now-playing chip opens the media card on its own hash
     const mh = m.media_player ? h + "-media" : null;
     if (mh && this._mediaHash !== mh) { this._mediaHash = mh; claimHash(mh, this); }
+    // and the TV chip opens the screens on theirs
+    const th = tvHash(m);
+    if (th && this._tvHash !== th) { this._tvHash = th; claimHash(th, this); }
     wireRoomHash();
     // the hash may already be set — a card that mounts after the navigation
     // has to catch up, or the panel never appears until a reload
     _syncHash();
   }
   _releaseHash() {
-    for (const h of [this._hash, this._mediaHash]) if (h) unclaimHash(h, this);
-    this._hash = null; this._mediaHash = null;
+    for (const h of [this._hash, this._mediaHash, this._tvHash])
+      if (h) unclaimHash(h, this);
+    this._hash = null; this._mediaHash = null; this._tvHash = null;
   }
   async _openPopup(hash) {
     const want = hash || this._hash;
@@ -3902,7 +3916,14 @@ class CharroRoomCard extends CharroBase {
     this._popup = want === this._mediaHash
       ? new RoomPopup(want, m, this._hass,
                       (r, h) => [mediaCard(r, h)].filter(Boolean),
-                      `${m.room_name || ""} — Now playing`.trim())
+                      `${m.room_name || ""} \u2014 Now playing`.trim())
+      : want === this._tvHash
+      ? new RoomPopup(want, m, this._hass,
+                      (r) => [{ type: "custom:charro-video-card", video: r.video,
+                                templates: r._remotes || {},
+                                music_powers: r.music_powers || [],
+                                tabs: true }],
+                      `${m.room_name || ""} \u2014 Screens`.trim())
       : new RoomPopup(want, m, this._hass);
     await this._popup.open();
   }
@@ -3932,6 +3953,8 @@ class CharroRoomCard extends CharroBase {
       garage_entities: garageSensors(c, this._hass)
         .map((e) => (typeof e === "string" ? e : e.entity)).filter(Boolean),
       tv_entity: roomTv(c),
+      // blank for a room with no screens: the chip falls back to more-info
+      tv_popup: tvHash(c),
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
       // the tile's chips read their colours from here, so they cannot drift
@@ -4370,6 +4393,21 @@ def("charro-zone-source", CharroZoneSource);
  * however many screens can show that box.
  */
 const VIDEO_CSS = `
+.vtabs{ display:flex; gap:4px; margin:4px 0 10px; flex-wrap:wrap; }
+.vtabs button{
+  font:inherit; font-size:13px; font-weight:600; cursor:pointer;
+  padding:6px 15px; border-radius:999px; border:1px solid var(--divider-color);
+  background:transparent; color:var(--secondary-text-color);
+}
+.vtabs button[aria-pressed="true"]{
+  background:var(--primary-color); border-color:var(--primary-color);
+  color:var(--text-primary-color,#fff);
+}
+.vpane[hidden]{ display:none; }
+.vpane:empty::after{
+  content:"Nothing here while the screen is off."; display:block;
+  font-size:13px; color:var(--secondary-text-color); padding:2px;
+}
 :host{ display:block; }
 .vwrap{ display:flex; flex-direction:column; gap:10px; min-width:0; }
 .vrow{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -4415,6 +4453,10 @@ class CharroVideoCard extends HTMLElement {
     this._v = config.video;
     this._templates = config.templates || {};
     this._zones = config.music_powers || [];
+    /* The TV pop-up asks for the same pieces in three panes rather than
+     * one column. Nothing is rendered twice and nothing is left out - the
+     * panes are the rows this card already drew, filed. */
+    this._tabs = !!config.tabs;
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `<style>${VIDEO_CSS}</style><div class="vwrap"></div>`;
     this._wrap = this.shadowRoot.querySelector(".vwrap");
@@ -4795,12 +4837,44 @@ class CharroVideoCard extends HTMLElement {
       { entity_id: this._v.focus, option: value });
   }
 
+  /* Three panes and the strip that switches them. The chosen pane is kept
+   * on the element, so a source change redrawing the body leaves you on the
+   * tab you were reading rather than throwing you back to the default. */
+  _mountTabs(def) {
+    const names = [["power", "Power"], ["sources", "Sources"], ["remote", "Remote"]];
+    const want = names.some(([k]) => k === this._tab) ? this._tab : def;
+    const strip = document.createElement("div");
+    strip.className = "vtabs";
+    const panes = {};
+    const btns = {};
+    for (const [k, label] of names) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.setAttribute("aria-pressed", String(k === want));
+      b.addEventListener("click", () => {
+        this._tab = k;
+        for (const t in btns) btns[t].setAttribute("aria-pressed", String(t === k));
+        for (const t in panes) panes[t].hidden = t !== k;
+      });
+      btns[k] = b;
+      strip.appendChild(b);
+      const pane = document.createElement("div");
+      pane.className = "vpane";
+      pane.hidden = k !== want;
+      panes[k] = pane;
+    }
+    this._wrap.appendChild(strip);
+    for (const [k] of names) this._wrap.appendChild(panes[k]);
+    return panes;
+  }
+
   async _render() {
     const h = this._hass;
     if (!h || !this._wrap) return;
     const off = this._v.off_option || "Off";
     const focus = this._focusName();
     this._wrap.textContent = "";
+    this._out = this._wrap;
     this._live = [];
 
     // ---- which screen (skipped entirely when there's only the one)
@@ -4859,6 +4933,23 @@ class CharroVideoCard extends HTMLElement {
     const d = this._display(focus);
     if (!d) return;                       // Off, or a name with no display
 
+    /* Which screen stays above the tabs: it applies to all three of them.
+     * The pane you land on is the one with something on it - Remote when
+     * a source is live, Power when the screen is off. */
+    const live0 = this._sourceOf(d);
+    const panes = this._tabs
+      ? this._mountTabs(!live0 || live0 === off ? "power" : "remote")
+      : null;
+    const pane = (k) => { if (panes) this._out = panes[k]; };
+    /* In one column the off chip rides whatever row has space. With tabs
+     * it has an obvious home. */
+    if (panes && offChip && !offChip.parentNode) {
+      const prow0 = document.createElement("div");
+      prow0.className = "vrow";
+      prow0.appendChild(offChip);
+      panes.power.appendChild(prow0);
+    }
+
     const helpers = await window.loadCardHelpers();
     if (this._focusName() !== focus) return;   // changed while we awaited
 
@@ -4869,7 +4960,7 @@ class CharroVideoCard extends HTMLElement {
         const slot = document.createElement("div");
         slot.className = "vslot";
         slot.appendChild(el);
-        this._wrap.appendChild(slot);
+        this._out.appendChild(slot);
         this._live.push(el);
       } catch (err) { console.error("charro-video-card:", cfg && cfg.type, err); }
     };
@@ -4883,14 +4974,16 @@ class CharroVideoCard extends HTMLElement {
      * belongs to the box and can't turn the screen off either. Leave the
      * field blank, as an LG that answers its own remote would, and no
      * second power button appears. */
+    pane("power");
     const sepPower = !!d.power;
     if (sepPower) {
       const prow = document.createElement("div");
       prow.className = "vrow";
       prow.appendChild(this._powerChip(d));
-      this._wrap.appendChild(prow);
+      this._out.appendChild(prow);
     }
 
+    pane("sources");
     // ---- what's feeding it
     const sf = this._sourceFrom(d);
     /* Hidden sources still match - they supply the remote when the receiver
@@ -4918,7 +5011,7 @@ class CharroVideoCard extends HTMLElement {
         srow.appendChild(b);
       }
       if (offChip && !offChip.parentNode) srow.appendChild(offChip);
-      this._wrap.appendChild(srow);
+      this._out.appendChild(srow);
     } else if (d.source) {
       add({ type: "custom:mushroom-select-card", entity: d.source,
             name: `${d.name} source`, layout: "horizontal",
@@ -4930,25 +5023,28 @@ class CharroVideoCard extends HTMLElement {
       const orow = document.createElement("div");
       orow.className = "vrow";
       orow.appendChild(offChip);
-      this._wrap.appendChild(orow);
+      this._out.appendChild(orow);
     }
 
+    pane("remote");
     // ---- and the buttons for it
     /* Somewhere to turn the screen off whatever else is going on. The header
      * has it when power is separate; these are the cases where it isn't, and
      * where without this you would be looking at a note and nothing else. */
     const stranded = () => {
       if (sepPower) return;            // already in the header, don't repeat it
+      pane("power");
       const chip = this._powerChip(d);
       if (!chip) return;
       const r2 = document.createElement("div");
       r2.className = "vrow";
       r2.appendChild(chip);
-      this._wrap.appendChild(r2);
+      this._out.appendChild(r2);
     };
 
     const src = this._sourceOf(d);
     if (!src || src === off) {
+      pane("power");
       const p = screenPower(d);
       if (p && !sepPower) {
         /* wakeAction falls through to a plain toggle, so a screen with
@@ -4961,7 +5057,7 @@ class CharroVideoCard extends HTMLElement {
         const n = document.createElement("div");
         n.className = "vnote";
         n.textContent = `${d.name} is off. Pick a source to turn it on.`;
-        this._wrap.appendChild(n);
+        this._out.appendChild(n);
       }
       return;
     }
@@ -4973,7 +5069,7 @@ class CharroVideoCard extends HTMLElement {
       const n = document.createElement("div");
       n.className = "vnote";
       n.textContent = `No remote is configured for "${src}".`;
-      this._wrap.appendChild(n);
+      this._out.appendChild(n);
       stranded();
       return;
     }
@@ -4983,7 +5079,7 @@ class CharroVideoCard extends HTMLElement {
       const n = document.createElement("div");
       n.className = "vnote";
       n.textContent = `\`_remotes.json\` has no template named "${spec.use}".`;
-      this._wrap.appendChild(n);
+      this._out.appendChild(n);
       stranded();
       return;
     }
