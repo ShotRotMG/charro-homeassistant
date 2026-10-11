@@ -652,14 +652,22 @@ class CharroNotifier:
             return
 
         # One door that can't make up its mind shouldn't ring four phones
-        # four times.
+        # four times - but the cooldown is per direction, not per entity.
+        #
+        # Keyed on the entity alone it swallowed the opposite event: unlock
+        # a door and lock it ten seconds later and you were told it was
+        # open and never told it was shut again, which is worse than
+        # telling you nothing. A repeat is noise; a reversal is the news.
         gap = float(rules.get("cooldown") or 0)
-        last = self._last_fired.get(eid)
+        way = "shut" if verb in ("Closed", "Locked") else "open"
+        slot = (eid, way)
+        last = self._last_fired.get(slot)
         stamp = time.monotonic()
         if gap and last is not None and stamp - last < gap:
-            _LOGGER.debug("charro: %s %s within its %ss cooldown, skipped", eid, verb, gap)
+            _LOGGER.debug("charro: %s %s within its %ss cooldown, skipped",
+                          eid, verb, gap)
             return
-        self._last_fired[eid] = stamp
+        self._last_fired[slot] = stamp
 
         room = spec.get("room") or {}
         title = (new.attributes.get("friendly_name") or eid).strip()
