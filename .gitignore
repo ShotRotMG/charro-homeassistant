@@ -6,3 +6,9 @@ _to_delete/
 .ha_addr.json
 __pycache__/
 *.pyc
+
+# The deploy helpers. They name this house's Home Assistant and its
+# HACS repository id, which is nobody else's business, and they are
+# a personal workflow rather than part of the integration.
+release.bat
+tools/release.py
