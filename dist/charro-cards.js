@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.51.0";
+const VERSION = "5.52.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10642,6 +10642,8 @@ class CharroNotifyEditor extends HTMLElement {
       lbl.append(nm, cnt);
       row.appendChild(lbl);
       row.appendChild(f.bool("Watch", w.on !== false, (v) => { w.on = v; }));
+      row.appendChild(f.bool(key === "locks" ? "Also when locked" : "Also when closed",
+        w.closed === true, (v) => { if (v) w.closed = true; else delete w.closed; }));
       row.appendChild(f.text("Cooldown (s)", String(w.cooldown == null ? 60 : w.cooldown),
         (v) => { const n = Number(v); if (!isNaN(n) && n >= 0) w.cooldown = n; }, "60"));
       box.appendChild(row);
@@ -10751,11 +10753,14 @@ class CharroNotifyEditor extends HTMLElement {
     const wnote = document.createElement("div");
     wnote.className = "vnote";
     wnote.textContent =
-      "Found by what each entity says it is \u2014 its device class \u2014 never by "
-      + "its name, so \u201cFront Door Light\u201d isn\u2019t a door. Everything is on "
-      + "unless you untick it, and only the unticked ones are saved. Openings and "
-      + "unlockings send; closings don\u2019t, and a transition to or from unavailable "
-      + "is ignored. Delete your old notify automations once this is live.";
+      "Closings are off by default \u2014 they double the count for no information, "
+      + "and it is a 500-a-day allowance. With one on, the cooldown still applies "
+      + "per entity, so 0 there means every single transition. Candidates are found "
+      + "by what each entity says it is \u2014 its device class, or an Elk zone\u2019s "
+      + "own shape \u2014 never by its name, so \u201cFront Door Light\u201d is not a "
+      + "door. Everything is on unless you untick it, and only the unticked ones are "
+      + "saved. A transition to or from unavailable is always ignored. Delete your "
+      + "old notify automations once this is live.";
     box.appendChild(wnote);
 
     /* ---- what actually happened ----

@@ -81,8 +81,11 @@ WATCH_NOISE = ("unavailable", "unknown", "none", "")
 WATCH_ZONE_ATTRS = ("logical_status", "definition")
 WATCH_ZONE_PREFIX = "burglar"
 
-# Every way an entity in this house says "open", whatever its domain.
+# Every way an entity in this house says "open", whatever its domain -
+# and every way it says it has gone back to being shut. An Elk zone
+# returns to "Normal" rather than to "off".
 WATCH_OPEN = ("on", "open", "opening", "violated")
+WATCH_SHUT = ("off", "closed", "normal")
 
 WATCH_CLASSES = {
     "lock": {None: "locks"},

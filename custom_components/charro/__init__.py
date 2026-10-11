@@ -72,6 +72,7 @@ from .const import (
     WATCH_DEFAULTS,
     WATCH_NOISE,
     WATCH_OPEN,
+    WATCH_SHUT,
     WATCH_ZONE_ATTRS,
     WATCH_ZONE_PREFIX,
 )
@@ -646,7 +647,7 @@ class CharroNotifier:
         if not rules.get("on"):
             return
 
-        verb = self._verb(cat, now, was)
+        verb = self._verb(cat, now, was, rules.get("closed") is True)
         if not verb:
             return
 
@@ -670,21 +671,26 @@ class CharroNotifier:
         self.hass.async_create_task(self.async_send(payload))
 
     @staticmethod
-    def _verb(category: str, now: str, was: str) -> str | None:
+    def _verb(category: str, now: str, was: str, closed_too: bool = False) -> str | None:
         """What to call what just happened, or None if it isn't news.
 
-        Closing is deliberately quiet. A door tells you something when it
-        opens; the other half of every pair is twice the notifications for
-        no information, and it is what eats a 500-a-day allowance.
+        Closing is off by default and deliberately so: it is the other
+        half of every pair, which doubles the count for no information and
+        is what eats a 500-a-day allowance. Switch it on per category when
+        you would rather have both halves.
         """
         if category == "locks":
-            if now == "unlocked" or now == "open":
+            if now in ("unlocked", "open"):
                 return "Unlocked"
             if now == "jammed":
                 return "Jammed"
+            if closed_too and now == "locked":
+                return "Locked"
             return None
         if now in WATCH_OPEN:
             return "Opening" if now == "opening" else "Opened"
+        if closed_too and now in WATCH_SHUT:
+            return "Closed"
         return None
 
     # ------------------------------------------------------------ read --
