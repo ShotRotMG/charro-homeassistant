@@ -30,3 +30,90 @@ volume_step:
           max: 20
           step: 1
           mode: box
+
+notify:
+  name: Notify
+  description: >-
+    Send one notification to whoever asked for that category. Who is on the
+    list, and how loudly it lands for each of them, is the matrix in
+    Charro Config > Notifications - an automation names nobody.
+  fields:
+    category:
+      name: Category
+      description: A category key from the Notifications tab, e.g. doors.
+      required: true
+      example: doors
+      selector:
+        text:
+    title:
+      name: Title
+      description: >-
+        The thing this is about, not the house - on iOS the title is used
+        as the sender name. "Front Door", not "Home Assistant".
+      required: true
+      example: Front Door
+      selector:
+        text:
+    message:
+      name: Message
+      description: The body of the notification.
+      required: true
+      example: Opened while the alarm was set.
+      selector:
+        text:
+    entity_id:
+      name: About
+      description: >-
+        What this is about. Only used to key the tag, so the next event for
+        the same door replaces the last one instead of stacking.
+      required: false
+      example: binary_sensor.front_door
+      selector:
+        text:
+    camera:
+      name: Camera
+      description: >-
+        Attach a frame from this camera. Overrides the category's own.
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: camera
+    url:
+      name: Opens
+      description: >-
+        Where tapping it goes. Overrides the category's own, e.g.
+        /d-charro/security#garage-east.
+      required: false
+      example: /d-charro/security
+      selector:
+        text:
+    level:
+      name: Urgency
+      description: >-
+        Force this one message to a level, ignoring the matrix. Leave unset
+        and each person gets what they asked for.
+      required: false
+      selector:
+        select:
+          options:
+            - quiet
+            - normal
+            - urgent
+            - critical
+    people:
+      name: Only these people
+      description: >-
+        Person keys from the Notifications tab. Leave unset for everyone
+        who has this category switched on.
+      required: false
+      selector:
+        object:
+    actions:
+      name: Buttons
+      description: >-
+        Action buttons, as a list of {action, title}. The action comes back
+        as a mobile_app_notification_action event.
+      required: false
+      selector:
+        object:

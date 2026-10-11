@@ -33,18 +33,23 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.loader import async_get_integration
+import homeassistant.util.dt as dt_util
 
 from .const import (
     BUNDLE,
     DOMAIN,
     LEGACY_PANEL_URLS,
     LEGACY_SUBDIR,
+    NOTIFY_FILE,
+    NOTIFY_LEVELS,
+    NOTIFY_PUSH_LEVEL,
     PANEL_ELEMENT,
     PANEL_ICON,
     PANEL_TITLE,
     PANEL_URL,
     REMOTES_FILE,
     ROOMS_DIR,
+    SERVICE_NOTIFY,
     SERVICE_VOLUME_STEP,
     SNAP_DAY,
     SNAP_DIR,
@@ -62,6 +67,20 @@ VOLUME_STEP_SCHEMA = vol.Schema(
     {
         vol.Required("entity_id"): cv.entity_ids,
         vol.Optional("steps", default=1): vol.Coerce(float),
+    }
+)
+
+NOTIFY_SCHEMA = vol.Schema(
+    {
+        vol.Required("category"): cv.string,
+        vol.Required("title"): cv.string,
+        vol.Required("message"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+        vol.Optional("camera"): cv.string,
+        vol.Optional("url"): cv.string,
+        vol.Optional("people"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("level"): vol.In(NOTIFY_LEVELS),
+        vol.Optional("actions"): vol.All(cv.ensure_list, [dict]),
     }
 )
 
@@ -113,6 +132,125 @@ async def _async_volume_step(hass: HomeAssistant, call) -> None:
             domain, "set_value", {"entity_id": entity_id, "value": value},
             blocking=False,
         )
+
+
+# ------------------------------------------------------------- notify --
+
+# Where each level sits relative to the others, for the quiet-hours cap.
+_NOTIFY_ORDER = {name: i for i, name in enumerate(NOTIFY_LEVELS)}
+
+
+def _in_window(now: str, start: str | None, end: str | None) -> bool:
+    """Is HH:MM `now` inside the HH:MM window, which may wrap midnight?"""
+    if not start or not end or start == end:
+        return False
+    if start < end:
+        return start <= now < end
+    return now >= start or now < end          # 22:30 -> 07:00
+
+
+def _notify_payload(cat: dict, call_data: dict, tag: str) -> dict:
+    """The part of the iOS payload that is the same for everybody.
+
+    iOS has no notification channels, so everything that tells one of these
+    apart at a glance has to be in the payload: `notification_icon` with
+    `color` draws the category's glyph on a coloured disc, `subtitle`
+    names the category under the title, `group` threads them together and
+    `tag` means the next event for the same door replaces the last one
+    rather than making a pile. The title is the sender name on a
+    communication notification, so it is the thing, not the house.
+    """
+    data: dict[str, Any] = {"tag": tag, "group": cat.get("group") or cat.get("key")}
+    if cat.get("icon"):
+        data["notification_icon"] = cat["icon"]
+    if cat.get("color"):
+        data["color"] = cat["color"]
+    if cat.get("name"):
+        data["subtitle"] = cat["name"]
+    url = call_data.get("url") or cat.get("url")
+    if url:
+        data["url"] = url
+    # On iOS a camera entity id IS the attachment - the phone lazy-loads a
+    # frame. Worth more than the text it sits above.
+    camera = call_data.get("camera") or cat.get("camera")
+    if camera:
+        data["entity_id"] = camera
+    actions = call_data.get("actions")
+    if actions:
+        data["actions"] = actions
+    return data
+
+
+async def _async_notify(hass: HomeAssistant, call) -> None:
+    """Send one notification to whoever asked for that category.
+
+    Every automation in the house calls this and names nobody: who is on
+    the list, and how loudly it lands for each of them, is the matrix in
+    _notify.json that the Notifications tab writes. A phone that wants out
+    of garage doors turns one cell off instead of muting the lot.
+    """
+    cfg = await hass.async_add_executor_job(_read_notify, _rooms_dir(hass))
+    key = call.data["category"]
+    cat = next((c for c in cfg.get("categories") or [] if c.get("key") == key), None)
+    if cat is None:
+        _LOGGER.warning("charro.notify: no category %r in %s", key, NOTIFY_FILE)
+        return
+
+    # "Only while the alarm is set" belongs here rather than in forty
+    # automations, and it cuts the noise more than any per-person switch.
+    if cat.get("armed_only"):
+        alarm = cfg.get("alarm_entity")
+        state = hass.states.get(alarm) if alarm else None
+        if state is None or state.state in ("disarmed", "unknown", "unavailable"):
+            return
+
+    forced = call.data.get("level")
+    only = set(call.data.get("people") or [])
+    tag = f"charro-{key}-{call.data.get('entity_id') or 'all'}"
+    base = _notify_payload(cat, call.data, tag)
+    now = dt_util.now().strftime("%H:%M")
+
+    for person in cfg.get("people") or []:
+        service = (person.get("service") or "").strip()
+        if not service:
+            continue
+        if only and person.get("key") not in only:
+            continue
+        level = forced or (person.get("levels") or {}).get(key, "off")
+
+        # Quiet hours lower the urgency rather than dropping the message,
+        # so what happened is still there in the morning. Critical is the
+        # one thing they don't touch - that is what critical is for.
+        if level != "critical" and _in_window(
+            now, person.get("quiet_from"), person.get("quiet_to")
+        ):
+            cap = person.get("quiet_level") or "quiet"
+            if _NOTIFY_ORDER.get(level, 0) > _NOTIFY_ORDER.get(cap, 1):
+                level = cap
+        push_level = NOTIFY_PUSH_LEVEL.get(level)
+        if not push_level:                     # "off", or something unknown
+            continue
+
+        data = dict(base)
+        data["push"] = {"interruption-level": push_level}
+        if level == "critical":
+            volume = person.get("critical_volume")
+            data["push"]["sound"] = {
+                "name": "default",
+                "critical": 1,
+                "volume": float(volume) if volume is not None else 1.0,
+            }
+        await hass.services.async_call(
+            "notify",
+            service.split(".")[-1],
+            {
+                "title": call.data["title"],
+                "message": call.data["message"],
+                "data": data,
+            },
+            blocking=False,
+        )
+
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -225,10 +363,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=VOLUME_STEP_SCHEMA,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_NOTIFY,
+        functools.partial(_async_notify, hass),
+        schema=NOTIFY_SCHEMA,
+    )
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_save_remotes)
+    websocket_api.async_register_command(hass, ws_save_notify)
     websocket_api.async_register_command(hass, ws_delete_room)
     websocket_api.async_register_command(hass, ws_list_snapshots)
     websocket_api.async_register_command(hass, ws_get_snapshot)
@@ -491,9 +637,10 @@ def _read_all(path: str) -> dict[str, Any]:
     """
     rooms: dict[str, Any] = {}
     remotes: dict[str, Any] = {}
+    notify: dict[str, Any] = {}
     bad: list[str] = []
     if not os.path.isdir(path):
-        return {"rooms": rooms, "remotes": remotes, "bad": bad}
+        return {"rooms": rooms, "remotes": remotes, "notify": notify, "bad": bad}
     for name in sorted(os.listdir(path)):
         if not name.endswith(".json") or name.endswith(".tmp.json"):
             continue
@@ -505,13 +652,29 @@ def _read_all(path: str) -> dict[str, Any]:
             continue
         if name == REMOTES_FILE:
             remotes = data if isinstance(data, dict) else {}
+        elif name == NOTIFY_FILE:
+            notify = data if isinstance(data, dict) else {}
         elif not name.startswith("_") and isinstance(data, dict):
             key = name[:-5]
             # tolerate a file that wraps the room in its own key
             if "room_name" not in data and isinstance(data.get(key), dict):
                 data = data[key]
             rooms[key] = data
-    return {"rooms": rooms, "remotes": remotes, "bad": bad}
+    return {"rooms": rooms, "remotes": remotes, "notify": notify, "bad": bad}
+
+
+def _read_notify(path: str) -> dict:
+    """Just the notification matrix, for the service call.
+
+    Its own read rather than _read_all: a door opening should not pull
+    twenty-one room files off the disk to find out who wants telling.
+    """
+    try:
+        with open(os.path.join(path, NOTIFY_FILE), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _list_rooms(path: str) -> list[str]:
@@ -617,6 +780,32 @@ async def ws_save_remotes(hass, connection, msg):
         connection.send_error(msg["id"], "write_failed", str(err))
         return
     connection.send_result(msg["id"], {"path": os.path.join(path, REMOTES_FILE)})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/save_notify",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_save_notify(hass, connection, msg):
+    """Write the notification matrix. Admin only.
+
+    Same reason save_remotes exists: save_room refuses an underscore, and
+    this file has to start with one so it is never mistaken for a room.
+    It goes through the same writer, so it is snapshotted first and
+    replaced atomically.
+    """
+    path = _rooms_dir(hass)
+    key = NOTIFY_FILE[:-5] if NOTIFY_FILE.endswith(".json") else NOTIFY_FILE
+    try:
+        await hass.async_add_executor_job(_write_room, path, key, msg["config"])
+    except OSError as err:
+        connection.send_error(msg["id"], "write_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"path": os.path.join(path, NOTIFY_FILE)})
 
 
 @websocket_api.require_admin

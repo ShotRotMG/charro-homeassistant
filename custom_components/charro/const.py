@@ -31,6 +31,23 @@ ROOMS_DIR = "charro_rooms"
 SERVICE_VOLUME_STEP = "volume_step"
 REMOTES_FILE = "_remotes.json"
 
+# One notification service for the whole house. Who gets what, and how
+# loudly, lives in a file the Notifications tab writes - not in forty
+# automations that each name a phone.
+SERVICE_NOTIFY = "notify"
+NOTIFY_FILE = "_notify.json"
+
+# iOS has no notification channels, so the urgency is decided here and
+# carried in push.interruption-level. These are the five settings a cell in
+# the matrix can hold, in order.
+NOTIFY_LEVELS = ("off", "quiet", "normal", "urgent", "critical")
+NOTIFY_PUSH_LEVEL = {
+    "quiet": "passive",
+    "normal": "active",
+    "urgent": "time-sensitive",
+    "critical": "critical",
+}
+
 # Where they used to live, so an existing install can be moved across once.
 LEGACY_SUBDIR = ("www", "rooms")
 

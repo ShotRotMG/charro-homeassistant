@@ -8,7 +8,8 @@
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *   charro-rooms-editor   edit the room files from inside Home Assistant
  *   charro-unifi-panel    UniFi diagnostics, a tab of the panel below
- *   charro-config-panel   Charro Config: rooms, remotes and UniFi, tabbed
+ *   charro-notify-editor  who gets told what, and how loudly
+ *   charro-config-panel   Charro Config, tabbed: the four above
  *
  * Installed through HACS, so the Lovelace resource is registered automatically.
  * The first four render custom:button-card with a template fetched from
@@ -21,7 +22,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.42.0";
+const VERSION = "5.43.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -311,7 +312,8 @@ async function fetchAll(hass) {
       const d = await hass.callWS({ type: "charro/get_rooms" });
       if (n) console.info("charro: integration is up, cards loading");
       checkVersion(d && d.version, hass);
-      return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {} };
+      return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {},
+               notify: (d && d.notify) || {} };
     } catch (err) {
       if (n >= WS_TRIES || !wsRetryable(err)) throw err;
       if (!n) console.info("charro: waiting for the integration to start\u2026");
@@ -6827,6 +6829,142 @@ const WS_SNAP = "charro/get_snapshot";
 const WS_LIST = "charro/list_rooms";
 const WS_SAVE_REMOTES = "charro/save_remotes";
 
+/* The form controls the panel's hand-built sections are made of.
+ * A free function rather than a method because the Notifications tab
+ * is a separate element and wanted the same ones. */
+function fieldKit(hass, redraw) {
+  const wrap = (label, el) => {
+    const w = document.createElement("div");
+    w.className = "vfield";
+    const t = document.createElement("span"); t.textContent = label;
+    w.append(t, el);
+    return w;
+  };
+  const text = (label, value, onChange, placeholder) => {
+    const i = document.createElement("input");
+    i.type = "text"; i.value = value || ""; i.placeholder = placeholder || "";
+    i.addEventListener("change", () => { onChange(i.value.trim()); redraw(); });
+    return wrap(label, i);
+  };
+  const ent = (label, value, domains, onChange, hint) => {
+    if (!customElements.get("ha-entity-picker")) return text(label, value, onChange, hint);
+    const p = document.createElement("ha-entity-picker");
+    p.hass = hass;
+    p.value = value || "";
+    p.allowCustomEntity = true;
+    if (domains && domains.length) p.includeDomains = domains;
+    p.addEventListener("value-changed", (ev) => {
+      ev.stopPropagation();
+      onChange((ev.detail && ev.detail.value) || "");
+      redraw();
+    });
+    return wrap(label, p);
+  };
+  const icon = (label, value, onChange) => {
+    if (!customElements.get("ha-icon-picker"))
+      return text(label, value, onChange, "mdi:…");
+    const p = document.createElement("ha-icon-picker");
+    p.hass = hass;
+    p.value = value || "";
+    p.addEventListener("value-changed", (ev) => {
+      ev.stopPropagation();
+      onChange(((ev.detail && ev.detail.value) || "").trim());
+      redraw();
+    });
+    return wrap(label, p);
+  };
+  /* A list of entities, as one picker per entry plus an empty one to
+   * grow into — simpler to reason about than a multi-select. */
+  const many = (label, values, domains, onChange) => {
+    const box = document.createElement("div");
+    box.className = "vfield";
+    const t = document.createElement("span"); t.textContent = label;
+    box.appendChild(t);
+    const list = [].concat(values || []);
+    [...list, ""].forEach((v, i) => {
+      const row = ent("", v, domains, (nv) => {
+        const next = [...list];
+        if (i < next.length) { if (nv) next[i] = nv; else next.splice(i, 1); }
+        else if (nv) next.push(nv);
+        onChange(next);
+      });
+      row.querySelector("span").remove();
+      box.appendChild(row);
+    });
+    return box;
+  };
+  /* A remove button that reads as one */
+  const del = (label, onClick) => {
+    const b = document.createElement("button");
+    b.className = "vdel"; b.textContent = label;
+    b.addEventListener("click", () => { onClick(); redraw(); });
+    return b;
+  };
+  const add = (label, onClick) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", () => { onClick(); redraw(); });
+    return b;
+  };
+  const cap = (t) => {
+    const d = document.createElement("div");
+    d.className = "vcap"; d.textContent = t;
+    return d;
+  };
+  const rowBox = () => {
+    const d = document.createElement("div");
+    d.className = "vrowbox";
+    return d;
+  };
+
+  /* A <select> over fixed choices. Each option is [value, label]. */
+  const sel = (label, value, options, onChange, hint) => {
+    const e = document.createElement("select");
+    for (const [v, t] of options) {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = t;
+      e.appendChild(o);
+    }
+    e.value = value == null ? "" : String(value);
+    if (e.value !== String(value == null ? "" : value)) {
+      // a value the list doesn't have - keep it rather than silently
+      // rewriting the file to the first option
+      const o = document.createElement("option");
+      o.value = String(value); o.textContent = `${value} (not a choice here)`;
+      e.appendChild(o); e.value = String(value);
+    }
+    if (hint) e.title = hint;
+    e.addEventListener("change", () => { onChange(e.value); redraw(); });
+    return wrap(label, e);
+  };
+  const bool = (label, value, onChange) => {
+    const w = document.createElement("label");
+    w.className = "vfield vbool";
+    const t = document.createElement("span"); t.textContent = label;
+    const sw = document.createElement("ha-switch");
+    sw.checked = !!value;
+    sw.addEventListener("change", () => { onChange(sw.checked); redraw(); });
+    w.append(t, sw);
+    return w;
+  };
+  const color = (label, value, onChange) => {
+    const i = document.createElement("input");
+    i.type = "color";
+    i.value = value || "#888888";
+    i.addEventListener("change", () => { onChange(i.value); redraw(); });
+    return wrap(label, i);
+  };
+  const time = (label, value, onChange) => {
+    const i = document.createElement("input");
+    i.type = "time";
+    i.value = value || "";
+    i.addEventListener("change", () => { onChange(i.value); redraw(); });
+    return wrap(label, i);
+  };
+  return { text, ent, icon, many, del, add, cap, rowBox,
+         sel, bool, color, time, wrap };
+}
+
 const RE_CSS = `
 :host{ display:block; }
 ha-card{ padding:14px; }
@@ -8540,92 +8678,7 @@ class CharroRoomsEditor extends HTMLElement {
   /* Every one of these panels edits a list of objects, which `ha-form` has no
    * good shape for, so they all build rows out of the same three fields.
    * `redraw` is what to re-run after a change — the panel plus the preview. */
-  _fields(redraw) {
-    const wrap = (label, el) => {
-      const w = document.createElement("div");
-      w.className = "vfield";
-      const t = document.createElement("span"); t.textContent = label;
-      w.append(t, el);
-      return w;
-    };
-    const text = (label, value, onChange, placeholder) => {
-      const i = document.createElement("input");
-      i.type = "text"; i.value = value || ""; i.placeholder = placeholder || "";
-      i.addEventListener("change", () => { onChange(i.value.trim()); redraw(); });
-      return wrap(label, i);
-    };
-    const ent = (label, value, domains, onChange, hint) => {
-      if (!customElements.get("ha-entity-picker")) return text(label, value, onChange, hint);
-      const p = document.createElement("ha-entity-picker");
-      p.hass = this._hass;
-      p.value = value || "";
-      p.allowCustomEntity = true;
-      if (domains && domains.length) p.includeDomains = domains;
-      p.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        onChange((ev.detail && ev.detail.value) || "");
-        redraw();
-      });
-      return wrap(label, p);
-    };
-    const icon = (label, value, onChange) => {
-      if (!customElements.get("ha-icon-picker"))
-        return text(label, value, onChange, "mdi:…");
-      const p = document.createElement("ha-icon-picker");
-      p.hass = this._hass;
-      p.value = value || "";
-      p.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        onChange(((ev.detail && ev.detail.value) || "").trim());
-        redraw();
-      });
-      return wrap(label, p);
-    };
-    /* A list of entities, as one picker per entry plus an empty one to
-     * grow into — simpler to reason about than a multi-select. */
-    const many = (label, values, domains, onChange) => {
-      const box = document.createElement("div");
-      box.className = "vfield";
-      const t = document.createElement("span"); t.textContent = label;
-      box.appendChild(t);
-      const list = [].concat(values || []);
-      [...list, ""].forEach((v, i) => {
-        const row = ent("", v, domains, (nv) => {
-          const next = [...list];
-          if (i < next.length) { if (nv) next[i] = nv; else next.splice(i, 1); }
-          else if (nv) next.push(nv);
-          onChange(next);
-        });
-        row.querySelector("span").remove();
-        box.appendChild(row);
-      });
-      return box;
-    };
-    /* A remove button that reads as one */
-    const del = (label, onClick) => {
-      const b = document.createElement("button");
-      b.className = "vdel"; b.textContent = label;
-      b.addEventListener("click", () => { onClick(); redraw(); });
-      return b;
-    };
-    const add = (label, onClick) => {
-      const b = document.createElement("button");
-      b.textContent = label;
-      b.addEventListener("click", () => { onClick(); redraw(); });
-      return b;
-    };
-    const cap = (t) => {
-      const d = document.createElement("div");
-      d.className = "vcap"; d.textContent = t;
-      return d;
-    };
-    const rowBox = () => {
-      const d = document.createElement("div");
-      d.className = "vrowbox";
-      return d;
-    };
-    return { text, ent, icon, many, del, add, cap, rowBox };
-  }
+  _fields(redraw) { return fieldKit(this._hass, redraw); }
 
   /* Screens and sources are lists of objects, which ha-form has no good shape
    * for, so they get their own rows: add, fill in, remove. A room with one
@@ -9733,6 +9786,279 @@ const PANEL_CSS = `
 .body{ height:calc(100% - var(--header-height, 56px)); overflow:auto; }
 `;
 
+/* ====================================================== NOTIFY EDITOR == */
+/*
+ * Who gets told what, and how loudly.
+ *
+ * Every phone in this house is an iPhone, and iOS has no notification
+ * channels - there is no per-app, per-category switch on the phone itself
+ * the way Android has one. So the whole decision is made here, server
+ * side, and carried in push.interruption-level.
+ *
+ * A cell is five-way rather than on/off on purpose. One switch per person
+ * means the first time somebody is woken by a garage door they turn
+ * themselves off entirely and you have lost them for the alarm too.
+ * Doors=quiet, gates=off, alarm=critical is a setting somebody keeps.
+ */
+const WS_SAVE_NOTIFY = "charro/save_notify";
+
+const NT_LEVELS = [
+  ["off", "Off", "Nothing at all."],
+  ["quiet", "Quiet", "Silent, no screen wake — it is in the list when you look."],
+  ["normal", "Normal", "An ordinary notification."],
+  ["urgent", "Urgent", "Breaks through Focus for an hour."],
+  ["critical", "Critical",
+   "Breaks the silent switch and Do Not Disturb. Has to be allowed once per " +
+   "phone in iOS settings, and does not count against the 500-a-day cap."],
+];
+
+/* What a file that doesn't exist yet starts as. Colours match the cards, so
+ * a notification looks like the thing it came from. */
+const NT_CATS = [
+  { key: "doors", name: "Doors", icon: "mdi:door-open", color: "#f2b544" },
+  { key: "locks", name: "Locks", icon: "mdi:lock-open-variant", color: "#e5534b" },
+  { key: "gates", name: "Gates", icon: "mdi:gate-open", color: "#4a9df8" },
+  { key: "garage", name: "Garage", icon: "mdi:garage-open", color: "#8a7cf8" },
+  { key: "alarm", name: "Alarm", icon: "mdi:shield-alert", color: "#e5534b",
+    armed_only: true },
+];
+
+const NT_CSS = `
+.wrapx{ overflow-x:auto; padding-bottom:4px; }
+table.mx{ border-collapse:collapse; width:100%; }
+table.mx th, table.mx td{
+  padding:6px 8px; border-bottom:1px solid var(--divider-color);
+  text-align:left; vertical-align:middle;
+}
+table.mx th{
+  font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--secondary-text-color); font-weight:600; white-space:nowrap;
+}
+table.mx td.who{ font-weight:600; white-space:nowrap; padding-right:14px; }
+table.mx td.who small{ display:block; font-weight:400; opacity:.65; }
+table.mx select{ width:100%; min-width:104px; }
+table.mx select.l-off{ opacity:.45; }
+table.mx select.l-urgent{ border-color:#f2b544; }
+table.mx select.l-critical{ border-color:#e5534b; color:#e5534b; }
+.vbool{ flex-direction:row; align-items:center; gap:6px; }
+`;
+
+class CharroNotifyEditor extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-notify-editor" }; }
+  setConfig(config) { this._config = config || {}; }
+  set hass(h) {
+    this._hass = h;
+    if (!this._built) this._build();
+  }
+  getCardSize() { return 12; }
+
+  _say(msg, cls) {
+    if (this._status) {
+      this._status.textContent = msg;
+      this._status.className = "status " + (cls || "");
+    }
+  }
+
+  _build() {
+    this._built = true;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = RE_CSS + NT_CSS;
+    const card = document.createElement("ha-card");
+
+    const bar = document.createElement("div"); bar.className = "bar";
+    const t = document.createElement("div");
+    t.className = "ttl"; t.textContent = "Notifications";
+    const sp = document.createElement("div"); sp.className = "sp";
+    this._revert = document.createElement("button");
+    this._revert.textContent = "Revert";
+    this._revert.addEventListener("click", () => this._load());
+    this._save = document.createElement("button");
+    this._save.className = "primary";
+    this._save.textContent = "Save";
+    this._save.addEventListener("click", () => this._doSave());
+    bar.append(t, sp, this._revert, this._save);
+
+    this._body = document.createElement("div");
+    this._status = document.createElement("div");
+    this._status.className = "status";
+
+    card.append(bar, this._body, this._status);
+    root.innerHTML = ""; root.append(style, card);
+    this._load();
+  }
+
+  async _load() {
+    try {
+      invalidateRooms();
+      const all = await loadAll(this._hass);
+      const cfg = JSON.parse(JSON.stringify(all.notify || {}));
+      if (!Array.isArray(cfg.people)) cfg.people = [];
+      if (!Array.isArray(cfg.categories) || !cfg.categories.length)
+        cfg.categories = JSON.parse(JSON.stringify(NT_CATS));
+      this._cfg = cfg;
+      this._orig = JSON.stringify(cfg);
+      this._say("");
+      this._paint();
+    } catch (err) {
+      this._say(`Could not read the notification settings — ${err.message}`, "err");
+    }
+  }
+
+  async _doSave() {
+    try {
+      this._save.disabled = true;
+      await this._hass.callWS({ type: WS_SAVE_NOTIFY, config: this._cfg });
+      invalidateRooms();
+      this._orig = JSON.stringify(this._cfg);
+      this._say("Saved.", "ok");
+    } catch (err) {
+      this._say(`Save failed — ${err.message || err.code || err}`, "err");
+    } finally {
+      this._save.disabled = false;
+    }
+  }
+
+  /* Every notify.* service Home Assistant has, phones first. Typing a
+   * service name by hand is how you get a matrix that silently sends
+   * nowhere. */
+  _services() {
+    const svc = (this._hass && this._hass.services && this._hass.services.notify) || {};
+    const all = Object.keys(svc).map((k) => `notify.${k}`).sort();
+    const phones = all.filter((k) => k.indexOf("notify.mobile_app_") === 0);
+    const rest = all.filter((k) => k.indexOf("notify.mobile_app_") !== 0);
+    return [["", "— pick a phone —"]]
+      .concat(phones.map((k) => [k, k.replace("notify.mobile_app_", "")]))
+      .concat(rest.map((k) => [k, k]));
+  }
+
+  _paint() {
+    const f = fieldKit(this._hass, () => this._paint());
+    const cfg = this._cfg;
+    const box = this._body;
+    box.innerHTML = "";
+
+    /* ---- the matrix, first: it is what you came here for ---- */
+    box.appendChild(f.cap("Who gets what"));
+    if (!cfg.people.length) {
+      const n = document.createElement("div");
+      n.className = "vnote";
+      n.textContent = "No phones yet — add one below and the grid appears.";
+      box.appendChild(n);
+    } else {
+      const wrapx = document.createElement("div"); wrapx.className = "wrapx";
+      const tbl = document.createElement("table"); tbl.className = "mx";
+      const hr = document.createElement("tr");
+      hr.appendChild(document.createElement("th"));
+      for (const c of cfg.categories) {
+        const th = document.createElement("th");
+        th.textContent = c.name || c.key;
+        th.title = c.key;
+        hr.appendChild(th);
+      }
+      tbl.appendChild(hr);
+      for (const p of cfg.people) {
+        const tr = document.createElement("tr");
+        const who = document.createElement("td");
+        who.className = "who";
+        who.textContent = p.name || p.key || "?";
+        const sub = document.createElement("small");
+        sub.textContent = (p.service || "no phone").replace("notify.mobile_app_", "");
+        who.appendChild(sub);
+        tr.appendChild(who);
+        for (const c of cfg.categories) {
+          const td = document.createElement("td");
+          const cur = ((p.levels || {})[c.key]) || "off";
+          const e = document.createElement("select");
+          for (const [v, label, hint] of NT_LEVELS) {
+            const o = document.createElement("option");
+            o.value = v; o.textContent = label; o.title = hint;
+            e.appendChild(o);
+          }
+          e.value = cur;
+          e.className = `l-${cur}`;
+          e.title = (NT_LEVELS.find((x) => x[0] === cur) || [])[2] || "";
+          e.addEventListener("change", () => {
+            p.levels = p.levels || {};
+            if (e.value === "off") delete p.levels[c.key];
+            else p.levels[c.key] = e.value;
+            this._paint();
+          });
+          td.appendChild(e);
+          tr.appendChild(td);
+        }
+        tbl.appendChild(tr);
+      }
+      wrapx.appendChild(tbl);
+      box.appendChild(wrapx);
+    }
+
+    /* ---- phones ---- */
+    box.appendChild(f.cap("Phones"));
+    cfg.people.forEach((p, i) => {
+      const set = (k) => (v) => { if (v === "" || v === false || v == null) delete p[k]; else p[k] = v; };
+      const row = f.rowBox();
+      row.appendChild(f.text("Name", p.name, set("name"), "Javon"));
+      row.appendChild(f.text("Key", p.key, (v) =>
+        { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
+        "javon"));
+      row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
+      row.appendChild(f.time("Quiet from", p.quiet_from, set("quiet_from")));
+      row.appendChild(f.time("Quiet until", p.quiet_to, set("quiet_to")));
+      row.appendChild(f.sel("During quiet hours", p.quiet_level || "quiet",
+        NT_LEVELS.map(([v, l]) => [v, l]), set("quiet_level"),
+        "Anything louder than this is brought down to it. Critical is never touched."));
+      row.appendChild(f.del("Remove phone", () => {
+        cfg.people.splice(i, 1);
+      }));
+      box.appendChild(row);
+    });
+    box.appendChild(f.add("+ Phone", () => { cfg.people.push({ key: "", name: "", levels: {} }); }));
+
+    /* ---- categories ---- */
+    box.appendChild(f.cap("Categories"));
+    cfg.categories.forEach((c, i) => {
+      const set = (k) => (v) => { if (v === "" || v === false || v == null) delete c[k]; else c[k] = v; };
+      const row = f.rowBox();
+      row.appendChild(f.text("Name", c.name, set("name"), c.key));
+      row.appendChild(f.text("Key", c.key, (v) =>
+        { c.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); }, "doors"));
+      row.appendChild(f.icon("Icon", c.icon, set("icon")));
+      row.appendChild(f.color("Colour", c.color, set("color")));
+      row.appendChild(f.ent("Camera", c.camera, ["camera"], set("camera")));
+      row.appendChild(f.text("Opens", c.url, set("url"), "/d-charro/security"));
+      row.appendChild(f.bool("Only while armed", c.armed_only, set("armed_only")));
+      row.appendChild(f.del("Remove category", () => {
+        cfg.categories.splice(i, 1);
+        for (const p of cfg.people) if (p.levels) delete p.levels[c.key];
+      }));
+      box.appendChild(row);
+    });
+    box.appendChild(f.add("+ Category", () => { cfg.categories.push({ key: "", name: "" }); }));
+
+    /* ---- the one global ---- */
+    box.appendChild(f.cap("Only while armed"));
+    box.appendChild(f.ent("The alarm this reads", cfg.alarm_entity,
+      ["alarm_control_panel"], (v) => { if (v) cfg.alarm_entity = v; else delete cfg.alarm_entity; }));
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent =
+      "A category ticked “only while armed” sends nothing while this reads " +
+      "disarmed. That cuts the noise more than any switch above, and it is why " +
+      "people leave the rest of it on. An automation calls charro.notify with a " +
+      "category and a message and names nobody.";
+    box.appendChild(note);
+
+    const cap = document.createElement("div");
+    cap.className = "vnote";
+    cap.textContent =
+      "iOS allows 500 pushes a day per phone, resetting at 00:00 UTC, and a " +
+      "Quiet one still counts. Critical ones don’t.";
+    box.appendChild(cap);
+  }
+}
+def("charro-notify-editor", CharroNotifyEditor);
+
 /* ========================================================= CONFIG PANEL ==*/
 /*
  * One sidebar entry for everything Charro, at /charro-config.
@@ -9751,6 +10077,7 @@ const PANEL_CSS = `
 const CONFIG_TABS = [
   ["rooms", "Rooms"],
   ["remotes", "Remotes"],
+  ["notify", "Notifications"],
   ["unifi", "UniFi"],
 ];
 
@@ -9840,7 +10167,9 @@ class CharroConfigPanel extends HTMLElement {
   }
 
   /* Rooms and Remotes are the same element, so they are the same pane. */
-  _paneKey(tab) { return tab === "unifi" ? "unifi" : "editor"; }
+  _paneKey(tab) {
+    return tab === "unifi" || tab === "notify" ? tab : "editor";
+  }
 
   _pane(key) {
     if (this._panes[key]) return this._panes[key];
@@ -9851,6 +10180,9 @@ class CharroConfigPanel extends HTMLElement {
       el = document.createElement("charro-unifi-panel");
       el.setAttribute("embedded", "");
       el.embedded = true;                       // before hass, which renders
+    } else if (key === "notify") {
+      el = document.createElement("charro-notify-editor");
+      el.setConfig({ type: "custom:charro-notify-editor" });
     } else {
       el = document.createElement("charro-rooms-editor");
       el.setConfig({ type: "custom:charro-rooms-editor", panel: true });
