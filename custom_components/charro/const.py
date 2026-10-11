@@ -85,6 +85,13 @@ WATCH_NOISE = ("unavailable", "unknown", "none", "")
 WATCH_ZONE_ATTRS = ("logical_status", "definition")
 WATCH_ZONE_PREFIX = "burglar"
 
+# An Elk burglar zone is a door or a motion detector, and the panel says
+# which: entry/exit and perimeter zones are ways in, interior zones are
+# what watches the space behind them. Six of this house's twenty-five
+# "doors" were motion detectors until this told them apart - and it is
+# the panel's own word for them, not a guess from "Hall Motion".
+WATCH_ZONE_MOTION = "burglar_interior"
+
 # Some things have no state to watch, only a moment. A gate here is a
 # script and a DoorBird relay: nothing reports whether it is open, and the
 # only signal is that somebody pressed it. These are never auto-detected -

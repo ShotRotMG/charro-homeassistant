@@ -79,6 +79,7 @@ from .const import (
     WATCH_PRESS,
     WATCH_SHUT,
     WATCH_ZONE_ATTRS,
+    WATCH_ZONE_MOTION,
     WATCH_ZONE_PREFIX,
 )
 
@@ -584,9 +585,11 @@ class CharroNotifier:
         # device-class sweep alone finds none of them.
         if all(k in attrs for k in WATCH_ZONE_ATTRS):
             definition = str(attrs.get("definition") or "")
-            # burglar zones are doors and windows; fire, water and medical
-            # zones are a different kind of news and stay out of this list
-            return "doors" if definition.startswith(WATCH_ZONE_PREFIX) else None
+            if not definition.startswith(WATCH_ZONE_PREFIX):
+                # fire, heat and water zones are a different kind of news
+                # and have no category here yet
+                return None
+            return "motion" if definition.startswith(WATCH_ZONE_MOTION) else "doors"
 
         table = WATCH_CLASSES.get(domain)
         if not table:
