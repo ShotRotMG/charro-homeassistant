@@ -1,4 +1,5 @@
 .ha_token
+.gh_token
 _to_delete/
 .ha_states.json
 .ha_lights.json
