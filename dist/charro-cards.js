@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.54.0";
+const VERSION = "5.55.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10649,6 +10649,39 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(row);
     }
 
+    /* Some things have no state, only a moment - a gate here is a script
+     * and a DoorBird relay, and nothing about either says "gate" except
+     * its name. So they are added by hand rather than found. */
+    const extra = watch.extra || (watch.extra = {});
+    const addRow = f.rowBox();
+    let pickEnt = "", pickCat = "gates";
+    addRow.appendChild(f.ent("Add something with no state", "",
+      ["script", "button", "input_button", "scene", "binary_sensor", "cover", "lock", "sensor"],
+      (v) => { pickEnt = v; }));
+    addRow.appendChild(f.sel("As", pickCat,
+      cfg.categories.map((c) => [c.key, c.name || c.key]), (v) => { pickCat = v; }));
+    const addBtn = document.createElement("button");
+    addBtn.className = "tiny";
+    addBtn.textContent = "Add";
+    addBtn.addEventListener("click", () => {
+      if (!pickEnt) { this._say("Pick an entity first.", "err"); return; }
+      extra[pickEnt] = pickCat;
+      off.delete(pickEnt);
+      store();
+      this._say(`${pickEnt} added as ${pickCat}. Save, and it is watched.`, "ok");
+      this._paint();
+    });
+    addRow.appendChild(addBtn);
+    box.appendChild(addRow);
+    const anote = document.createElement("div");
+    anote.className = "vnote";
+    anote.textContent =
+      "A script or a button has no open and closed, only a press \u2014 so one "
+      + "of those fires once, when it runs, and never reports a closing. That "
+      + "is how the gates get in: nothing about script.open_gate_east says "
+      + "\u201cgate\u201d except its name, and a name is not evidence.";
+    box.appendChild(anote);
+
     const bar = document.createElement("div");
     bar.className = "clbar";
     const q = document.createElement("input");
@@ -10677,6 +10710,7 @@ class CharroNotifyEditor extends HTMLElement {
       const list = [...off].sort();
       if (list.length) watch.off = list; else delete watch.off;
       if (!Object.keys(over).length) delete watch.cat;
+      if (!Object.keys(watch.extra || {}).length) delete watch.extra;
       this._saveLabel();
     };
     const drawList = () => {
@@ -10719,7 +10753,18 @@ class CharroNotifyEditor extends HTMLElement {
         nm.appendChild(sub);
         const st = document.createElement("div");
         st.className = "st";
-        st.textContent = x.state;
+        st.textContent = x.press ? "on press" : x.state;
+        if (x.added) {
+          st.textContent += "  \u00d7";
+          st.title = "Added by hand \u2014 click to remove";
+          st.style.cursor = "pointer";
+          st.addEventListener("click", (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            delete extra[x.entity];
+            store();
+            this._paint();
+          });
+        }
         const sel = document.createElement("select");
         for (const c of cfg.categories) {
           const o = document.createElement("option");

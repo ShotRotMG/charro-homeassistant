@@ -81,6 +81,14 @@ WATCH_NOISE = ("unavailable", "unknown", "none", "")
 WATCH_ZONE_ATTRS = ("logical_status", "definition")
 WATCH_ZONE_PREFIX = "burglar"
 
+# Some things have no state to watch, only a moment. A gate here is a
+# script and a DoorBird relay: nothing reports whether it is open, and the
+# only signal is that somebody pressed it. These are never auto-detected -
+# nothing about a script says "gate" except its name, and names are not
+# evidence - so they are added by hand in the checklist and only the
+# leading edge counts.
+WATCH_PRESS = ("script", "button", "input_button", "scene")
+
 # Every way an entity in this house says "open", whatever its domain -
 # and every way it says it has gone back to being shut. An Elk zone
 # returns to "Normal" rather than to "off".

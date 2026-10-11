@@ -72,6 +72,7 @@ from .const import (
     WATCH_DEFAULTS,
     WATCH_NOISE,
     WATCH_OPEN,
+    WATCH_PRESS,
     WATCH_SHUT,
     WATCH_ZONE_ATTRS,
     WATCH_ZONE_PREFIX,
@@ -580,6 +581,10 @@ class CharroNotifier:
             cat = where.get("cat")
             if cat and eid not in out and self.hass.states.get(eid) is not None:
                 out[eid] = cat
+        # Anything you added by hand, which is the only way a gate gets in.
+        for eid, cat in ((self.cfg.get("watch") or {}).get("extra") or {}).items():
+            if cat and self.hass.states.get(eid) is not None:
+                out[eid] = cat
         return out
 
     async def async_rescan(self) -> None:
@@ -633,10 +638,6 @@ class CharroNotifier:
         now = (new.state or "").lower()
         if now == was:
             return
-        # Neither end of a transition may be "I don't know". A ratgdo that
-        # drops offline and comes back is not a door that opened.
-        if was in WATCH_NOISE or now in WATCH_NOISE:
-            return
 
         eid = ev.data["entity_id"]
         spec = (self.watching or {}).get(eid)
@@ -647,7 +648,22 @@ class CharroNotifier:
         if not rules.get("on"):
             return
 
-        verb = self._verb(cat, now, was, rules.get("closed") is True)
+        if eid.split(".")[0] in WATCH_PRESS:
+            # A press has no second half. A script reports `on` while it
+            # runs and `off` when it finishes, and the finish is not news;
+            # a button reports the time it was last pushed, so any move is
+            # a push.
+            if eid.startswith("script.") and now != "on":
+                return
+            if was in WATCH_NOISE:
+                return                       # the first reading after a restart
+            verb = "Unlocked" if cat == "locks" else "Opened"
+        else:
+            # Neither end of a transition may be "I don't know". A ratgdo
+            # that drops offline and comes back is not a door that opened.
+            if was in WATCH_NOISE or now in WATCH_NOISE:
+                return
+            verb = self._verb(cat, now, was, rules.get("closed") is True)
         if not verb:
             return
 
@@ -1354,6 +1370,7 @@ def ws_watching(hass, connection, msg):
     watch_cfg = notifier.cfg.get("watch") or {}
     off = set(watch_cfg.get("off") or [])
     override = watch_cfg.get("cat") or {}
+    extra = watch_cfg.get("extra") or {}
     live = notifier.watching or {}
     items = []
     for eid, cat in sorted(notifier.all_candidates().items()):
@@ -1366,6 +1383,10 @@ def ws_watching(hass, connection, msg):
             "guess": cat,
             "on": eid not in off,
             "room": ((live.get(eid) or {}).get("room") or {}).get("name") or "",
+            # added by hand rather than found, so the panel can offer to
+            # take it back out again
+            "added": eid in extra,
+            "press": eid.split(".")[0] in WATCH_PRESS,
         })
     connection.send_result(msg["id"], {
         "items": items,

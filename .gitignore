@@ -11,4 +11,5 @@ __pycache__/
 # HACS repository id, which is nobody else's business, and they are
 # a personal workflow rather than part of the integration.
 release.bat
+release-last.log
 tools/release.py
