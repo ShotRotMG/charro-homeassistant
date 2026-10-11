@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.57.0";
+const VERSION = "5.58.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10727,9 +10727,23 @@ class CharroNotifyEditor extends HTMLElement {
     cl.className = "cl";
     box.appendChild(cl);
 
+    /* Grouped by category, then by name.
+     *
+     * The list arrives sorted by entity id, which until now happened to
+     * match the categories - binary_sensors were motion, covers were
+     * garage, sensor.elkm1_* were doors. Splitting the Elk zones into
+     * doors and motion broke that coincidence and the headers started
+     * repeating down the page, so the order is made explicit here rather
+     * than left to luck. Categories keep the order you put them in. */
+    const catRank = new Map(cfg.categories.map((c, i) => [c.key, i]));
+    const ordered = items.slice().sort((a, b) => {
+      const ra = catRank.has(a.category) ? catRank.get(a.category) : 99;
+      const rb = catRank.has(b.category) ? catRank.get(b.category) : 99;
+      return ra - rb || a.name.localeCompare(b.name);
+    });
     const shown = () => {
       const term = (this._clq || "").toLowerCase();
-      return items.filter((x) => !term
+      return ordered.filter((x) => !term
         || x.name.toLowerCase().indexOf(term) >= 0
         || x.entity.toLowerCase().indexOf(term) >= 0
         || (x.room || "").toLowerCase().indexOf(term) >= 0);
