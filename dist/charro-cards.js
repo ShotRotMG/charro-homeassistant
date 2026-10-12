@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.64.0";
+const VERSION = "5.65.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6998,18 +6998,32 @@ function fieldKit(hass, redraw) {
     });
     return wrap(label, p);
   };
-  const icon = (label, value, onChange) => {
+  /* `suggest` offers a sensible glyph for an empty optional field, as a
+   * button rather than a silent default: typing MDI names by hand is a
+   * spelling test, and a value written into the config without being
+   * asked for is worse than one click. */
+  const icon = (label, value, onChange, hint, suggest) => {
     if (!customElements.get("ha-icon-picker"))
-      return text(label, value, onChange, "mdi:…");
+      return text(label, value, onChange, suggest || "mdi:…");
     const p = document.createElement("ha-icon-picker");
     p.hass = hass;
     p.value = value || "";
+    if (hint) p.title = hint;
     p.addEventListener("value-changed", (ev) => {
       ev.stopPropagation();
       onChange(((ev.detail && ev.detail.value) || "").trim());
       redraw();
     });
-    return wrap(label, p);
+    if (!suggest || value) return wrap(label, p);
+    const box = document.createElement("div");
+    box.style.cssText = "display:flex; gap:6px; align-items:center; flex-wrap:wrap";
+    const b = document.createElement("button");
+    b.className = "tiny";
+    b.textContent = `use ${suggest}`;
+    b.title = "Fill this in. You can change it after.";
+    b.addEventListener("click", () => { onChange(suggest); redraw(); });
+    box.append(p, b);
+    return wrap(label, box);
   };
   /* A list of entities, as one picker per entry plus an empty one to
    * grow into — simpler to reason about than a multi-select. */
@@ -10186,12 +10200,20 @@ const NT_LEVELS = [
 
 /* What a file that doesn't exist yet starts as. Colours match the cards, so
  * a notification looks like the thing it came from. */
+/* Every one of these was checked against a live Home Assistant before it
+ * was written down - mdi:home-cog looked just as plausible and does not
+ * exist. They double as the suggestion offered for an empty field. */
 const NT_CATS = [
-  { key: "doors", name: "Doors", icon: "mdi:door-open", color: "#f2b544" },
-  { key: "locks", name: "Locks", icon: "mdi:lock-open-variant", color: "#e5534b" },
-  { key: "gates", name: "Gates", icon: "mdi:gate-open", color: "#4a9df8" },
-  { key: "garage", name: "Garage", icon: "mdi:garage-open", color: "#8a7cf8" },
-  { key: "motion", name: "Motion", icon: "mdi:motion-sensor", color: "#4ac29a" },
+  { key: "doors", name: "Doors", icon: "mdi:door-open", color: "#f2b544",
+    icon_shut: "mdi:door-closed" },
+  { key: "locks", name: "Locks", icon: "mdi:lock-open-variant", color: "#e5534b",
+    icon_shut: "mdi:lock" },
+  { key: "gates", name: "Gates", icon: "mdi:gate-open", color: "#4a9df8",
+    icon_shut: "mdi:gate" },
+  { key: "garage", name: "Garage", icon: "mdi:garage-open", color: "#8a7cf8",
+    icon_shut: "mdi:garage" },
+  { key: "motion", name: "Motion", icon: "mdi:motion-sensor", color: "#4ac29a",
+    icon_shut: "mdi:motion-sensor-off" },
   { key: "alarm", name: "Alarm", icon: "mdi:shield-alert", color: "#e5534b",
     armed_only: true },
 ];
@@ -10705,7 +10727,12 @@ class CharroNotifyEditor extends HTMLElement {
       row.appendChild(f.text("Name", c.name, set("name"), c.key));
       row.appendChild(f.text("Key", c.key, (v) =>
         { c.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); }, "doors"));
-      row.appendChild(f.icon("Icon", c.icon, set("icon")));
+      row.appendChild(f.icon("Icon", c.icon, set("icon"),
+        "The glyph on the disc when this opens."));
+      row.appendChild(f.icon("Icon when closed", c.icon_shut, set("icon_shut"),
+        "Only used where \u201cAlso when closed\u201d is on for this category "
+        + "in What sets it off. Blank means the same glyph as opening.",
+        (NT_CATS.find((d) => d.key === c.key) || {}).icon_shut));
       row.appendChild(f.color("Colour", c.color, set("color"),
         "The disc behind the glyph when this opens."));
       row.appendChild(f.color("Colour when closed", c.color_shut, set("color_shut"),
@@ -10734,8 +10761,9 @@ class CharroNotifyEditor extends HTMLElement {
       + "reads \u201cOpened\u201d rather than \u201cOpened \u00b7 \u201d \u2014 "
       + "though a word like \u201cin\u201d is left alone. Anything unrecognised "
       + "stays on screen as you typed it, so a mistyped filler looks mistyped. "
-      + "Colour when closed is the disc for the shut half of a pair \u2014 "
-      + "blank uses the opening colour, so nothing changes until you pick one. "
+      + "Icon and Colour when closed are the disc for the shut half of a "
+      + "pair \u2014 blank uses the opening one, so nothing changes until you "
+      + "pick something. "
       + "For a sentence rather than a label, {name} {action} {by}. reads "
       + "\u201cWest Gate opened by Javon.\u201d, and \u201cWest Gate opened.\u201d "
       + "when nobody is known. "

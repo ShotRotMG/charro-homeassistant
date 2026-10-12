@@ -174,7 +174,8 @@ def _in_window(now: str, start: str | None, end: str | None) -> bool:
     return now >= start or now < end          # 22:30 -> 07:00
 
 
-def _notify_payload(cat: dict, call_data: dict, tag: str, color: str = "") -> dict:
+def _notify_payload(cat: dict, call_data: dict, tag: str,
+                    color: str = "", icon: str = "") -> dict:
     """The part of the iOS payload that is the same for everybody.
 
     iOS has no notification channels, so everything that tells one of these
@@ -186,17 +187,18 @@ def _notify_payload(cat: dict, call_data: dict, tag: str, color: str = "") -> di
     communication notification, so it is the thing, not the house.
     """
     data: dict[str, Any] = {"tag": tag, "group": cat.get("group") or cat.get("key")}
-    if cat.get("icon"):
-        data["notification_icon"] = cat["icon"]
-    # Which way the thing went decides the disc colour, and only the caller
-    # knows that, so it arrives already settled.
+    # Both of these depend on which way the thing went, and only the
+    # caller knows that, so they arrive already settled.
+    glyph = icon or cat.get("icon")
+    if glyph:
+        data["notification_icon"] = glyph
     shade = color or cat.get("color")
     if shade:
         data["color"] = shade
     # iOS drops the subtitle on a communication notification - which is
     # what notification_icon makes this - so the category name only earns
     # its place when there is no glyph to carry it.
-    if cat.get("name") and not cat.get("icon"):
+    if cat.get("name") and not glyph:
         data["subtitle"] = cat["name"]
     url = call_data.get("url") or cat.get("url")
     if url:
@@ -452,6 +454,8 @@ class CharroNotifier:
         # and the feed needs to know nothing about direction.
         shade = (cat.get("color_shut") if data.get("shut") else "") \
             or cat.get("color") or ""
+        glyph = (cat.get("icon_shut") if data.get("shut") else "") \
+            or cat.get("icon") or ""
 
         entry = {
             "id": self._new_id(),
@@ -460,7 +464,7 @@ class CharroNotifier:
             "entity": data.get("entity_id") or "",
             "title": data["title"],
             "message": data["message"],
-            "icon": cat.get("icon") or "",
+            "icon": glyph,
             "color": shade,
             "url": data.get("url") or cat.get("url") or "",
             # Kept as its own field as well as inside the message, so the
@@ -528,7 +532,7 @@ class CharroNotifier:
         payload = _notify_payload(
             cat, data,
             f"charro-{entry['category']}-{entry['entity'] or 'all'}",
-            entry.get("color") or "")
+            entry.get("color") or "", entry.get("icon") or "")
         payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
         if level == "critical":
             volume = person.get("critical_volume")
