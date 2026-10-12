@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.63.0";
+const VERSION = "5.64.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10208,6 +10208,7 @@ const NT_SHUT_LABEL = {
 const NT_FIELDS = [
   ["{name}", "the entity's own name"],
   ["{status}", "Opened, Opening, Closed, Unlocked, Locked, Jammed, Motion, Clear"],
+  ["{action}", "the same word lowercased, for mid-sentence"],
   ["{room}", "the room, when a room names this entity"],
   ["{state}", "the raw new state"],
   ["{was}", "the state it came from"],
@@ -10735,6 +10736,9 @@ class CharroNotifyEditor extends HTMLElement {
       + "stays on screen as you typed it, so a mistyped filler looks mistyped. "
       + "Colour when closed is the disc for the shut half of a pair \u2014 "
       + "blank uses the opening colour, so nothing changes until you pick one. "
+      + "For a sentence rather than a label, {name} {action} {by}. reads "
+      + "\u201cWest Gate opened by Javon.\u201d, and \u201cWest Gate opened.\u201d "
+      + "when nobody is known. "
       + "{who} and {by} are filled when the gate, garage or light was worked "
       + "from Home Assistant \u2014 the app, a dashboard, Siri. A car remote "
       + "or a wall button is nobody, and comes out blank rather than guessed.";

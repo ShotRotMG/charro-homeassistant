@@ -815,6 +815,9 @@ class CharroNotifier:
             "name": (new.attributes.get("friendly_name") or eid).strip(),
             "room": room.get("name") or "",
             "status": verb,
+            # The same word in the middle of a sentence. "West Gate opened
+            # by Javon." rather than "West Gate Opened by Javon."
+            "action": verb.lower(),
             "state": new.state,
             "was": old.state,
             "category": (self.category(cat) or {}).get("name") or cat,
