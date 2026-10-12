@@ -105,6 +105,10 @@ WATCH_PRESS = ("script", "button", "input_button", "scene")
 # returns to "Normal" rather than to "off".
 WATCH_OPEN = ("on", "open", "opening", "violated")
 WATCH_SHUT = ("off", "closed", "normal")
+# The verbs that mean the second half of a pair. The cooldown is keyed on
+# the direction, and so is the closed colour - a door that shut can read
+# calmer than the same door opening.
+WATCH_SHUT_VERBS = ("Closed", "Locked")
 
 # What a notification is allowed to say, and what it says by default.
 # Compiled once when the config is saved, never parsed while a door is

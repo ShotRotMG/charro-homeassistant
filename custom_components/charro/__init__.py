@@ -78,6 +78,7 @@ from .const import (
     WATCH_OPEN,
     WATCH_PRESS,
     WATCH_SHUT,
+    WATCH_SHUT_VERBS,
     WATCH_ZONE_ATTRS,
     WATCH_ZONE_MOTION,
     WATCH_ZONE_PREFIX,
@@ -102,6 +103,7 @@ NOTIFY_SCHEMA = vol.Schema(
         vol.Optional("url"): cv.string,
         vol.Optional("people"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("level"): vol.In(NOTIFY_LEVELS),
+        vol.Optional("shut"): cv.boolean,
         vol.Optional("actions"): vol.All(cv.ensure_list, [dict]),
     }
 )
@@ -171,7 +173,7 @@ def _in_window(now: str, start: str | None, end: str | None) -> bool:
     return now >= start or now < end          # 22:30 -> 07:00
 
 
-def _notify_payload(cat: dict, call_data: dict, tag: str) -> dict:
+def _notify_payload(cat: dict, call_data: dict, tag: str, color: str = "") -> dict:
     """The part of the iOS payload that is the same for everybody.
 
     iOS has no notification channels, so everything that tells one of these
@@ -185,8 +187,11 @@ def _notify_payload(cat: dict, call_data: dict, tag: str) -> dict:
     data: dict[str, Any] = {"tag": tag, "group": cat.get("group") or cat.get("key")}
     if cat.get("icon"):
         data["notification_icon"] = cat["icon"]
-    if cat.get("color"):
-        data["color"] = cat["color"]
+    # Which way the thing went decides the disc colour, and only the caller
+    # knows that, so it arrives already settled.
+    shade = color or cat.get("color")
+    if shade:
+        data["color"] = shade
     # iOS drops the subtitle on a communication notification - which is
     # what notification_icon makes this - so the category name only earns
     # its place when there is no glyph to carry it.
@@ -417,6 +422,13 @@ class CharroNotifier:
                 _LOGGER.debug("charro.notify: %r held back, %s is %s", key, alarm, state.state)
                 return None
 
+        # One category, two colours: amber for the door that opened, something
+        # calmer for the same door shutting again. Settled here rather than in
+        # the card, so the journal carries the colour it was actually sent with
+        # and the feed needs to know nothing about direction.
+        shade = (cat.get("color_shut") if data.get("shut") else "") \
+            or cat.get("color") or ""
+
         entry = {
             "id": self._new_id(),
             "ts": dt_util.utcnow().isoformat(),
@@ -425,7 +437,7 @@ class CharroNotifier:
             "title": data["title"],
             "message": data["message"],
             "icon": cat.get("icon") or "",
-            "color": cat.get("color") or "",
+            "color": shade,
             "url": data.get("url") or cat.get("url") or "",
             "to": {},
             "read": [],
@@ -484,7 +496,12 @@ class CharroNotifier:
         rec["level"] = level
         rec["tries"] = attempt + 1
 
-        payload = _notify_payload(cat, data, f"charro-{entry['category']}-{entry['entity'] or 'all'}")
+        # The colour was settled when the event was journalled, and the
+        # entry is the one thing a retry an hour later still has.
+        payload = _notify_payload(
+            cat, data,
+            f"charro-{entry['category']}-{entry['entity'] or 'all'}",
+            entry.get("color") or "")
         payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
         if level == "critical":
             volume = person.get("critical_volume")
@@ -743,7 +760,7 @@ class CharroNotifier:
         # open and never told it was shut again, which is worse than
         # telling you nothing. A repeat is noise; a reversal is the news.
         gap = float(rules.get("cooldown") or 0)
-        way = "shut" if verb in ("Closed", "Locked") else "open"
+        way = "shut" if verb in WATCH_SHUT_VERBS else "open"
         slot = (eid, way)
         last = self._last_fired.get(slot)
         stamp = time.monotonic()
@@ -773,6 +790,8 @@ class CharroNotifier:
         message = render_template(msg_parts, values) or verb
         payload = {"category": cat, "title": title, "message": message,
                    "entity_id": eid}
+        if way == "shut":
+            payload["shut"] = True
         if room.get("url"):
             payload["url"] = room["url"]
         self.hass.async_create_task(self.async_send(payload))

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.60.0";
+const VERSION = "5.61.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7085,12 +7085,28 @@ function fieldKit(hass, redraw) {
     w.append(t, sw);
     return w;
   };
-  const color = (label, value, onChange) => {
+  /* `fallback` makes the swatch optional: blank shows the colour that will
+   * actually be used rather than a grey that looks chosen, and a small reset
+   * gives a way back to blank once something has been picked. */
+  const color = (label, value, onChange, hint, fallback) => {
     const i = document.createElement("input");
     i.type = "color";
-    i.value = value || "#888888";
+    i.value = value || fallback || "#888888";
+    if (hint) i.title = hint;
     i.addEventListener("change", () => { onChange(i.value); redraw(); });
-    return wrap(label, i);
+    if (!fallback) return wrap(label, i);
+    const box = document.createElement("span");
+    box.style.cssText = "display:flex; gap:6px; align-items:center";
+    box.appendChild(i);
+    if (value) {
+      const clr = document.createElement("button");
+      clr.className = "tiny";
+      clr.textContent = "same";
+      clr.title = "Go back to using the colour on the left";
+      clr.addEventListener("click", () => { onChange(""); redraw(); });
+      box.appendChild(clr);
+    }
+    return wrap(label, box);
   };
   const time = (label, value, onChange) => {
     const i = document.createElement("input");
@@ -10402,6 +10418,7 @@ class CharroNotifyEditor extends HTMLElement {
     put("camera", t.camera);
     put("url", t.url);
     put("level", t.level);
+    put("shut", t.shut);
     const p = this._person(t.who);
     if (p && p.key) lines.push(`  people:\n    - ${q(p.key)}`);
     return lines.join("\n");
@@ -10452,6 +10469,7 @@ class CharroNotifyEditor extends HTMLElement {
     if (t.camera) data.camera = t.camera;
     if (t.url) data.url = t.url;
     if (t.level) data.level = t.level;
+    if (t.shut) data.shut = true;
     const p = this._person(who);
     if (p) {
       if (!p.key) {
@@ -10628,7 +10646,12 @@ class CharroNotifyEditor extends HTMLElement {
       row.appendChild(f.text("Key", c.key, (v) =>
         { c.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); }, "doors"));
       row.appendChild(f.icon("Icon", c.icon, set("icon")));
-      row.appendChild(f.color("Colour", c.color, set("color")));
+      row.appendChild(f.color("Colour", c.color, set("color"),
+        "The disc behind the glyph when this opens."));
+      row.appendChild(f.color("Colour when closed", c.color_shut, set("color_shut"),
+        "Only used where \u201cAlso when closed\u201d is on for this category "
+        + "in What sets it off. Blank means the same colour as opening.",
+        c.color || "#888888"));
       row.appendChild(f.ent("Camera", c.camera, ["camera"], set("camera")));
       row.appendChild(f.text("Opens", c.url, set("url"), "/d-charro/security"));
       row.appendChild(f.text("Title", c.title, set("title"), "{name}"));
@@ -10650,7 +10673,9 @@ class CharroNotifyEditor extends HTMLElement {
       + "comes out empty takes its separator with it, so a room with no name "
       + "reads \u201cOpened\u201d rather than \u201cOpened \u00b7 \u201d \u2014 "
       + "though a word like \u201cin\u201d is left alone. Anything unrecognised "
-      + "stays on screen as you typed it, so a mistyped filler looks mistyped.";
+      + "stays on screen as you typed it, so a mistyped filler looks mistyped. "
+      + "Colour when closed is the disc for the shut half of a pair \u2014 "
+      + "blank uses the opening colour, so nothing changes until you pick one.";
     fnote.title = NT_FIELDS.map(([k, v]) => `${k}  ${v}`).join("\n");
     box.appendChild(fnote);
 
@@ -10898,7 +10923,7 @@ class CharroNotifyEditor extends HTMLElement {
       category: (cfg.categories[0] || {}).key || "",
       title: "Front Door",
       message: "Test from Charro Config.",
-      who: "", level: "", about: "", camera: "", url: "",
+      who: "", level: "", about: "", camera: "", url: "", shut: false,
     });
     const trow = f.rowBox();
     trow.appendChild(f.sel("Send to", t.who,
@@ -10919,6 +10944,7 @@ class CharroNotifyEditor extends HTMLElement {
       "binary_sensor.front_door"));
     trow.appendChild(f.ent("Camera", t.camera, ["camera"], (v) => { t.camera = v; }));
     trow.appendChild(f.text("Opens", t.url, (v) => { t.url = v; }, "/d-charro/security"));
+    trow.appendChild(f.bool("Closing", t.shut, (v) => { t.shut = v; }));
     box.appendChild(trow);
 
     const brow = document.createElement("div");

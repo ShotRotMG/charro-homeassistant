@@ -101,6 +101,15 @@ notify:
             - normal
             - urgent
             - critical
+    shut:
+      name: Closing
+      description: >-
+        This is the shut half of a pair - closed, locked - so the category's
+        closed colour is used instead of its open one. Set by the watcher;
+        only worth setting by hand to see what one looks like.
+      required: false
+      selector:
+        boolean:
     people:
       name: Only these people
       description: >-
