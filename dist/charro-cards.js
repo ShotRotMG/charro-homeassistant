@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.69.0";
+const VERSION = "5.70.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5090,6 +5090,34 @@ class CharroVideoCard extends HTMLElement {
       this._out.appendChild(prow);
     }
 
+    /* Nothing below here means anything while the screen is off: a row of
+     * inputs for a dark television, and a D-pad whose buttons reach a box
+     * nobody is watching. The power chip above is the whole of what is
+     * useful, so the rest is skipped - and with tabs the two panes are left
+     * empty, which is what .vpane:empty has always had a sentence ready for.
+     *
+     * The cost, stated because it is real: _pickSource ends in _wake, so a
+     * source chip was also how you turned the screen on to that input. Cold
+     * to Dish was one press and is now two - power, then the input once the
+     * row comes back. A clean pop-up is worth the second press; a remote
+     * that does nothing is not worth the first.
+     *
+     * But only where there is something else to press. A display with no
+     * power entity is woken by picking a source and by nothing else, so
+     * hiding the row there would not cost a press, it would leave a dark
+     * screen with no way on at all. Those keep their sources and lose only
+     * the remote, below. */
+    const dark = !this._isLive(d);
+    if (dark && (sepPower || screenPower(d))) {
+      if (offChip && !offChip.parentNode) {
+        const orow = document.createElement("div");
+        orow.className = "vrow";
+        orow.appendChild(offChip);
+        this._out.appendChild(orow);
+      }
+      return;
+    }
+
     pane("sources");
     // ---- what's feeding it
     const sf = this._sourceFrom(d);
@@ -5132,6 +5160,10 @@ class CharroVideoCard extends HTMLElement {
       orow.appendChild(offChip);
       this._out.appendChild(orow);
     }
+
+    // The no-power-entity case from above: it kept its sources, because they
+    // are its on switch. The remote is still pointed at a dark screen.
+    if (dark) return;
 
     pane("remote");
     // ---- and the buttons for it
