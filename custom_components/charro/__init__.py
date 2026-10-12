@@ -104,6 +104,7 @@ NOTIFY_SCHEMA = vol.Schema(
         vol.Optional("people"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("level"): vol.In(NOTIFY_LEVELS),
         vol.Optional("shut"): cv.boolean,
+        vol.Optional("who"): cv.string,
         vol.Optional("actions"): vol.All(cv.ensure_list, [dict]),
     }
 )
@@ -325,6 +326,7 @@ class CharroNotifier:
         self._unsub_watch = None
         self._last_fired: dict = {}
         self._tpl: dict = {}
+        self._user_names: dict[str, str] = {}
 
     # ----------------------------------------------------------- state --
 
@@ -335,6 +337,28 @@ class CharroNotifier:
             await self.hass.async_add_executor_job(_read_journal, self.path)
         )
         await self._async_resume()
+
+    async def async_users(self) -> None:
+        """Who the Home Assistant logins are, keyed by id.
+
+        The hot path needs to turn the user id stamped on a state change
+        into a name, and the hot path cannot await, so the list is cached
+        here and refreshed with the rest of the rescan. A system login is
+        kept with an empty name rather than left out, so that looking one
+        up is a hit and does not look like a cache that needs refilling.
+
+        Logins change about once a year. One added since the last rescan
+        costs its first event the attribution and is right from then on.
+        """
+        try:
+            users = await self.hass.auth.async_get_users()
+        except Exception:                        # noqa: BLE001 - never fatal
+            _LOGGER.debug("charro: could not read the login list", exc_info=True)
+            return
+        self._user_names = {
+            u.id: ("" if u.system_generated else (u.name or "").strip())
+            for u in users
+        }
 
     def set_config(self, cfg: dict) -> None:
         """The tab just saved. Nothing reads the file again until a restart."""
@@ -439,6 +463,9 @@ class CharroNotifier:
             "icon": cat.get("icon") or "",
             "color": shade,
             "url": data.get("url") or cat.get("url") or "",
+            # Kept as its own field as well as inside the message, so the
+            # feed and anything later can show it without reading prose.
+            "who": data.get("who") or "",
             "to": {},
             "read": [],
         }
@@ -681,6 +708,7 @@ class CharroNotifier:
         nothing else - no registry walk, no room file, no classification,
         no string matching per event.
         """
+        await self.async_users()
         watch_cfg = self.cfg.get("watch") or {}
         off = set(watch_cfg.get("off") or [])
         override = watch_cfg.get("cat") or {}
@@ -770,6 +798,18 @@ class CharroNotifier:
             return
         self._last_fired[slot] = stamp
 
+        # Who did it, where Home Assistant actually knows. A tap in the app
+        # or on a dashboard stamps the signed-in user on the context, and it
+        # survives into the state being read here - measured on six days of
+        # gate presses, which came back as two different people. A car remote
+        # at the gate, a wall button in the garage or a key in a door stamps
+        # nobody, and an empty answer is the honest one; guessing from who
+        # happens to be home would be worse than saying nothing.
+        uid = getattr(new.context, "user_id", None) or ""
+        who = self._user_names.get(uid, "")
+        if uid and uid not in self._user_names:
+            self.hass.async_create_task(self.async_users())   # a new login
+
         room = spec.get("room") or {}
         values = {
             "name": (new.attributes.get("friendly_name") or eid).strip(),
@@ -780,6 +820,11 @@ class CharroNotifier:
             "category": (self.category(cat) or {}).get("name") or cat,
             "entity": eid,
             "time": dt_util.now().strftime("%H:%M"),
+            "who": who,
+            # The preposition travels with the name so that it leaves with
+            # it: "Opened - by Jordan" when there is a name, "Opened" when
+            # there is not, rather than a stranded "by".
+            "by": f"by {who}" if who else "",
         }
         # Already parsed, back when the config was saved. This is a join
         # over a short list and nothing else.
@@ -792,6 +837,8 @@ class CharroNotifier:
                    "entity_id": eid}
         if way == "shut":
             payload["shut"] = True
+        if who:
+            payload["who"] = who
         if room.get("url"):
             payload["url"] = room["url"]
         self.hass.async_create_task(self.async_send(payload))

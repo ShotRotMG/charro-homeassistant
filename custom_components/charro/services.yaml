@@ -101,6 +101,16 @@ notify:
             - normal
             - urgent
             - critical
+    who:
+      name: Who
+      description: >-
+        The person this is down to, for the journal. The watcher fills it
+        from the Home Assistant user stamped on the event; there is nobody
+        to name when a gate was opened by a car remote.
+      required: false
+      example: Jordan
+      selector:
+        text:
     shut:
       name: Closing
       description: >-

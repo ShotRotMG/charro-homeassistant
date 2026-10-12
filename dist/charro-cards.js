@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.61.0";
+const VERSION = "5.62.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10200,13 +10200,15 @@ const NT_CATS = [
  * you save, never while a door is opening. */
 const NT_FIELDS = [
   ["{name}", "the entity's own name"],
-  ["{status}", "Opened, Closed, Unlocked, Locked, Jammed, Motion, Clear"],
+  ["{status}", "Opened, Opening, Closed, Unlocked, Locked, Jammed"],
   ["{room}", "the room, when a room names this entity"],
   ["{state}", "the raw new state"],
   ["{was}", "the state it came from"],
   ["{category}", "this category's name"],
   ["{time}", "24-hour clock"],
   ["{entity}", "the entity id"],
+  ["{who}", "who did it, when Home Assistant knows - blank otherwise"],
+  ["{by}", "the same, as \u201cby Jordan\u201d - the word leaves with the name"],
 ];
 
 const NT_CSS = `
@@ -10675,7 +10677,10 @@ class CharroNotifyEditor extends HTMLElement {
       + "though a word like \u201cin\u201d is left alone. Anything unrecognised "
       + "stays on screen as you typed it, so a mistyped filler looks mistyped. "
       + "Colour when closed is the disc for the shut half of a pair \u2014 "
-      + "blank uses the opening colour, so nothing changes until you pick one.";
+      + "blank uses the opening colour, so nothing changes until you pick one. "
+      + "{who} and {by} are filled when the gate, garage or light was worked "
+      + "from Home Assistant \u2014 the app, a dashboard, Siri. A car remote "
+      + "or a wall button is nobody, and comes out blank rather than guessed.";
     fnote.title = NT_FIELDS.map(([k, v]) => `${k}  ${v}`).join("\n");
     box.appendChild(fnote);
 
