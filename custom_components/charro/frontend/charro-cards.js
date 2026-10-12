@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.66.0";
+const VERSION = "5.67.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3815,6 +3815,10 @@ class CharroRoomCard extends CharroBase {
     this._card = null;
     this._building = false;
     this._merged = null;
+    /* Both of these say "this card has rendered". They have to be cleared
+     * here or a config change blanks the page and nothing rebuilds it. */
+    this._pageCards = null;
+    this._settled = false;
     this._tplP = this._loadTpl(config);
     // the room arrives over the websocket, so it can't start until `hass`
     // does - _resolve kicks it off, which is the first thing _build awaits
@@ -3827,9 +3831,24 @@ class CharroRoomCard extends CharroBase {
     const first = !this._hass;
     this._hass = hass;
     if (this._popup) this._popup.hass = hass;
+    /* These three are one decision, and they used to be two.
+     *
+     * `_build()` was the fallback for "no card yet", but page mode never
+     * sets `_card` - `_buildPage` returns before `super._build()` - so the
+     * fallback fired on every single state update. The line above it handed
+     * the update to each child card correctly and the next line then threw
+     * all of them away and rebuilt the page from scratch: measured at four
+     * teardowns a second and ninety-nine fresh button-cards in eight, which
+     * is both the flicker and the cost. Popup mode had the same hole, so
+     * every room card on the rooms page re-ran _claimHash and _syncHash
+     * forever.
+     *
+     * A child card takes a new `hass` and updates itself. That is the whole
+     * update path, and it was already written - it just could never be
+     * reached. */
     if (this._pageCards) for (const c of this._pageCards) c.hass = hass;
-    if (this._card) this._card.hass = hass;
-    else this._build();
+    else if (this._card) this._card.hass = hass;
+    else if (!this._settled) this._build();
     if (first && (this._hash || this._mediaHash || this._tvHash)) _syncHash();
   }
 
@@ -3892,7 +3911,9 @@ class CharroRoomCard extends CharroBase {
 
     const mode = this._config.mode || "tile";
     if (mode === "page") return this._buildPage(m);
-    if (mode === "popup") { this._claimHash(m); return; }
+    // A pop-up card renders nothing until its hash is hit, so the claim is
+    // all there is to do - and doing it once is all that was ever wanted.
+    if (mode === "popup") { this._settled = true; this._claimHash(m); return; }
 
     await super._build();          // the chip tile, via button-card
     this._claimHash(m);
