@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.67.0";
+const VERSION = "5.68.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2464,6 +2464,49 @@ const SCENE_ATTRS = {
   cover: ["current_position", "current_tilt_position"],
 };
 
+/* What a light calls "no effect". There is no standard for it - Hue says
+ * "none", WLED says "Solid", an ESPHome light says whatever its author
+ * typed - so the name is read out of the light's own effect_list rather
+ * than guessed. Sending one a word it does not know is an error, not a
+ * fallback, which is why nothing is invented when the list has none. */
+const SCENE_EFFECT_NONE = ["none", "solid", "off", "no effect"];
+const SCENE_COLOR_ATTRS = ["color_temp_kelvin", "hs_color", "rgb_color", "color_mode"];
+
+function isNeutralEffect(v) {
+  return v == null || SCENE_EFFECT_NONE.includes(String(v).trim().toLowerCase());
+}
+
+function neutralEffect(st) {
+  for (const name of (st.attributes && st.attributes.effect_list) || [])
+    if (SCENE_EFFECT_NONE.includes(String(name).trim().toLowerCase())) return name;
+  return null;
+}
+
+/* Two things a captured light gets wrong on its own.
+ *
+ * A light mid-colorloop also reports a colour, and replaying both hands it
+ * two instructions at once; which one survives is up to the firmware. So a
+ * live effect is kept with its brightness and without the colour it
+ * happened to be showing at that instant.
+ *
+ * The other way round matters more. A light that reports `effect: null`
+ * stores nothing - the capture skips nulls - so recalling that scene while
+ * the light is mid-effect says nothing about effects and the effect simply
+ * carries on. Since most lights ignore colour while an effect runs, the
+ * scene looks like it did nothing at all. An explicit "no effect" is what
+ * actually stops it. */
+function sceneLightFix(e, st) {
+  if (st.state !== "on" || !((st.attributes || {}).effect_list || []).length) return;
+  if (!isNeutralEffect(e.effect)) {
+    for (const a of SCENE_COLOR_ATTRS) delete e[a];
+    return;
+  }
+  if (e.effect === undefined) {
+    const off = neutralEffect(st);
+    if (off !== null) e.effect = off;
+  }
+}
+
 function sceneGroupIds(r, group) {
   const ids = [];
   const add = (x) => { const id = lightId(x); if (id) ids.push(id); };
@@ -2511,6 +2554,7 @@ function captureScene(r, groups, hass) {
         const v = st.attributes ? st.attributes[a] : undefined;
         if (v !== undefined && v !== null) e[a] = v;
       }
+      if (id.startsWith("light.")) sceneLightFix(e, st);
       out[id] = e;
     }
   }
