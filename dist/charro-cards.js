@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.65.0";
+const VERSION = "5.66.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10744,6 +10744,10 @@ class CharroNotifyEditor extends HTMLElement {
       row.appendChild(f.text("Title", c.title, set("title"), "{name}"));
       row.appendChild(f.text("Message", c.message, set("message"),
         "{status} \u00b7 {room}"));
+      /* Stored only when switched off: on is the default and the common
+       * case, and a file full of "replace": true says nothing. */
+      row.appendChild(f.bool("Replace the last one", c.replace !== false,
+        (v) => { if (v) delete c.replace; else c.replace = false; }));
       row.appendChild(f.bool("Only while armed", c.armed_only, set("armed_only")));
       row.appendChild(f.del("Remove category", () => {
         cfg.categories.splice(i, 1);
@@ -10767,6 +10771,12 @@ class CharroNotifyEditor extends HTMLElement {
       + "For a sentence rather than a label, {name} {action} {by}. reads "
       + "\u201cWest Gate opened by Javon.\u201d, and \u201cWest Gate opened.\u201d "
       + "when nobody is known. "
+      + "Replace the last one means a second event for the same thing, the "
+      + "same way, takes the place of the first on the lock screen instead "
+      + "of stacking under it \u2014 opening and closing are separate, so one "
+      + "never hides the other. Switch it off and every event stands on its "
+      + "own. Either way all of them are in the feed, and a replaced one "
+      + "still counts against the daily cap. "
       + "{who} and {by} are filled when the gate, garage or light was worked "
       + "from Home Assistant \u2014 the app, a dashboard, Siri. A car remote "
       + "or a wall button is nobody, and comes out blank rather than guessed.";

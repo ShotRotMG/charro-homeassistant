@@ -473,6 +473,10 @@ class CharroNotifier:
             "to": {},
             "read": [],
         }
+        # Only when it is true, because it goes on every entry in a file
+        # with two thousand of them and False is the common case.
+        if data.get("shut"):
+            entry["shut"] = True
         self.entries.append(entry)
         self._schedule_flush()
 
@@ -529,9 +533,18 @@ class CharroNotifier:
 
         # The colour was settled when the event was journalled, and the
         # entry is the one thing a retry an hour later still has.
+        # A tag is an identity on iOS: the next notification carrying it
+        # replaces the last one rather than stacking under it. That is what
+        # keeps a door that cannot make up its mind to one line - but the
+        # direction has to be part of it, or a gate shutting overwrites the
+        # news that it opened and the lock screen says only "Closed".
+        if cat.get("replace") is False:
+            tag = f"charro-{entry['id']}"
+        else:
+            tag = (f"charro-{entry['category']}-{entry['entity'] or 'all'}"
+                   f"-{'shut' if entry.get('shut') else 'open'}")
         payload = _notify_payload(
-            cat, data,
-            f"charro-{entry['category']}-{entry['entity'] or 'all'}",
+            cat, data, tag,
             entry.get("color") or "", entry.get("icon") or "")
         payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
         if level == "critical":
