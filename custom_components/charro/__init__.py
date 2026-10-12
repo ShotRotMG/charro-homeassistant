@@ -841,10 +841,14 @@ class CharroNotifier:
             "entity": eid,
             "time": dt_util.now().strftime("%H:%M"),
             "who": who,
-            # The preposition travels with the name so that it leaves with
+            # The preposition travels with the word so that it leaves with
             # it: "Opened - by Jordan" when there is a name, "Opened" when
-            # there is not, rather than a stranded "by".
+            # there is not, rather than a stranded "by". A literal "by" or
+            # "in" typed into the template is text, and the trimmer leaves
+            # text alone, which is how "Closed in" with nothing after it
+            # reached a phone.
             "by": f"by {who}" if who else "",
+            "in": f"in {room.get('name')}" if room.get("name") else "",
         }
         # Already parsed, back when the config was saved. This is a join
         # over a short list and nothing else.

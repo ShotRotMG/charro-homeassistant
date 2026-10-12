@@ -115,7 +115,7 @@ WATCH_SHUT_VERBS = ("Closed", "Locked", "Clear")
 # opening - the whole point of precompiling is that firing is a join
 # over a short list and nothing else.
 NOTIFY_FIELDS = ("name", "room", "status", "state", "was", "category",
-                 "entity", "time", "who", "by", "action")
+                 "entity", "time", "who", "by", "action", "in")
 NOTIFY_TITLE = "{name}"
 NOTIFY_MESSAGE = "{status} \u00b7 {room}"
 

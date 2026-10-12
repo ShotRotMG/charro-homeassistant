@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.68.0";
+const VERSION = "5.69.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10297,6 +10297,7 @@ const NT_FIELDS = [
   ["{status}", "Opened, Opening, Closed, Unlocked, Locked, Jammed, Motion, Clear"],
   ["{action}", "the same word lowercased, for mid-sentence"],
   ["{room}", "the room, when a room names this entity"],
+  ["{in}", "the same as \u201cin Casita\u201d - the word leaves with the room"],
   ["{state}", "the raw new state"],
   ["{was}", "the state it came from"],
   ["{category}", "this category's name"],
@@ -10833,6 +10834,9 @@ class CharroNotifyEditor extends HTMLElement {
       + "Icon and Colour when closed are the disc for the shut half of a "
       + "pair \u2014 blank uses the opening one, so nothing changes until you "
       + "pick something. "
+      + "Type the word in yourself and it stays whatever happens, which is "
+      + "how \u201cClosed in\u201d with nothing after it reaches a phone; "
+      + "{in} and {by} carry their own word and take it with them. "
       + "For a sentence rather than a label, {name} {action} {by}. reads "
       + "\u201cWest Gate opened by Javon.\u201d, and \u201cWest Gate opened.\u201d "
       + "when nobody is known. "
