@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.59.0";
+const VERSION = "5.60.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10342,6 +10342,13 @@ class CharroNotifyEditor extends HTMLElement {
       try {
         this._watch = await this._hass.callWS({ type: WS_WATCHING });
       } catch (err) { this._watch = null; }
+      /* Who Home Assistant actually has. Admin-only, so a non-admin
+       * falls back to typing the name - which is all this ever was. */
+      try {
+        const list = await this._hass.callWS({ type: "config/auth/list" });
+        this._users = list.filter((u) => !u.system_generated && u.is_active)
+          .map((u) => u.name).filter(Boolean).sort();
+      } catch (err) { this._users = null; }
       this._say("");
       this._paint();
     } catch (err) {
@@ -10584,8 +10591,16 @@ class CharroNotifyEditor extends HTMLElement {
         { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
         "javon"));
       row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
-      row.appendChild(f.text("HA user", p.ha_user, set("ha_user"),
-        "the Home Assistant login"));
+      /* Typing a login by hand is a spelling test nobody needs to sit:
+       * the match is on the name, so one wrong letter silently means
+       * "this row is nobody" and Mark all read stops working. */
+      row.appendChild(this._users && this._users.length
+        ? f.sel("HA user", p.ha_user || "",
+            [["", "\u2014 nobody \u2014"]].concat(this._users.map((n) => [n, n])),
+            set("ha_user"),
+            "Which Home Assistant login this phone belongs to. It is what "
+            + "makes the feed's unread count and Mark all read work.")
+        : f.text("HA user", p.ha_user, set("ha_user"), "the Home Assistant login"));
       row.appendChild(f.time("Quiet from", p.quiet_from, set("quiet_from")));
       row.appendChild(f.time("Quiet until", p.quiet_to, set("quiet_to")));
       row.appendChild(f.sel("During quiet hours", p.quiet_level || "quiet",
