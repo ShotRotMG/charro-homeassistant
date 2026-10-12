@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.62.0";
+const VERSION = "5.63.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10196,11 +10196,18 @@ const NT_CATS = [
     armed_only: true },
 ];
 
+/* What the other half of a pair is called, per category - a detector
+ * clears, a lock locks, everything else shuts. */
+const NT_SHUT_LABEL = {
+  locks: "Also when locked",
+  motion: "Also when clear",
+};
+
 /* What a title or message may say. Parsed once by the integration when
  * you save, never while a door is opening. */
 const NT_FIELDS = [
   ["{name}", "the entity's own name"],
-  ["{status}", "Opened, Opening, Closed, Unlocked, Locked, Jammed"],
+  ["{status}", "Opened, Opening, Closed, Unlocked, Locked, Jammed, Motion, Clear"],
   ["{room}", "the room, when a room names this entity"],
   ["{state}", "the raw new state"],
   ["{was}", "the state it came from"],
@@ -10594,6 +10601,56 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(wrapx);
     }
 
+    /* A category the checklist can file into but that is not in the list
+     * is a hole you cannot see: the watcher classifies the event, the
+     * notifier looks the category up, finds nothing and drops it with a
+     * log line nobody reads. The grid is where you notice the column is
+     * missing, so this is where it says why. */
+    const have = new Set(cfg.categories.map((c) => c.key));
+    const gone = NT_CATS.filter((d) => !have.has(d.key));
+    if (gone.length) {
+      const rules = (this._watch && this._watch.rules) || {};
+      const live = (d) => {
+        const w = (cfg.watch || {})[d.key] || rules[d.key] || {};
+        return w.on !== false;
+      };
+      const losing = gone.some(live);
+      const warn = document.createElement("div");
+      /* Red only when events are actually going in the bin. One deleted
+       * on purpose earns a note, not a warning that never goes away. */
+      warn.className = losing ? "status err" : "vnote";
+      const names = gone.map((d) => d.name).join(", ");
+      warn.textContent = `${names} \u2014 not in the list below, so there is `
+        + `no column here and nothing can be switched on. `
+        + (losing
+            ? "Anything the checklist files under "
+              + gone.filter(live).map((d) => d.name).join(" or ")
+              + " is being dropped."
+            : "Switched off in What sets it off, so nothing is being dropped "
+              + "today - but switching it on without adding it would be.");
+      box.appendChild(warn);
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      bar.style.marginTop = "8px";
+      const order = NT_CATS.map((x) => x.key);
+      for (const d of gone) {
+        const b = document.createElement("button");
+        b.className = "tiny";
+        b.textContent = `+ Add ${d.name}`;
+        b.addEventListener("click", () => {
+          /* Back into the position it has in the defaults, not onto the
+           * end: the checklist groups by this order, so a category tacked
+           * on after Alarm puts its headers in the wrong place. */
+          const at = cfg.categories.findIndex(
+            (c) => order.indexOf(c.key) > order.indexOf(d.key));
+          cfg.categories.splice(at < 0 ? cfg.categories.length : at, 0, { ...d });
+          this._paint();
+        });
+        bar.appendChild(b);
+      }
+      box.appendChild(bar);
+    }
+
     /* ---- phones ---- */
     box = this._section(root, "phones", "Phones",
       cfg.people.map((p) => p.name || p.key || "?").join(", ") || "none");
@@ -10715,7 +10772,7 @@ class CharroNotifyEditor extends HTMLElement {
       lbl.append(nm, cnt);
       row.appendChild(lbl);
       row.appendChild(f.bool("Watch", w.on !== false, (v) => { w.on = v; }));
-      row.appendChild(f.bool(key === "locks" ? "Also when locked" : "Also when closed",
+      row.appendChild(f.bool(NT_SHUT_LABEL[key] || "Also when closed",
         w.closed === true, (v) => { if (v) w.closed = true; else delete w.closed; }));
       row.appendChild(f.text("Cooldown (s)", String(w.cooldown == null ? 60 : w.cooldown),
         (v) => { const n = Number(v); if (!isNaN(n) && n >= 0) w.cooldown = n; }, "60"));

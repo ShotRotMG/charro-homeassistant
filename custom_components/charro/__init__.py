@@ -860,6 +860,14 @@ class CharroNotifier:
             if closed_too and now == "locked":
                 return "Locked"
             return None
+        if category == "motion":
+            # A detector does not open, and "Opened" is what this said
+            # before there was a branch for it. Clear is the other half,
+            # and counts as the shut direction for the cooldown and the
+            # closed colour, same as Closed and Locked.
+            if now in WATCH_OPEN:
+                return "Motion"
+            return "Clear" if closed_too and now in WATCH_SHUT else None
         if now in WATCH_OPEN:
             return "Opening" if now == "opening" else "Opened"
         if closed_too and now in WATCH_SHUT:
