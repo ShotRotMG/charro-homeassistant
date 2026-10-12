@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.58.0";
+const VERSION = "5.59.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10681,22 +10681,33 @@ class CharroNotifyEditor extends HTMLElement {
      * and a DoorBird relay, and nothing about either says "gate" except
      * its name. So they are added by hand rather than found. */
     const extra = watch.extra || (watch.extra = {});
+    /* The half-filled row lives on the element, not in this function.
+     *
+     * Every picker calls redraw() when it changes, which repaints this
+     * whole section - so a pending choice held in a local variable was
+     * wiped by the very act of making it. You picked an entity and
+     * watched it vanish. */
+    const pick = this._pick || (this._pick = {
+      entity: "", cat: (cfg.categories.find((c) => c.key === "gates")
+                        || cfg.categories[0] || {}).key || "",
+    });
     const addRow = f.rowBox();
-    let pickEnt = "", pickCat = "gates";
-    addRow.appendChild(f.ent("Add something with no state", "",
+    addRow.appendChild(f.ent("Add something with no state", pick.entity,
       ["script", "button", "input_button", "scene", "binary_sensor", "cover", "lock", "sensor"],
-      (v) => { pickEnt = v; }));
-    addRow.appendChild(f.sel("As", pickCat,
-      cfg.categories.map((c) => [c.key, c.name || c.key]), (v) => { pickCat = v; }));
+      (v) => { pick.entity = v; }));
+    addRow.appendChild(f.sel("As", pick.cat,
+      cfg.categories.map((c) => [c.key, c.name || c.key]), (v) => { pick.cat = v; }));
     const addBtn = document.createElement("button");
     addBtn.className = "tiny";
     addBtn.textContent = "Add";
     addBtn.addEventListener("click", () => {
-      if (!pickEnt) { this._say("Pick an entity first.", "err"); return; }
-      extra[pickEnt] = pickCat;
-      off.delete(pickEnt);
+      if (!pick.entity) { this._say("Pick an entity first.", "err"); return; }
+      const what = pick.entity;
+      extra[what] = pick.cat;
+      off.delete(what);
       store();
-      this._say(`${pickEnt} added as ${pickCat}. Save, and it is watched.`, "ok");
+      this._pick = null;                       // the row empties on success
+      this._say(`${what} added as ${pick.cat}. Save, and it is watched.`, "ok");
       this._paint();
     });
     addRow.appendChild(addBtn);
