@@ -351,7 +351,7 @@
             ],
             "receiver": [
               {
-                "display": "[[[ const e = variables.receiver_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[ const p = variables.projector_entity; const ps = p && states[p] && states[p].state; if (ps && !['off','unavailable','unknown'].includes(ps)) return 'none'; const e = variables.receiver_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
@@ -959,7 +959,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.orange.bg ]]]"
+                    "background": "[[[ return variables.pal.violet.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -970,7 +970,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.orange.fg ]]]"
+                    "color": "[[[ return variables.pal.violet.fg ]]]"
                   }
                 ]
               },
@@ -1009,7 +1009,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.sky.bg ]]]"
+                    "background": "[[[ return variables.pal.violet.bg ]]]"
                   }
                 ],
                 "icon": [
@@ -1020,7 +1020,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.sky.fg ]]]"
+                    "color": "[[[ return variables.pal.violet.fg ]]]"
                   }
                 ]
               },

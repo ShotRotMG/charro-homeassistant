@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.70.0";
+const VERSION = "5.71.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3038,11 +3038,24 @@ function roomChips(r, hass) {
                tap: { kind: "more-info", entity: r.media_player } });
   }
 
+  /* One violet for the whole screen setup: a television, a projector and
+   * the receiver feeding them are one thing to glance at, and three
+   * colours said they were three. */
+  /* And while the projector is up, the receiver chip is the same sentence
+   * twice - Theatre showed a projector and a receiver side by side and
+   * meant "the projector is on". This is the projector chip's own
+   * visibility test rather than a second expression that says nearly the
+   * same thing, so the invariant is "never both" and cannot drift. */
+  const projLit = (() => {
+    const p = r.projector_entity && hass.states[r.projector_entity];
+    return !!p && !["off", "unavailable", "unknown"].includes(p.state);
+  })();
   for (const [key, icon, col, label] of [
-    ["tv_entity", "mdi:television", CHIP_ORANGE, "TV"],
-    ["projector_entity", "mdi:projector", CHIP_SKY, "Projector"],
+    ["tv_entity", "mdi:television", CHIP_VIOLET, "TV"],
+    ["projector_entity", "mdi:projector", CHIP_VIOLET, "Projector"],
     ["receiver_entity", "mdi:audio-video", CHIP_VIOLET, "Receiver"],
   ]) {
+    if (key === "receiver_entity" && projLit) continue;
     const id = key === "tv_entity" ? roomTv(r) : r[key];
     const st = id && hass.states[id];
     if (!st || OFFISH.includes(st.state) || st.state === "idle") continue;
