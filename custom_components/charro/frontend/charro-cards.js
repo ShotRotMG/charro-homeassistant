@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.74.0";
+const VERSION = "5.75.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2948,6 +2948,70 @@ const CHIP_DOOR_MOVE = pal("door_move");
 /* Elk zones say "Violated"; covers say "open"; binary sensors say "on" */
 const OPENISH = ["violated", "on", "open", "opening"];
 
+/* Every chip the room can draw, named once.
+ *
+ * A chip's icon and colour used to be written twice - here for the pop-up
+ * header and again in room-card.json for the tile - which is why turning
+ * the TV chip violet meant editing two files, and why the two could
+ * silently disagree about what a chip looks like. This list is the one
+ * place; both renderers resolve against it.
+ *
+ * `show` is what to do when the thing has nothing to report:
+ *   "active"  draw it only when it does           (the default)
+ *   "never"   do not draw it at all
+ *   "always"  draw it anyway, in the off grey
+ * `order` is the place on the tile, low first, in tens so a new chip can
+ * be slotted between two without renumbering everything after it.
+ *
+ * A room overrides any of it under `chips`, by the same keys. */
+const CHIP_SPECS = {
+  light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10 },
+  landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20 },
+  fan_entities:       { label: "Ceiling fans",  icon: "mdi:ceiling-fan",       pal: "green",     order: 30 },
+  bath_fan_entities:  { label: "Other fans",    icon: "mdi:fan",               pal: "green",     order: 40 },
+  fountain_entities:  { label: "Water",         icon: "mdi:fountain",          pal: "blue",      order: 50 },
+  music:              { label: "Music zones",   icon: "mdi:music",             pal: "purple",    order: 60 },
+  nowplaying:         { label: "Now playing",   icon: "mdi:music-note",        pal: "purple",    order: 70 },
+  tv_entity:          { label: "TV",            icon: "mdi:television",        pal: "violet",    order: 80 },
+  projector_entity:   { label: "Projector",     icon: "mdi:projector",         pal: "violet",    order: 90, show: "always" },
+  receiver_entity:    { label: "Receiver",      icon: "mdi:audio-video",       pal: "violet",    order: 100 },
+  climate:            { label: "Climate",       icon: "mdi:thermostat",        pal: "green",     order: 110 },
+  "garage-on":        { label: "Garage moving", icon: "mdi:garage-open",       pal: "door_move", order: 120 },
+  "garage-open":      { label: "Garage open",   icon: "mdi:garage-open",       pal: "door_open", order: 130 },
+  "garage-shut":      { label: "Garage, car in", icon: "mdi:garage-variant",   pal: "door_car",  order: 140 },
+  /* The doors' own red, not the generic one: a chip beside the garage
+   * chips has to be the same red or it reads as a different kind of
+   * alarm. */
+  locks:              { label: "Unlocked",      icon: "mdi:lock-open-variant", pal: "door_open", order: 150 },
+};
+
+/* A colour from the editor arrives as a hex; the palette's own entries are
+ * a name. Both end up as the [background, foreground] pair the chips draw
+ * with, the hex thinned to the same weight the palette uses so a picked
+ * colour sits at the same strength as a built-in one. */
+function chipCol(v, fallback) {
+  if (!v) return fallback;
+  if (CHIP_PAL[v]) return pal(v);
+  const m = /^#([0-9a-fA-F]{6})$/.exec(String(v).trim());
+  if (!m) return fallback;
+  const n = parseInt(m[1], 16);
+  return [`rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.22)`, `#${m[1]}`];
+}
+
+/* Defaults, then whatever the room says. */
+function chipLook(key, r) {
+  const base = CHIP_SPECS[key] || {};
+  const over = ((r && r.chips) || {})[key] || {};
+  return {
+    label: over.label || base.label || key,
+    icon: over.icon || base.icon,
+    col: chipCol(over.color, pal(base.pal || "amber")),
+    show: over.show || base.show || "active",
+    order: over.order != null ? Number(over.order)
+         : base.order != null ? base.order : 999,
+  };
+}
+
 const CHIP_GROUPS = [
   ["light_entities",     "mdi:lightbulb",     CHIP_AMBER,  "light",  "Lights"],
   ["landscape_entities", "mdi:palm-tree",     CHIP_AMBER,  "light",  "Landscape"],
@@ -3002,7 +3066,8 @@ function roomChips(r, hass) {
   const out = [];
   const skip = uncountedIds(r);
 
-  for (const [key, icon, col, domain, label] of CHIP_GROUPS) {
+  for (const [key, , , domain] of CHIP_GROUPS) {
+    const { icon, col, label } = chipLook(key, r);
     const list = r[key] || [];
     if (!list.length) continue;
     const real = countedList(r, key, skip);
@@ -3025,7 +3090,8 @@ function roomChips(r, hass) {
     (p) => { const id = typeof p === "string" ? p : (p && (p.entity || p.power));
              return id && hass.states[id] && hass.states[id].state === "on"; });
   if (zones.length) {
-    out.push({ key: "music", icon: "mdi:music", col: CHIP_PURPLE,
+    const look = chipLook("music", r);
+    out.push({ key: "music", icon: look.icon, col: look.col,
                text: String(zones.length),
                title: `${zones.length} music zone${zones.length > 1 ? "s" : ""} on. Tap to turn them off.`,
                tap: { kind: "off", domain: "switch",
@@ -3035,7 +3101,8 @@ function roomChips(r, hass) {
   const mp = r.media_player && hass.states[r.media_player];
   if (mp && mp.state === "playing") {
     const a = mp.attributes || {};
-    out.push({ key: "nowplaying", icon: "mdi:music-note", col: CHIP_PURPLE, text: "",
+    const look = chipLook("nowplaying", r);
+    out.push({ key: "nowplaying", icon: look.icon, col: look.col, text: "",
                title: a.media_title ? `${a.media_title}${a.media_artist ? " — " + a.media_artist : ""}`
                                     : "Playing",
                tap: { kind: "more-info", entity: r.media_player } });
@@ -3053,11 +3120,8 @@ function roomChips(r, hass) {
     const p = r.projector_entity && hass.states[r.projector_entity];
     return !!p && !["off", "unavailable", "unknown"].includes(p.state);
   })();
-  for (const [key, icon, col, label] of [
-    ["tv_entity", "mdi:television", CHIP_VIOLET, "TV"],
-    ["projector_entity", "mdi:projector", CHIP_VIOLET, "Projector"],
-    ["receiver_entity", "mdi:audio-video", CHIP_VIOLET, "Receiver"],
-  ]) {
+  for (const key of ["tv_entity", "projector_entity", "receiver_entity"]) {
+    const { icon, col, label } = chipLook(key, r);
     if (key === "receiver_entity" && projLit) continue;
     const id = key === "tv_entity" ? roomTv(r) : r[key];
     const st = id && hass.states[id];
@@ -3135,13 +3199,26 @@ function roomChips(r, hass) {
   if (open.length) {
     const jam = open.some((c) => hass.states[lockEntity(c)].state === "jammed");
     const names = open.map((c) => ({ name: lockName(c, hass) }));
-    out.push({ key: "locks", icon: jam ? "mdi:lock-alert" : "mdi:lock-open-variant",
-               col: CHIP_DOOR_OPEN,
+    const look = chipLook("locks", r);
+    out.push({ key: "locks",
+               /* A jam is not an unlocked door and gets to say so, whatever
+                * the configured glyph is. */
+               icon: jam ? "mdi:lock-alert" : look.icon,
+               col: look.col,
                text: open.length > 1 ? String(open.length) : "",
                title: `${listNames(names)} ${jam ? "jammed." : "unlocked."}`,
                tap: { kind: "more-info", entity: lockEntity(open[0]) } });
   }
-  return out;
+
+  /* One exit, so `show` and `order` reach every chip - including climate
+   * and the garage trio, whose colours stay state-driven because a blue
+   * thermostat means cooling rather than a colour somebody picked.
+   *
+   * sort is stable in every engine this runs on, so two chips sharing an
+   * order keep the sequence they were built in. */
+  return out
+    .filter((c) => chipLook(c.key, r).show !== "never")
+    .sort((a, b) => chipLook(a.key, r).order - chipLook(b.key, r).order);
 }
 
 /* The panel has to live inside <home-assistant>, not in document.body.
