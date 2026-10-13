@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.75.0";
+const VERSION = "5.76.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2975,7 +2975,20 @@ const CHIP_SPECS = {
   tv_entity:          { label: "TV",            icon: "mdi:television",        pal: "violet",    order: 80 },
   projector_entity:   { label: "Projector",     icon: "mdi:projector",         pal: "violet",    order: 90, show: "always" },
   receiver_entity:    { label: "Receiver",      icon: "mdi:audio-video",       pal: "violet",    order: 100 },
-  climate:            { label: "Climate",       icon: "mdi:thermostat",        pal: "green",     order: 110 },
+  /* Three chips have a mood rather than a colour, and one swatch cannot
+   * say what they mean. A thermostat is blue cooling, red heating and
+   * green once it has got there; a pool is its resting blue, orange
+   * climbing and green up to temperature. Those declare their moods and
+   * the editor offers one swatch each. Everything else has `pal`. */
+  climate:            { label: "Climate",       icon: "mdi:thermostat",        pal: "green",     order: 110,
+    moods: [["heating", "Heating", "red"], ["cooling", "Cooling", "blue"],
+            ["idle", "At temperature", "green"], ["mixed", "Heat/cool", "purple"]] },
+  pool:               { label: "Pool",          icon: "mdi:pool",              pal: "sky",       order: 160,
+    moods: [["resting", "Resting", "sky"], ["heating", "Heating", "orange"],
+            ["warm", "Up to temperature", "green"]] },
+  spa:                { label: "Spa",           icon: "mdi:hot-tub",           pal: "sky",       order: 170,
+    moods: [["resting", "Resting", "sky"], ["heating", "Heating", "orange"],
+            ["warm", "Up to temperature", "green"]] },
   "garage-on":        { label: "Garage moving", icon: "mdi:garage-open",       pal: "door_move", order: 120 },
   "garage-open":      { label: "Garage open",   icon: "mdi:garage-open",       pal: "door_open", order: 130 },
   "garage-shut":      { label: "Garage, car in", icon: "mdi:garage-variant",   pal: "door_car",  order: 140 },
@@ -2998,14 +3011,21 @@ function chipCol(v, fallback) {
   return [`rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.22)`, `#${m[1]}`];
 }
 
-/* Defaults, then whatever the room says. */
-function chipLook(key, r) {
+/* Defaults, then whatever the room says.
+ *
+ * `mood` picks among a chip's state colours. A mood chip is overridden
+ * per mood under `colors`, never by a single `color` - one value there
+ * would flatten heating and cooling into the same thing, which is the
+ * whole reason those chips have more than one. */
+function chipLook(key, r, mood) {
   const base = CHIP_SPECS[key] || {};
   const over = ((r && r.chips) || {})[key] || {};
+  const hit = mood && (base.moods || []).find((m) => m[0] === mood);
   return {
     label: over.label || base.label || key,
     icon: over.icon || base.icon,
-    col: chipCol(over.color, pal(base.pal || "amber")),
+    col: chipCol(hit ? (over.colors || {})[mood] : over.color,
+                 pal(hit ? hit[2] : (base.pal || "amber"))),
     show: over.show || base.show || "active",
     order: over.order != null ? Number(over.order)
          : base.order != null ? base.order : 999,
@@ -3039,20 +3059,26 @@ function entLabel(e, hass, key) {
 }
 
 /* what the thermostat is doing beats what it is set to */
-function climateChip(hass, id) {
+function climateChip(hass, id, r) {
   const st = hass.states[id];
   if (!st || st.state === "off" || st.state === "unavailable") return null;
   const a = st.attributes || {};
   const act = a.hvac_action;
   const cur = a.current_temperature, set = a.temperature;
   const known = cur != null && set != null;
-  let col = CHIP_GREEN, icon = "mdi:thermostat";
-  if (act === "cooling") col = CHIP_BLUE;
-  else if (act === "heating") col = CHIP_RED;
-  else if (act === "idle" || act === "fan") col = CHIP_GREEN;
-  else if (st.state === "cool") col = (known && cur <= set) ? CHIP_GREEN : CHIP_BLUE;
-  else if (st.state === "heat") col = (known && cur >= set) ? CHIP_GREEN : CHIP_RED;
-  else if (st.state === "heat_cool") col = CHIP_PURPLE;
+  /* Which of the four moods it is in. What the unit is doing beats what
+   * it is set to, and one reporting no hvac_action is read from how far
+   * it still has to go. Only the mood is decided here - the colours come
+   * from the registry, so heating stays red unless somebody deliberately
+   * changes it, and changing it changes both renderers at once. */
+  let mood = "idle";
+  if (act === "cooling") mood = "cooling";
+  else if (act === "heating") mood = "heating";
+  else if (act === "idle" || act === "fan") mood = "idle";
+  else if (st.state === "cool") mood = (known && cur <= set) ? "idle" : "cooling";
+  else if (st.state === "heat") mood = (known && cur >= set) ? "idle" : "heating";
+  else if (st.state === "heat_cool") mood = "mixed";
+  const { col, icon } = chipLook("climate", r, mood);
   const unit = (hass.config && hass.config.unit_system
                 && hass.config.unit_system.temperature) || "°";
   return { key: "climate", icon, col,
@@ -3145,7 +3171,7 @@ function roomChips(r, hass) {
   }
 
   if (r.climate_entity) {
-    const c = climateChip(hass, r.climate_entity);
+    const c = climateChip(hass, r.climate_entity, r);
     if (c) out.push(c);
   }
 
