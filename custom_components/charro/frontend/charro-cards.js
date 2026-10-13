@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.79.0";
+const VERSION = "5.80.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2976,6 +2976,9 @@ const CHIP_SPECS = {
    * has to say so or applying it would make them vanish. */
   light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10,  show: "always" },
   landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20,  show: "always" },
+  /* Down is the news, so unlike the lights this one is silent when every
+   * shade is up rather than sitting there grey. */
+  shade_entities:     { label: "Shades",        icon: "mdi:blinds",            pal: "orange",    order: 25 },
   fan_entities:       { label: "Ceiling fans",  icon: "mdi:ceiling-fan",       pal: "green",     order: 30,  show: "always" },
   bath_fan_entities:  { label: "Other fans",    icon: "mdi:fan",               pal: "green",     order: 40,  show: "always" },
   fountain_entities:  { label: "Water",         icon: "mdi:fountain",          pal: "blue",      order: 50,  show: "always" },
@@ -3059,7 +3062,8 @@ function chipLook(key, r, mood) {
 const TILE_CHIPS = {
   lights: "light_entities", landscape: "landscape_entities",
   fans: "fan_entities", bathfans: "bath_fan_entities",
-  fountain: "fountain_entities", climate: "climate", music: "music",
+  fountain: "fountain_entities", shades: "shade_entities",
+  climate: "climate", music: "music",
   tv: "tv_entity", projector: "projector_entity", receiver: "receiver_entity",
   pool: "pool", spa: "spa", nowplaying: "nowplaying",
 };
@@ -3091,6 +3095,9 @@ const CHIP_GROUPS = [
   ["fan_entities",       "mdi:ceiling-fan",   CHIP_GREEN,  "light",  "Ceiling fans"],
   ["bath_fan_entities",  "mdi:fan",           CHIP_GREEN,  "light",  "Other fans"],
   ["fountain_entities",  "mdi:fountain",      CHIP_BLUE,   "light",  "Water"],
+  /* homeassistant.turn_off, not light: a shade may be wired as a light or
+   * as a switch and the chip has no business knowing which. */
+  ["shade_entities",     "mdi:blinds",        CHIP_ORANGE, "homeassistant", "Shades"],
 ];
 
 const onCount = (hass, list) =>
@@ -4031,7 +4038,7 @@ function wireRoomHash() {
 const ROOM_LISTS = [
   "light_entities", "landscape_entities", "fan_entities",
   "bath_fan_entities", "music_powers", "alert_sensors", "fountain_entities",
-  "locks",
+  "locks", "shade_entities",
 ];
 const ROOM_SINGLES = ["climate_entity", "confirm_sensor",
                       "tv_entity", "projector_entity", "receiver_entity",
@@ -4320,6 +4327,7 @@ const ROOM_SCHEMA = [
   { type: "expandable", name: "", title: "Lights", icon: "mdi:lightbulb", schema: [
     { name: "light_entities", selector: ent(["light", "switch"], true) },
     { name: "landscape_entities", selector: ent(["light", "switch"], true) },
+    { name: "shade_entities", selector: ent(["light", "switch", "cover"], true) },
   ]},
   { type: "expandable", name: "", title: "Fans", icon: "mdi:ceiling-fan", schema: [
     { name: "fan_entities", selector: ent(["light", "fan", "switch"], true) },
@@ -4345,6 +4353,7 @@ const ROOM_LABELS = {
   popup_width: "Pop-up width",
   light_entities: "Lights",
   landscape_entities: "Landscape lights (own chip)",
+  shade_entities: "Shades",
   fan_entities: "Ceiling fans",
   bath_fan_entities: "Other fans",
   climate_entity: "Thermostat",
@@ -4358,6 +4367,7 @@ const ROOM_HELPERS = {
   page_path: 'Where the pop-up\'s expand button goes. Blank derives it from the room key.',
   popup_width: 'Overrides the width the column count picks. A number is pixels, or give a CSS length.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
+  shade_entities: "Shades wired as switches. On means down, so the chip appears when something is down and shows how many; tapping it raises them. Kept out of the lights count, and All off leaves them alone.",
   fan_entities: "The Lutron fan dimmers. Gets the ceiling-fan chip.",
   bath_fan_entities: "Everything else that moves air \u2014 exhaust fans, air purifiers, tower fans. Gets its own chip. A fan. entity gets fan controls, a light-domain dimmer gets a speed slider.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
@@ -7132,6 +7142,7 @@ const FIELD_WHERE = {
   media_player: "Music", media_card: "Advanced", music_player: "Music",
   music_powers: "Music", zone_players: "Music",
   light_entities: "Lights", landscape_entities: "Landscape",
+  shade_entities: "Lights",
   fan_entities: "Fans", bath_fan_entities: "Other fans",
   fountain_entities: "Pool & water", pool_switch: "Pool & water",
   spa_switch: "Pool & water", pool_heater: "Pool & water",
