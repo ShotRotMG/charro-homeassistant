@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.81.0";
+const VERSION = "5.82.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7567,6 +7567,16 @@ h4{
   background:rgba(127,127,127,.16); padding:1px 5px; border-radius:4px;
 }
 .warnwhere{ font-size:11px; color:var(--secondary-text-color); flex:1; min-width:0; }
+.railq{
+  width:100%; box-sizing:border-box; margin:0 0 6px; font-size:12.5px;
+  padding:5px 8px; border-radius:8px;
+  border:1px solid var(--divider-color); background:var(--card-background-color);
+  color:var(--primary-text-color);
+}
+.railwhere{
+  font-size:11px; color:var(--secondary-text-color); padding:0 8px 5px 10px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
 .railbad{
   margin-left:auto; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
   border-radius:9px; background:rgba(255,152,0,.9); color:#000;
@@ -7995,14 +8005,50 @@ class CharroRoomsEditor extends HTMLElement {
 
   /* The room list as a rail, so switching is one click and you can see what
    * exists — the dropdown hid 20 rooms behind a chevron. */
-  _renderRail() {
-    if (!this._rail) return;
-    this._rail.innerHTML = "";
-    if (this._section === "remotes") return this._railRemotes();
-    const h = document.createElement("div");
-    h.className = "railhd"; h.textContent = "Rooms";
-    this._rail.appendChild(h);
+  /* What a query matches in a room: its key, its name, and every string
+   * anywhere inside it - which is what makes "which room has
+   * light.javon_cans in it" answerable at all. It used to mean opening
+   * all twenty-one and reading.
+   *
+   * Searching the room as a whole rather than a list of fields I thought
+   * to include is deliberate: a field added next year is searchable
+   * without anybody remembering to add it here, and the version of this
+   * that forgets is the version that quietly stops finding things. */
+  _railMatch(key, q) {
+    if (!q) return { hit: true, where: "" };
+    if (key.toLowerCase().includes(q)) return { hit: true, where: "" };
+    const r = (this._roomsAll || {})[key];
+    if (!r) return { hit: false, where: "" };
+    if (String(r.room_name || "").toLowerCase().includes(q))
+      return { hit: true, where: "" };
+
+    const seen = [];
+    const walk = (o, path) => {
+      if (seen.length > 2) return;
+      if (typeof o === "string") {
+        if (o.toLowerCase().includes(q)) seen.push(path ? `${path}: ${o}` : o);
+      } else if (Array.isArray(o)) {
+        for (const v of o) walk(v, path);
+      } else if (o && typeof o === "object") {
+        for (const k of Object.keys(o)) walk(o[k], ROOM_LABELS[k] || path || k);
+      }
+    };
+    walk(r, "");
+    return { hit: !!seen.length, where: seen.slice(0, 2).join(" \u00b7 ") };
+  }
+
+  /* The list only. Typing re-renders this and never the box above it, so
+   * the caret stays where you left it. */
+  _renderRailList() {
+    const box = this._railList;
+    if (!box) return;
+    box.innerHTML = "";
+    const q = String(this._q || "").trim().toLowerCase();
+    let shown = 0;
     for (const k of this._keys || []) {
+      const m = this._railMatch(k, q);
+      if (!m.hit) continue;
+      shown++;
       const b = document.createElement("button");
       b.className = "railit" + (this._mode !== "remote" && k === this._key ? " on" : "");
       const name = document.createElement("span");
@@ -8020,9 +8066,44 @@ class CharroRoomsEditor extends HTMLElement {
       b.addEventListener("click", () => {
         if (this._mode === "remote" || k !== this._key) this._load(k);
       });
-      this._rail.appendChild(b);
+      box.appendChild(b);
+      if (m.where) {
+        const w = document.createElement("div");
+        w.className = "railwhere";
+        w.textContent = m.where;
+        w.title = m.where;
+        box.appendChild(w);
+      }
     }
+    if (q && !shown) {
+      const n = document.createElement("div");
+      n.className = "railwhere";
+      n.textContent = "Nothing matches that.";
+      box.appendChild(n);
+    }
+  }
 
+  _renderRail() {
+    if (!this._rail) return;
+    this._rail.innerHTML = "";
+    if (this._section === "remotes") return this._railRemotes();
+    const h = document.createElement("div");
+    h.className = "railhd"; h.textContent = "Rooms";
+    this._rail.appendChild(h);
+
+    const q = document.createElement("input");
+    q.type = "search";
+    q.className = "railq";
+    q.value = this._q || "";
+    q.placeholder = "Filter, or find an entity";
+    q.title = "Matches a room's name, or anything inside it \u2014 an entity "
+            + "id, a label, a script. The room says what matched.";
+    q.addEventListener("input", () => { this._q = q.value; this._renderRailList(); });
+    this._rail.appendChild(q);
+
+    this._railList = document.createElement("div");
+    this._rail.appendChild(this._railList);
+    this._renderRailList();
   }
 
   /* The remote templates live in one shared file, not one per room, so they
