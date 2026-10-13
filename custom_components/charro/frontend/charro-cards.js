@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.76.0";
+const VERSION = "5.77.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -344,6 +344,12 @@ function loadRoom(key, hass) {
 
 function loadRemotes(hass) {
   return loadAll(hass).then(({ remotes }) => remotes).catch(() => ({}));
+}
+
+/* The house-wide chip look. loadAll is one shared promise for the whole
+ * page, so asking for this per card costs nothing. */
+function loadChips(hass) {
+  return loadAll(hass).then(({ chips }) => chips || {}).catch(() => ({}));
 }
 
 const roomHash = (c) => {
@@ -3019,16 +3025,27 @@ function chipCol(v, fallback) {
  * whole reason those chips have more than one. */
 function chipLook(key, r, mood) {
   const base = CHIP_SPECS[key] || {};
+  /* Three layers, narrowest wins: what the code ships, then the house,
+   * then the room. The house file is for "every climate chip in the
+   * place should be this red"; the room is for the one that shouldn't. */
+  const glob = ((r && r._chips) || {})[key] || {};
   const over = ((r && r.chips) || {})[key] || {};
+  const pick = (f) => (over[f] !== undefined ? over[f]
+                     : glob[f] !== undefined ? glob[f] : undefined);
   const hit = mood && (base.moods || []).find((m) => m[0] === mood);
+  /* A mood is picked per mood at each layer, so a room can repaint
+   * heating and leave the house's cooling alone. */
+  const colour = hit
+    ? ((over.colors || {})[mood] !== undefined ? over.colors[mood]
+       : (glob.colors || {})[mood])
+    : pick("color");
+  const ord = pick("order");
   return {
-    label: over.label || base.label || key,
-    icon: over.icon || base.icon,
-    col: chipCol(hit ? (over.colors || {})[mood] : over.color,
-                 pal(hit ? hit[2] : (base.pal || "amber"))),
-    show: over.show || base.show || "active",
-    order: over.order != null ? Number(over.order)
-         : base.order != null ? base.order : 999,
+    label: pick("label") || base.label || key,
+    icon: pick("icon") || base.icon,
+    col: chipCol(colour, pal(hit ? hit[2] : (base.pal || "amber"))),
+    show: pick("show") || base.show || "active",
+    order: ord != null ? Number(ord) : base.order != null ? base.order : 999,
   };
 }
 
@@ -4069,6 +4086,7 @@ class CharroRoomCard extends CharroBase {
     const room = await this._roomP;
     if ((room.remotes || this._config.remotes || []).length || room.video)
       room._remotes = await loadRemotes(this._hass);
+    room._chips = await loadChips(this._hass);
     const m = { ...room, ...this._config };
     for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
     if (!m.room_name) m.room_name = room.room_name || this._config.room || "";

@@ -48,6 +48,7 @@ from .const import (
     JOURNAL_MAX,
     LEGACY_SUBDIR,
     NOTIFY_FIELDS,
+    CHIPS_FILE,
     NOTIFY_FILE,
     NOTIFY_LEVELS,
     NOTIFY_MESSAGE,
@@ -1078,6 +1079,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_save_room)
     websocket_api.async_register_command(hass, ws_save_remotes)
     websocket_api.async_register_command(hass, ws_save_notify)
+    websocket_api.async_register_command(hass, ws_save_chips)
     websocket_api.async_register_command(hass, ws_watching)
     websocket_api.async_register_command(hass, ws_journal)
     websocket_api.async_register_command(hass, ws_journal_read)
@@ -1356,9 +1358,11 @@ def _read_all(path: str) -> dict[str, Any]:
     rooms: dict[str, Any] = {}
     remotes: dict[str, Any] = {}
     notify: dict[str, Any] = {}
+    chips: dict[str, Any] = {}
     bad: list[str] = []
     if not os.path.isdir(path):
-        return {"rooms": rooms, "remotes": remotes, "notify": notify, "bad": bad}
+        return {"rooms": rooms, "remotes": remotes, "notify": notify,
+                "chips": chips, "bad": bad}
     for name in sorted(os.listdir(path)):
         if not name.endswith(".json") or name.endswith(".tmp.json"):
             continue
@@ -1372,13 +1376,16 @@ def _read_all(path: str) -> dict[str, Any]:
             remotes = data if isinstance(data, dict) else {}
         elif name == NOTIFY_FILE:
             notify = data if isinstance(data, dict) else {}
+        elif name == CHIPS_FILE:
+            chips = data if isinstance(data, dict) else {}
         elif not name.startswith("_") and isinstance(data, dict):
             key = name[:-5]
             # tolerate a file that wraps the room in its own key
             if "room_name" not in data and isinstance(data.get(key), dict):
                 data = data[key]
             rooms[key] = data
-    return {"rooms": rooms, "remotes": remotes, "notify": notify, "bad": bad}
+    return {"rooms": rooms, "remotes": remotes, "notify": notify,
+            "chips": chips, "bad": bad}
 
 
 def _read_notify(path: str) -> dict:
@@ -1503,6 +1510,32 @@ async def ws_save_remotes(hass, connection, msg):
         connection.send_error(msg["id"], "write_failed", str(err))
         return
     connection.send_result(msg["id"], {"path": os.path.join(path, REMOTES_FILE)})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/save_chips",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_save_chips(hass, connection, msg):
+    """Write the house-wide chip look. Admin only.
+
+    Same shape as the remote library and for the same reason: save_room
+    refuses a key starting with an underscore, which is what stops a room
+    called "_chips" from quietly becoming the palette. It goes through the
+    same writer, so it is snapshotted first and replaced atomically.
+    """
+    path = _rooms_dir(hass)
+    key = CHIPS_FILE[:-5] if CHIPS_FILE.endswith(".json") else CHIPS_FILE
+    try:
+        await hass.async_add_executor_job(_write_room, path, key, msg["config"])
+    except OSError as err:
+        connection.send_error(msg["id"], "write_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"path": os.path.join(path, CHIPS_FILE)})
 
 
 @websocket_api.require_admin

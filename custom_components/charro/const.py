@@ -38,6 +38,9 @@ REMOTES_FILE = "_remotes.json"
 # automations that each name a phone.
 SERVICE_NOTIFY = "notify"
 NOTIFY_FILE = "_notify.json"
+# The house-wide chip look. A room's own `chips` block overrides it key by
+# key, so this is the default everything starts from rather than a rule.
+CHIPS_FILE = "_chips.json"
 
 # iOS has no notification channels, so the urgency is decided here and
 # carried in push.interruption-level. These are the five settings a cell in
