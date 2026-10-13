@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.71.0";
+const VERSION = "5.72.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4038,11 +4038,17 @@ class CharroRoomCard extends CharroBase {
                       (r, h) => [mediaCard(r, h)].filter(Boolean),
                       `${m.room_name || ""} \u2014 Now playing`.trim())
       : want === this._tvHash
+      /* Untabbed, like the room pop-up's own screens block. The tabs were
+       * three buttons standing between you and the one thing you opened
+       * this for, and they split a short page into three shorter ones to
+       * no end. Since 5.70.0 a screen that is off shows only its power
+       * chip, so the page this flattens into is short when the television
+       * is off and worth scrolling when it is on. */
       ? new RoomPopup(want, m, this._hass,
                       (r) => [{ type: "custom:charro-video-card", video: r.video,
                                 templates: r._remotes || {},
                                 music_powers: r.music_powers || [],
-                                tabs: true }],
+                                tabs: false }],
                       `${m.room_name || ""} \u2014 Screens`.trim())
       : new RoomPopup(want, m, this._hass);
     await this._popup.open();
