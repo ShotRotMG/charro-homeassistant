@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.82.0";
+const VERSION = "5.83.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1992,7 +1992,10 @@ function blockCards(name, r, hass) {
       if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
       else push({ type: "custom:charro-video-card", video: r.video,
                   templates: r._remotes || {},
-                  music_powers: r.music_powers || [] });
+                  music_powers: r.music_powers || [],
+                  // full-page rooms draw on the dashboard photo with no
+                  // card behind them, so the card has to bring a surface
+                  on_photo: r.mode === "page" });
     }
 
     // A device a remote already watches doesn't want a plain tile too: the
@@ -4758,6 +4761,33 @@ const VIDEO_CSS = `
 }
 :host{ display:block; }
 .vwrap{ display:flex; flex-direction:column; gap:10px; min-width:0; }
+
+/* This card was written to sit inside a card, so its chips are
+ * deliberately transparent pills with a hairline border and the surface
+ * behind them belongs to whatever is hosting it. In a room's full-page
+ * mode there is no host - the body sits straight on the dashboard's photo
+ * - and the source row ended up as raw text over an aerial shot of the
+ * house. Nothing was defeating a blur; there had never been one.
+ *
+ * So on a photo it brings its own, the same recipe as the tab dock:
+ * the theme's card colour, a heavier blur because there is a photograph
+ * rather than a page behind it, and the 14px radius the room tiles use.
+ * The tokens that recipe normally comes from live on hui-root and do not
+ * reach into this shadow root, hence the literals.
+ *
+ * Only on a photo: nested in a real card this would be a second surface
+ * inside the first, which is the sort of thing that looks like a bug. */
+:host([on-photo]) .vwrap{
+  background: var(--ha-card-background, var(--card-background-color, #1e1e1e));
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
+  border: 1px solid var(--ha-card-border-color, var(--divider-color, transparent));
+  border-radius: 14px;
+  padding: 12px;
+}
+/* A room whose screens are all off can render nothing at all, and an
+ * empty frosted box is worse than no box. */
+:host([on-photo]) .vwrap:empty{ display:none; }
 .vrow{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .vrow .sp{ margin-left:auto; }
 .vchip{
@@ -4805,6 +4835,9 @@ class CharroVideoCard extends HTMLElement {
      * one column. Nothing is rendered twice and nothing is left out - the
      * panes are the rows this card already drew, filed. */
     this._tabs = !!config.tabs;
+    /* Set by the room when it is rendering a full page, where there is no
+     * card behind this one to supply a surface. */
+    this.toggleAttribute("on-photo", !!config.on_photo);
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `<style>${VIDEO_CSS}</style><div class="vwrap"></div>`;
     this._wrap = this.shadowRoot.querySelector(".vwrap");
