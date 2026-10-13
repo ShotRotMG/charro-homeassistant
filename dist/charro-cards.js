@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.72.0";
+const VERSION = "5.73.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2939,6 +2939,9 @@ const CHIP_PURPLE = pal("purple");
 const CHIP_VIOLET = pal("violet");
 const CHIP_ORANGE = pal("orange");
 const CHIP_RED    = pal("red");
+/* The grey everything switched off wears: transparent with disabled
+ * text, so a chip that is a button rather than an alarm reads as one. */
+const CHIP_OFF    = pal("off");
 const CHIP_DOOR_OPEN = pal("door_open");
 const CHIP_DOOR_CAR  = pal("door_car");
 const CHIP_DOOR_MOVE = pal("door_move");
@@ -3058,6 +3061,19 @@ function roomChips(r, hass) {
     if (key === "receiver_entity" && projLit) continue;
     const id = key === "tv_entity" ? roomTv(r) : r[key];
     const st = id && hass.states[id];
+    /* The projector keeps its chip when it is off, in the off grey, and a
+     * tap is the switch. A television or a receiver has a remote and a
+     * source row waiting behind the room; a projector is a relay with
+     * nothing else to press, so a chip that disappears when it is off is a
+     * switch you can only ever use to turn something off. */
+    if (key === "projector_entity") {
+      if (!st) continue;
+      const lit = !["off", "unavailable", "unknown"].includes(st.state);
+      out.push({ key, icon, col: lit ? col : CHIP_OFF, text: "",
+                 title: `${label} \u2014 ${st.state}. Tap to turn it ${lit ? "off" : "on"}.`,
+                 tap: { kind: "toggle", entity: id } });
+      continue;
+    }
     if (!st || OFFISH.includes(st.state) || st.state === "idle") continue;
     out.push({ key, icon, col, text: "",
                title: `${label} — ${st.state}`,
@@ -3702,6 +3718,12 @@ class RoomPopup {
     if (tap.kind === "more-info") return this._moreInfo(tap.entity);
     if (tap.kind === "off" && (tap.entities || []).length) {
       this._hass.callService(tap.domain, "turn_off", { entity_id: tap.entities });
+    }
+    /* homeassistant.toggle rather than the domain's own: a projector can be
+     * a switch, a light or a media_player, and the chip should not have to
+     * know which one this room wired up. */
+    if (tap.kind === "toggle" && tap.entity) {
+      this._hass.callService("homeassistant", "toggle", { entity_id: tap.entity });
     }
   }
 

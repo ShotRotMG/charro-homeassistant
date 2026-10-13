@@ -340,7 +340,7 @@
             ],
             "projector": [
               {
-                "display": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown'].includes(s)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[ return variables.projector_entity ? 'flex' : 'none'; ]]]"
               },
               {
                 "align-items": "center"
@@ -991,6 +991,10 @@
               "show_name": false,
               "icon": "mdi:projector",
               "tap_action": {
+                "action": "toggle",
+                "entity": "[[[ return variables.projector_entity ]]]"
+              },
+              "hold_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.projector_entity ]]]"
               },
@@ -1009,7 +1013,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.violet.bg ]]]"
+                    "background": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; const lit = s && !['off','unavailable','unknown'].includes(s); return lit ? variables.pal.violet.bg : variables.pal.off.bg; ]]]"
                   }
                 ],
                 "icon": [
@@ -1020,7 +1024,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.violet.fg ]]]"
+                    "color": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; const lit = s && !['off','unavailable','unknown'].includes(s); return lit ? variables.pal.violet.fg : variables.pal.off.fg; ]]]"
                   }
                 ]
               },
