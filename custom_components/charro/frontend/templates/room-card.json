@@ -252,145 +252,145 @@
           "custom_fields": {
             "lights": [
               {
-                "display": "[[[ return (variables.light_entities || []).length ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.lights || {};\n  if (!((variables.light_entities || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.light_entities || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (variables.light_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.lights || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.light_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "landscape": [
               {
-                "display": "[[[ return (variables.landscape_entities || []).length ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.landscape || {};\n  if (!((variables.landscape_entities || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.landscape_entities || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (variables.landscape_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.landscape || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.landscape_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "fans": [
               {
-                "display": "[[[ return (variables.fan_entities || []).length ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.fans || {};\n  if (!((variables.fan_entities || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.fan_entities || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (variables.fan_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.fans || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.fan_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "bathfans": [
               {
-                "display": "[[[ return (variables.bath_fan_entities || []).length ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.bathfans || {};\n  if (!((variables.bath_fan_entities || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.bath_fan_entities || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.bathfans || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.bath_fan_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "fountain": [
               {
-                "display": "[[[ return (variables.fountain_entities || []).length ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.fountain || {};\n  if (!((variables.fountain_entities || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.fountain_entities || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.fountain || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.fountain_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "climate": [
               {
-                "display": "[[[ return variables.climate_entity ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!!variables.climate_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable'].includes(states[variables.climate_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return (() => { const s = states[variables.climate_entity]?.state; return s && s !== 'off' && s !== 'unavailable'; })() ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.climate || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable'].includes(states[variables.climate_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "music": [
               {
-                "display": "[[[ return (variables.music_powers || []).filter(e => states[e]?.state === 'on').length ? 'flex' : 'none'; ]]]\n"
+                "display": "[[[\n  const c = variables.chips.music || {};\n  if (!((variables.music_powers || []).length)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return ((variables.music_powers || []).some(e => states[e]?.state === 'on')) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[ return true ? 0 : 1; ]]]"
+                "order": "[[[\n  const c = variables.chips.music || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.music_powers || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "tv": [
               {
-                "display": "[[[ const e = variables.tv_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.tv || {};\n  if (!(!!variables.tv_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown','standby','idle'].includes(states[variables.tv_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.tv || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable','unknown','standby','idle'].includes(states[variables.tv_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "projector": [
               {
-                "display": "[[[ return variables.projector_entity ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!!variables.projector_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.projector || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "receiver": [
               {
-                "display": "[[[ const p = variables.projector_entity; const ps = p && states[p] && states[p].state; if (ps && !['off','unavailable','unknown'].includes(ps)) return 'none'; const e = variables.receiver_entity; const s = e && states[e] && states[e].state; return (s && !['off','unavailable','unknown','standby','idle'].includes(s)) ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!!variables.receiver_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  const pj = variables.projector_entity; const pjs = pj && states[pj] && states[pj].state; if (pjs && !['off','unavailable','unknown'].includes(pjs)) return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.receiver || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "pool": [
               {
-                "display": "[[[ return states[variables.pool_switch]?.state === 'on' ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.pool || {};\n  if (!(!!variables.pool_switch)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (states[variables.pool_switch]?.state === 'on') ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.pool || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((states[variables.pool_switch]?.state === 'on') ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "spa": [
               {
-                "display": "[[[ return states[variables.spa_switch]?.state === 'on' ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.spa || {};\n  if (!(!!variables.spa_switch)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (states[variables.spa_switch]?.state === 'on') ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.spa || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((states[variables.spa_switch]?.state === 'on') ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "nowplaying": [
               {
-                "display": "[[[ return (variables.media_player && states[variables.media_player]?.state === 'playing') ? 'flex' : 'none'; ]]]"
+                "display": "[[[\n  const c = variables.chips.nowplaying || {};\n  if (!(!!variables.media_player)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (states[variables.media_player]?.state === 'playing') ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "0"
+                "order": "[[[\n  const c = variables.chips.nowplaying || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((states[variables.media_player]?.state === 'playing') ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ]
           }
@@ -404,7 +404,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:lightbulb",
+              "icon": "[[[ return variables.chips.lights.icon ]]]",
               "name": "[[[\n  const n = (variables.light_entities || []).filter(e => states[e]?.state === 'on').length;\n  return n > 0 ? String(n) : '';\n]]]\n",
               "tap_action": {
                 "action": "call-service",
@@ -428,7 +428,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.bg : variables.pal.off.bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.lights || {};\n  if (!((variables.light_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -453,7 +453,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.light_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : variables.pal.off.fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.lights || {};\n  if (!((variables.light_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -465,6 +465,9 @@
                   },
                   {
                     "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const c = variables.chips.lights || {};\n  if (!((variables.light_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -478,7 +481,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:palm-tree",
+              "icon": "[[[ return variables.chips.landscape.icon ]]]",
               "name": "[[[\n  const n = (variables.landscape_entities || []).filter(e => states[e]?.state === 'on').length;\n  return n > 0 ? String(n) : '';\n]]]\n",
               "tap_action": {
                 "action": "call-service",
@@ -502,7 +505,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.bg : variables.pal.off.bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.landscape || {};\n  if (!((variables.landscape_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -527,7 +530,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.landscape_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : variables.pal.off.fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.landscape || {};\n  if (!((variables.landscape_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -539,6 +542,9 @@
                   },
                   {
                     "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const c = variables.chips.landscape || {};\n  if (!((variables.landscape_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -552,7 +558,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:ceiling-fan",
+              "icon": "[[[ return variables.chips.fans.icon ]]]",
               "name": "[[[\n  const n = (variables.fan_entities || []).filter(e => states[e]?.state === 'on').length;\n  return n > 0 ? String(n) : '';\n]]]\n",
               "tap_action": {
                 "action": "call-service",
@@ -576,7 +582,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.bg : variables.pal.off.bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.fans || {};\n  if (!((variables.fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -601,7 +607,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.fg : variables.pal.off.fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.fans || {};\n  if (!((variables.fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -613,6 +619,9 @@
                   },
                   {
                     "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const c = variables.chips.fans || {};\n  if (!((variables.fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -626,7 +635,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:fan",
+              "icon": "[[[ return variables.chips.bathfans.icon ]]]",
               "name": "[[[\n  const n = (variables.bath_fan_entities || []).filter(e => states[e]?.state === 'on').length;\n  return n > 0 ? String(n) : '';\n]]]\n",
               "tap_action": {
                 "action": "call-service",
@@ -650,7 +659,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.bg : variables.pal.off.bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.bathfans || {};\n  if (!((variables.bath_fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -675,7 +684,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const on = (variables.bath_fan_entities || []).some(e => states[e]?.state === 'on');\n  return on ? variables.pal.green.fg : variables.pal.off.fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.bathfans || {};\n  if (!((variables.bath_fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -687,6 +696,9 @@
                   },
                   {
                     "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const c = variables.chips.bathfans || {};\n  if (!((variables.bath_fan_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -700,7 +712,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:fountain",
+              "icon": "[[[ return variables.chips.fountain.icon ]]]",
               "tap_action": {
                 "action": "call-service",
                 "service": "[[[\n  const l = variables.fountain_entities || [];\n  const on = l.some(e => states[e]?.state === 'on');\n  /* only ever turns things OFF in a group; single ones can toggle */\n  return on ? 'homeassistant.turn_off' : (l.length === 1 ? 'homeassistant.turn_on' : 'homeassistant.update_entity');\n]]]",
@@ -727,7 +739,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.bg : variables.pal.off.bg; ]]]"
+                    "background": "[[[\n  const c = variables.chips.fountain || {};\n  if (!((variables.fountain_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "icon": [
@@ -738,7 +750,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.fg : variables.pal.off.fg; ]]]"
+                    "color": "[[[\n  const c = variables.chips.fountain || {};\n  if (!((variables.fountain_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -766,7 +778,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[ return (variables.fountain_entities || []).some(e => states[e]?.state === 'on') ? variables.pal.blue.fg : variables.pal.off.fg; ]]]"
+                    "color": "[[[\n  const c = variables.chips.fountain || {};\n  if (!((variables.fountain_entities || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -782,7 +794,7 @@
               "entity": "[[[ return variables.climate_entity ]]]",
               "show_icon": true,
               "show_name": true,
-              "icon": "[[[\n  const s = states[variables.climate_entity]?.state;\n  if (s === 'cool') return 'mdi:snowflake';\n  if (s === 'heat') return 'mdi:fire';\n  if (s === 'heat_cool') return 'mdi:sun-snowflake-variant';\n  return 'mdi:thermostat';\n]]]\n",
+              "icon": "[[[ return variables.chips.climate.icon ]]]",
               "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}°` : '';\n]]]\n",
               "tap_action": {
                 "action": "more-info",
@@ -803,7 +815,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.bg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.bg;\n  if (act === 'heating') return variables.pal.red.bg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.bg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.bg : variables.pal.blue.bg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.bg : variables.pal.red.bg;\n  if (s === 'heat_cool') return variables.pal.purple.bg;\n  return variables.pal.off.bg;\n]]]"
+                    "background": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.bg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -828,7 +840,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.fg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.fg;\n  if (act === 'heating') return variables.pal.red.fg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.fg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.fg : variables.pal.blue.fg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.fg : variables.pal.red.fg;\n  if (s === 'heat_cool') return variables.pal.purple.fg;\n  return variables.pal.off.fg;\n]]]"
+                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -842,7 +854,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const st = states[variables.climate_entity];\n  const s = st?.state;\n  const a = st?.attributes || {};\n  const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  if (!s || s === 'off' || s === 'unavailable') return variables.pal.off.fg;\n  /* what the unit is actually doing beats what it is set to */\n  if (act === 'cooling') return variables.pal.blue.fg;\n  if (act === 'heating') return variables.pal.red.fg;\n  if (act === 'idle' || act === 'fan') return variables.pal.green.fg;\n  /* no hvac_action: fall back to current vs target */\n  if (s === 'cool') return (known && cur <= set) ? variables.pal.green.fg : variables.pal.blue.fg;\n  if (s === 'heat') return (known && cur >= set) ? variables.pal.green.fg : variables.pal.red.fg;\n  if (s === 'heat_cool') return variables.pal.purple.fg;\n  return variables.pal.off.fg;\n]]]"
+                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },
@@ -856,7 +868,7 @@
               "type": "custom:button-card",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:music",
+              "icon": "[[[ return variables.chips.music.icon ]]]",
               "name": "[[[\n  const n = (variables.music_powers || []).filter(e => states[e]?.state === 'on').length;\n  return n > 0 ? String(n) : '';\n]]]\n",
               "tap_action": {
                 "action": "call-service",
@@ -884,7 +896,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.purple.bg ]]]"
+                    "background": "[[[\n  const c = variables.chips.music || {};\n  if (!((variables.music_powers || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -909,7 +921,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.purple.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.music || {};\n  if (!((variables.music_powers || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -923,7 +935,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[ return variables.pal.purple.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.music || {};\n  if (!((variables.music_powers || []).some(e => states[e]?.state === 'on'))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -938,7 +950,7 @@
               "entity": "[[[ return variables.tv_entity ]]]",
               "show_icon": true,
               "show_name": false,
-              "icon": "mdi:television",
+              "icon": "[[[ return variables.chips.tv.icon ]]]",
               "tap_action": {
                 "action": "[[[ return variables.tv_popup ? 'navigate' : 'more-info' ]]]",
                 "navigation_path": "[[[ return variables.tv_popup || '' ]]]",
@@ -959,7 +971,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.violet.bg ]]]"
+                    "background": "[[[\n  const c = variables.chips.tv || {};\n  if (!(!['off','unavailable','unknown','standby','idle'].includes(states[variables.tv_entity]?.state))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "icon": [
@@ -970,7 +982,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.violet.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.tv || {};\n  if (!(!['off','unavailable','unknown','standby','idle'].includes(states[variables.tv_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -989,7 +1001,7 @@
               "entity": "[[[ return variables.projector_entity ]]]",
               "show_icon": true,
               "show_name": false,
-              "icon": "mdi:projector",
+              "icon": "[[[ return variables.chips.projector.icon ]]]",
               "tap_action": {
                 "action": "toggle",
                 "entity": "[[[ return variables.projector_entity ]]]"
@@ -1013,7 +1025,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; const lit = s && !['off','unavailable','unknown'].includes(s); return lit ? variables.pal.violet.bg : variables.pal.off.bg; ]]]"
+                    "background": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "icon": [
@@ -1024,7 +1036,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ const e = variables.projector_entity; const s = e && states[e] && states[e].state; const lit = s && !['off','unavailable','unknown'].includes(s); return lit ? variables.pal.violet.fg : variables.pal.off.fg; ]]]"
+                    "color": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -1039,7 +1051,7 @@
               "entity": "[[[ return variables.receiver_entity ]]]",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:audio-video",
+              "icon": "[[[ return variables.chips.receiver.icon ]]]",
               "name": "[[[\n  const s = states[variables.receiver_entity];\n  const src = s?.attributes?.source;\n  if (!src) return '';\n  return src.length > 12 ? src.slice(0, 12) + '\\u2026' : src;\n]]]",
               "tap_action": {
                 "action": "more-info",
@@ -1060,7 +1072,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.violet.bg ]]]"
+                    "background": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -1085,7 +1097,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.violet.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -1099,7 +1111,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[ return variables.pal.violet.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
@@ -1114,7 +1126,7 @@
               "entity": "[[[ return variables.pool_heater || variables.pool_switch ]]]",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:pool",
+              "icon": "[[[ return variables.chips.pool.icon ]]]",
               "name": "[[[\n  const h = states[variables.pool_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
               "tap_action": {
                 "action": "more-info",
@@ -1142,7 +1154,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.bg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.bg;\n  return cur + 0.5 < set ? variables.pal.orange.bg : variables.pal.green.bg;   /* heating / up to temp */\n]]]"
+                    "background": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -1167,7 +1179,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -1181,7 +1193,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.pool_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.pool_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },
@@ -1196,7 +1208,7 @@
               "entity": "[[[ return variables.spa_heater || variables.spa_switch ]]]",
               "show_icon": true,
               "show_name": true,
-              "icon": "mdi:hot-tub",
+              "icon": "[[[ return variables.chips.spa.icon ]]]",
               "name": "[[[\n  const h = states[variables.spa_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
               "tap_action": {
                 "action": "more-info",
@@ -1224,7 +1236,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.bg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.bg;\n  return cur + 0.5 < set ? variables.pal.orange.bg : variables.pal.green.bg;   /* heating / up to temp */\n]]]"
+                    "background": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -1249,7 +1261,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -1263,7 +1275,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const h = states[variables.spa_heater];\n  /* blue is the resting pool/spa colour: no heater, or heater off */\n  if (!variables.spa_heater || !h || h.state === 'off' || h.state === 'unavailable') return variables.pal.sky.fg;\n  const a = h.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  if (cur == null || set == null) return variables.pal.sky.fg;\n  return cur + 0.5 < set ? variables.pal.orange.fg : variables.pal.green.fg;   /* heating / up to temp */\n]]]"
+                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },
@@ -1278,7 +1290,7 @@
               "entity": "[[[ return variables.media_player ]]]",
               "show_icon": true,
               "show_name": false,
-              "icon": "mdi:music-note",
+              "icon": "[[[ return variables.chips.nowplaying.icon ]]]",
               "tap_action": {
                 "action": "navigate",
                 "navigation_path": "[[[ return (variables.popup_hash || '') + '-media' ]]]"
@@ -1302,7 +1314,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[ return variables.pal.purple.bg ]]]"
+                    "background": "[[[\n  const c = variables.chips.nowplaying || {};\n  if (!(states[variables.media_player]?.state === 'playing')) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "icon": [
@@ -1313,7 +1325,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[ return variables.pal.purple.fg ]]]"
+                    "color": "[[[\n  const c = variables.chips.nowplaying || {};\n  if (!(states[variables.media_player]?.state === 'playing')) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },

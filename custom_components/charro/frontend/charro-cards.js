@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.77.0";
+const VERSION = "5.78.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2971,11 +2971,14 @@ const OPENISH = ["violated", "on", "open", "opening"];
  *
  * A room overrides any of it under `chips`, by the same keys. */
 const CHIP_SPECS = {
-  light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10 },
-  landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20 },
-  fan_entities:       { label: "Ceiling fans",  icon: "mdi:ceiling-fan",       pal: "green",     order: 30 },
-  bath_fan_entities:  { label: "Other fans",    icon: "mdi:fan",               pal: "green",     order: 40 },
-  fountain_entities:  { label: "Water",         icon: "mdi:fountain",          pal: "blue",      order: 50 },
+  /* These five are on the tile whenever the room has them, greyed when
+   * nothing is on - that is what the tile already did, and the registry
+   * has to say so or applying it would make them vanish. */
+  light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10,  show: "always" },
+  landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20,  show: "always" },
+  fan_entities:       { label: "Ceiling fans",  icon: "mdi:ceiling-fan",       pal: "green",     order: 30,  show: "always" },
+  bath_fan_entities:  { label: "Other fans",    icon: "mdi:fan",               pal: "green",     order: 40,  show: "always" },
+  fountain_entities:  { label: "Water",         icon: "mdi:fountain",          pal: "blue",      order: 50,  show: "always" },
   music:              { label: "Music zones",   icon: "mdi:music",             pal: "purple",    order: 60 },
   nowplaying:         { label: "Now playing",   icon: "mdi:music-note",        pal: "purple",    order: 70 },
   tv_entity:          { label: "TV",            icon: "mdi:television",        pal: "violet",    order: 80 },
@@ -2986,7 +2989,9 @@ const CHIP_SPECS = {
    * green once it has got there; a pool is its resting blue, orange
    * climbing and green up to temperature. Those declare their moods and
    * the editor offers one swatch each. Everything else has `pal`. */
-  climate:            { label: "Climate",       icon: "mdi:thermostat",        pal: "green",     order: 110,
+  /* The one behaviour change in this commit, and the one asked for: the
+   * tile used to show a grey thermostat for a unit that was off. */
+  climate:            { label: "Climate",       icon: "mdi:thermostat",        pal: "green",     order: 110, show: "active",
     moods: [["heating", "Heating", "red"], ["cooling", "Cooling", "blue"],
             ["idle", "At temperature", "green"], ["mixed", "Heat/cool", "purple"]] },
   pool:               { label: "Pool",          icon: "mdi:pool",              pal: "sky",       order: 160,
@@ -3047,6 +3052,37 @@ function chipLook(key, r, mood) {
     show: pick("show") || base.show || "active",
     order: ord != null ? Number(ord) : base.order != null ? base.order : 999,
   };
+}
+
+/* The template's field names are its own; the map to registry keys lives
+ * here, once, and nowhere else. */
+const TILE_CHIPS = {
+  lights: "light_entities", landscape: "landscape_entities",
+  fans: "fan_entities", bathfans: "bath_fan_entities",
+  fountain: "fountain_entities", climate: "climate", music: "music",
+  tv: "tv_entity", projector: "projector_entity", receiver: "receiver_entity",
+  pool: "pool", spa: "spa", nowplaying: "nowplaying",
+};
+
+/* The tile is a button-card template and cannot call chipLook, so the
+ * resolved answer is handed to it as one variable. This finishes what the
+ * registry started: the template asks for variables.chips.lights.bg rather
+ * than naming a palette entry, so a chip's colour lives in exactly one
+ * place and the tile and the pop-up header cannot drift apart again. */
+function tileChips(r) {
+  const out = { off: { bg: CHIP_PAL.off.bg, fg: CHIP_PAL.off.fg } };
+  for (const field of Object.keys(TILE_CHIPS)) {
+    const key = TILE_CHIPS[field];
+    const look = chipLook(key, r);
+    const o = { icon: look.icon, show: look.show, order: look.order,
+                bg: look.col[0], fg: look.col[1] };
+    for (const m of (CHIP_SPECS[key] || {}).moods || []) {
+      const got = chipLook(key, r, m[0]);
+      o[m[0]] = { bg: got.col[0], fg: got.col[1] };
+    }
+    out[field] = o;
+  }
+  return out;
 }
 
 const CHIP_GROUPS = [
@@ -4229,6 +4265,9 @@ class CharroRoomCard extends CharroBase {
       // the tile's chips read their colours from here, so they cannot drift
       // from the pop-up header's
       pal: CHIP_PAL,
+      // every chip's resolved look - colour, icon, when to show, where to
+      // sit - decided once by the registry rather than twice
+      chips: tileChips(c),
     };
     // a light may be {entity, name, dim} in rooms.json; the tile wants ids
     // the tile's chips both count and switch off, so both skip the doubles
