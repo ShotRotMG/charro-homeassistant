@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.73.0";
+const VERSION = "5.74.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7529,6 +7529,38 @@ function mountGutters(cols, kids) {
   }
 }
 
+/* Two gaps either editor had, both of them about not losing an edit.
+ *
+ * _flush() already guards switching tabs inside the panel and will even
+ * autosave on the way out. What neither editor covered was the browser
+ * itself: closing the tab, or hitting Cmd+S out of habit and getting the
+ * browser's own "save this page" dialog while the edit sat unsaved. */
+function bindEditorKeys(el) {
+  el._keySave = (ev) => {
+    if (!(ev.metaKey || ev.ctrlKey) || String(ev.key).toLowerCase() !== "s") return;
+    if (!el.isConnected) return;
+    // Swallowed whenever this editor is on screen: "save page" is never
+    // what Cmd+S means here, dirty or not.
+    ev.preventDefault();
+    if (el._dirty && el._dirty() && !el._saving) el._doSave();
+  };
+  el._beforeUnload = (ev) => {
+    if (!el.isConnected || !el._dirty || !el._dirty()) return;
+    // Browsers ignore custom wording now; the empty string is what asks.
+    ev.preventDefault();
+    ev.returnValue = "";
+  };
+  window.addEventListener("keydown", el._keySave);
+  window.addEventListener("beforeunload", el._beforeUnload);
+}
+
+function unbindEditorKeys(el) {
+  if (el._keySave) window.removeEventListener("keydown", el._keySave);
+  if (el._beforeUnload) window.removeEventListener("beforeunload", el._beforeUnload);
+  el._keySave = null;
+  el._beforeUnload = null;
+}
+
 class CharroRoomsEditor extends HTMLElement {
   static getStubConfig() { return { type: "custom:charro-rooms-editor", rooms: [] }; }
 
@@ -10213,7 +10245,8 @@ class CharroFeedCard extends HTMLElement {
     this._tick = setInterval(() => { if (this.isConnected) this._load(); }, 60000);
   }
 
-  disconnectedCallback() { clearInterval(this._tick); }
+  connectedCallback() { bindEditorKeys(this); }
+  disconnectedCallback() { clearInterval(this._tick); unbindEditorKeys(this); }
 
   async _load() {
     try {
@@ -10471,6 +10504,9 @@ class CharroNotifyEditor extends HTMLElement {
   /* The service reads the saved file, not this screen, so an edit that is
    * still only on screen is the one way to set the grid correctly and get
    * nothing. The button has to say so. */
+  connectedCallback() { bindEditorKeys(this); }
+  disconnectedCallback() { unbindEditorKeys(this); }
+
   _dirty() { return !!this._cfg && JSON.stringify(this._cfg) !== this._orig; }
 
   _saveLabel() {
