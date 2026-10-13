@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.78.0";
+const VERSION = "5.79.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7689,6 +7689,91 @@ function mountGutters(cols, kids) {
   }
 }
 
+/* ======================================================= CHIP EDITING == */
+const WS_SAVE_CHIPS = "charro/save_chips";
+
+/* <input type=color> wants six hex digits, and a palette foreground is
+ * often a CSS variable carrying its fallback - "var(--green-color,
+ * #4caf50)". Pull the hex out of whatever shape it arrives in, so a swatch
+ * left blank can show the colour that is actually inherited rather than a
+ * grey that reads as "nothing set". */
+function chipHex(v, fallback) {
+  const m = /#([0-9a-fA-F]{6})/.exec(String(v == null ? "" : v));
+  return m ? "#" + m[1] : (fallback || "#888888");
+}
+
+const CHIP_SHOW_OPTS = [
+  ["active", "Only when it is on"],
+  ["always", "Always, grey when off"],
+  ["never", "Never"],
+];
+const CHIP_SHOW_LABEL = Object.fromEntries(CHIP_SHOW_OPTS);
+
+/* What a blank row would give you: the shipped defaults on their own for
+ * the house tab, or those plus the house file when a room is asking. */
+function chipInherit(key, house) {
+  const r = house ? { _chips: house } : {};
+  const base = CHIP_SPECS[key] || {};
+  const look = chipLook(key, r);
+  const out = { icon: look.icon, show: look.show, order: look.order,
+                colour: look.col[1], moods: {} };
+  for (const m of base.moods || []) out.moods[m[0]] = chipLook(key, r, m[0]).col[1];
+  return out;
+}
+
+/* One chip's row, shared by the house-wide tab and the room panel so the
+ * two cannot grow apart - which is the whole point of the registry.
+ *
+ * Blank means inherit everywhere, and inheritance is shown rather than
+ * described: the swatch wears the colour you would get, the icon picker
+ * offers the glyph you would get, and the dropdown names it. A field that
+ * has been set grows a reset beside it. */
+function chipRow(f, key, spec, cur, inherit) {
+  const row = f.rowBox();
+  const set = (k) => (v) => { if (v === "" || v == null) delete cur[k]; else cur[k] = v; };
+
+  const cap = document.createElement("div");
+  cap.className = "vfield";
+  const nm = document.createElement("span");
+  nm.textContent = spec.label || key;
+  nm.style.fontWeight = "600";
+  cap.appendChild(nm);
+  row.appendChild(cap);
+
+  row.appendChild(f.icon("Icon", cur.icon, set("icon"),
+    `Blank uses ${inherit.icon}.`, inherit.icon));
+
+  const moods = spec.moods || [];
+  if (!moods.length) {
+    row.appendChild(f.color("Colour", cur.color, set("color"),
+      "Blank inherits the colour shown.", chipHex(inherit.colour)));
+  } else {
+    /* A thermostat is not one colour and neither is a pool, so these get a
+     * swatch per mood and no single colour that would flatten them. */
+    for (const m of moods) {
+      const mk = m[0];
+      row.appendChild(f.color(m[1], (cur.colors || {})[mk], (v) => {
+        const c = cur.colors || (cur.colors = {});
+        if (v === "" || v == null) delete c[mk]; else c[mk] = v;
+        if (!Object.keys(c).length) delete cur.colors;
+      }, "Blank inherits the colour shown.", chipHex(inherit.moods[mk])));
+    }
+  }
+
+  row.appendChild(f.sel("When to show", cur.show || "",
+    [["", `\u2014 inherit (${CHIP_SHOW_LABEL[inherit.show] || inherit.show}) \u2014`]]
+      .concat(CHIP_SHOW_OPTS), set("show"),
+    "Always draws the chip in the off grey when there is nothing to report."));
+
+  row.appendChild(f.text("Order", cur.order == null ? "" : String(cur.order), (v) => {
+    const n = Number(v);
+    if (String(v).trim() === "") delete cur.order;
+    else if (!isNaN(n)) cur.order = n;
+  }, String(inherit.order)));
+
+  return row;
+}
+
 /* Two gaps either editor had, both of them about not losing an edit.
  *
  * _flush() already guards switching tabs inside the panel and will even
@@ -8616,6 +8701,12 @@ class CharroRoomsEditor extends HTMLElement {
     const camsHost = this._panel("Cameras",
       "Which cameras this room shows, and what each is called", "mdi:cctv",
       "_camsOpen", this._camsBox);
+    this._chipsBox = document.createElement("div");
+    const chipsHost = this._panel("Chips",
+      "Colour, glyph, when each one shows and where it sits \u2014 this room only",
+      /* mdi:palette is already drawn elsewhere in this bundle, so it is
+       * known to exist - mdi:home-cog looked just as plausible once. */
+      "mdi:palette", "_chipsOpen", this._chipsBox);
 
     /* Sections and the raw cards blob still do real work — sections orders
      * and filters the automatic body, and a room can carry cards a layout
@@ -8690,13 +8781,14 @@ class CharroRoomsEditor extends HTMLElement {
       "_advOpen", advBody);
 
     this._left.append(videoHost, zoneHost, waterHost, doorsHost,
-                     gatesHost, camsHost, advanced);
+                     gatesHost, camsHost, chipsHost, advanced);
     this._renderVideo();
     this._renderZonePlayers();
     this._renderWaterActions();
     this._renderDoors();
     this._renderGates();
     this._renderCams();
+    this._renderChipsPanel();
     this._lbEnsure();
     this._lbRender();
     this._renderLights();
@@ -8907,6 +8999,58 @@ class CharroRoomsEditor extends HTMLElement {
    * the room's camera_card under Advanced - because the answer is the same
    * for every camera in the house and typing it per camera is how two of
    * them end up different. */
+  /* The same rows as the Chips tab, writing into this room and inheriting
+   * from the house rather than from the shipped defaults - so a blank
+   * swatch here shows what Charro Config > Chips decided, not what the
+   * code ships with.
+   *
+   * The rows are edited against a draft and only committed when they say
+   * something. Writing straight into the room would leave fifteen empty
+   * objects in the file the moment anyone opened this panel, and then
+   * "what has actually been changed in this room" is unreadable. */
+  _renderChipsPanel() {
+    const box = this._chipsBox;
+    if (!box) return;
+    box.innerHTML = "";
+    if (!this._room) return;
+
+    if (this._chipsAll === undefined) {
+      this._chipsAll = null;
+      loadAll(this._hass)
+        .then((all) => { this._chipsAll = all.chips || {}; this._renderChipsPanel(); })
+        .catch(() => { this._chipsAll = {}; this._renderChipsPanel(); });
+    }
+    const house = this._chipsAll || {};
+    const live = this._room.chips || {};
+    const draft = {};
+
+    const commit = () => {
+      const out = {};
+      for (const k of Object.keys(draft))
+        if (Object.keys(draft[k]).length) out[k] = draft[k];
+      if (Object.keys(out).length) this._room.chips = out;
+      else delete this._room.chips;
+    };
+    const redraw = () => { commit(); this._renderChipsPanel(); this._renderPreview(); };
+    const f = this._fields(redraw);
+
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent =
+      "Blank inherits the house setting from Charro Config \u203a Chips, and "
+      + "what you would inherit is what the swatch and the picker already "
+      + "show. A thermostat and the pool have a colour per state rather than "
+      + "one, because a heating thermostat and a cooling one are not the "
+      + "same news.";
+    box.appendChild(note);
+
+    for (const key of Object.keys(CHIP_SPECS)) {
+      draft[key] = JSON.parse(JSON.stringify(live[key] || {}));
+      box.appendChild(chipRow(f, key, CHIP_SPECS[key], draft[key],
+                              chipInherit(key, house)));
+    }
+  }
+
   _renderCams() {
     const box = this._camsBox;
     if (!box) return;
@@ -10503,6 +10647,126 @@ class CharroFeedCard extends HTMLElement {
 }
 def("charro-feed-card", CharroFeedCard);
 
+/* ======================================================== CHIPS EDITOR == */
+/*
+ * The house-wide chip look. Everything here is a default: a room's own
+ * Chips panel overrides any of it key by key, so this is where you say
+ * "every thermostat in the place heats this red" and the room is where
+ * you say "except that one".
+ */
+class CharroChipsEditor extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-chips-editor" }; }
+  setConfig(config) { this._config = config || {}; }
+  set hass(h) { this._hass = h; if (!this._built) this._build(); }
+  getCardSize() { return 12; }
+
+  connectedCallback() { bindEditorKeys(this); }
+  disconnectedCallback() { unbindEditorKeys(this); }
+
+  _say(msg, cls) {
+    if (this._status) {
+      this._status.textContent = msg;
+      this._status.className = "status " + (cls || "");
+    }
+  }
+
+  _dirty() { return !!this._cfg && JSON.stringify(this._cfg) !== this._orig; }
+
+  _saveLabel() {
+    if (!this._save) return;
+    const d = this._dirty();
+    this._save.textContent = d ? "Save changes" : "Saved";
+    this._save.disabled = !d;
+    this._revert.disabled = !d;
+  }
+
+  dirtyCheck() {
+    if (!this._dirty()) return true;
+    return confirm("The chip settings have unsaved changes. Leave and lose them?");
+  }
+
+  _build() {
+    this._built = true;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = RE_CSS + NT_CSS;
+    const card = document.createElement("ha-card");
+
+    const bar = document.createElement("div"); bar.className = "bar";
+    const t = document.createElement("div");
+    t.className = "ttl"; t.textContent = "Chips";
+    const sp = document.createElement("div"); sp.className = "sp";
+    this._revert = document.createElement("button");
+    this._revert.textContent = "Revert";
+    this._revert.addEventListener("click", () => this._load());
+    this._save = document.createElement("button");
+    this._save.className = "primary";
+    this._save.textContent = "Save";
+    this._save.addEventListener("click", () => this._doSave());
+    bar.append(t, sp, this._revert, this._save);
+
+    this._body = document.createElement("div");
+    this._status = document.createElement("div");
+    this._status.className = "status";
+    card.append(bar, this._body, this._status);
+    root.innerHTML = ""; root.append(style, card);
+    this._load();
+  }
+
+  async _load() {
+    try {
+      invalidateRooms();
+      const all = await loadAll(this._hass);
+      this._cfg = JSON.parse(JSON.stringify(all.chips || {}));
+      this._orig = JSON.stringify(this._cfg);
+      this._say("");
+      this._paint();
+    } catch (err) {
+      this._say(`Could not read the chip settings \u2014 ${err.message}`, "err");
+    }
+  }
+
+  async _doSave() {
+    try {
+      /* Anything left entirely blank is not a setting, and a file full of
+       * empty objects makes "what has actually been changed here"
+       * unreadable the next time somebody opens it. */
+      for (const k of Object.keys(this._cfg))
+        if (!this._cfg[k] || !Object.keys(this._cfg[k]).length) delete this._cfg[k];
+      await this._hass.callWS({ type: WS_SAVE_CHIPS, config: this._cfg });
+      invalidateRooms();
+      this._orig = JSON.stringify(this._cfg);
+      this._say("Saved. Other cards pick it up on the next page load.", "ok");
+      this._paint();
+    } catch (err) {
+      this._say(`Could not save \u2014 ${err.message || err.code || err}`, "err");
+    }
+  }
+
+  _paint() {
+    const f = fieldKit(this._hass, () => this._paint());
+    const root = this._body;
+    root.innerHTML = "";
+
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent =
+      "Every chip the room cards can draw. These are the house defaults \u2014 "
+      + "a room's own Chips panel overrides any of them, one field at a time. "
+      + "Blank means inherit, and what you would inherit is what the swatch "
+      + "and the picker already show.";
+    root.appendChild(note);
+
+    for (const key of Object.keys(CHIP_SPECS)) {
+      const spec = CHIP_SPECS[key];
+      const cur = this._cfg[key] || (this._cfg[key] = {});
+      root.appendChild(chipRow(f, key, spec, cur, chipInherit(key, null)));
+    }
+    this._saveLabel();
+  }
+}
+def("charro-chips-editor", CharroChipsEditor);
+
 /* ====================================================== NOTIFY EDITOR == */
 /*
  * Who gets told what, and how loudly.
@@ -11470,6 +11734,7 @@ const CONFIG_TABS = [
   ["rooms", "Rooms"],
   ["remotes", "Remotes"],
   ["notify", "Notifications"],
+  ["chips", "Chips"],
   ["unifi", "UniFi"],
 ];
 
@@ -11560,7 +11825,8 @@ class CharroConfigPanel extends HTMLElement {
 
   /* Rooms and Remotes are the same element, so they are the same pane. */
   _paneKey(tab) {
-    return tab === "unifi" || tab === "notify" ? tab : "editor";
+    return tab === "unifi" || tab === "notify" || tab === "chips"
+      ? tab : "editor";
   }
 
   _pane(key) {
@@ -11575,6 +11841,9 @@ class CharroConfigPanel extends HTMLElement {
     } else if (key === "notify") {
       el = document.createElement("charro-notify-editor");
       el.setConfig({ type: "custom:charro-notify-editor" });
+    } else if (key === "chips") {
+      el = document.createElement("charro-chips-editor");
+      el.setConfig({ type: "custom:charro-chips-editor" });
     } else {
       el = document.createElement("charro-rooms-editor");
       el.setConfig({ type: "custom:charro-rooms-editor", panel: true });
@@ -11591,9 +11860,11 @@ class CharroConfigPanel extends HTMLElement {
     if (!CONFIG_TABS.some(([k]) => k === tab)) tab = "rooms";
     /* The notifications editor saves explicitly, so leaving it is the one
      * place in here that can lose work. */
-    if (this._tab === "notify" && tab !== "notify") {
-      const nt = this._els && this._els.notify;
-      if (nt && nt.dirtyCheck && !nt.dirtyCheck()) return;
+    /* Two tabs save explicitly, so leaving either can lose work. */
+    for (const k of ["notify", "chips"]) {
+      if (this._tab !== k || tab === k) continue;
+      const ed = this._els && this._els[k];
+      if (ed && ed.dirtyCheck && !ed.dirtyCheck()) return;
     }
     this._tab = tab;
     for (const k in this._tabBtns) this._tabBtns[k].classList.toggle("on", k === tab);
