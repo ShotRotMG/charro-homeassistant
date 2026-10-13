@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.80.0";
+const VERSION = "5.81.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3121,7 +3121,16 @@ function entLabel(e, hass, key) {
 /* what the thermostat is doing beats what it is set to */
 function climateChip(hass, id, r) {
   const st = hass.states[id];
-  if (!st || st.state === "off" || st.state === "unavailable") return null;
+  if (!st || st.state === "off" || st.state === "unavailable") {
+    /* Hidden when off is the default and the one you asked for, but the
+     * registry gets to say otherwise - and then it draws grey like
+     * everything else rather than being the one chip that still can't. */
+    const look = chipLook("climate", r);
+    if (!st || look.show !== "always") return null;
+    return { key: "climate", icon: look.icon, col: CHIP_OFF, text: "",
+             title: `${st.attributes.friendly_name || id} — ${st.state}`,
+             tap: { kind: "more-info", entity: id } };
+  }
   const a = st.attributes || {};
   const act = a.hvac_action;
   const cur = a.current_temperature, set = a.temperature;
@@ -3153,7 +3162,7 @@ function roomChips(r, hass) {
   const skip = uncountedIds(r);
 
   for (const [key, , , domain] of CHIP_GROUPS) {
-    const { icon, col, label } = chipLook(key, r);
+    const { icon, col, label, show } = chipLook(key, r);
     const list = r[key] || [];
     if (!list.length) continue;
     const real = countedList(r, key, skip);
@@ -3162,7 +3171,18 @@ function roomChips(r, hass) {
       return st && st.state === "on";
     });
     const n = on.length;
-    if (!n) continue;
+    if (!n) {
+      /* The off half. The tile has always drawn a grey lightbulb for a
+       * room with the lights out and the header never did, which was the
+       * last place the two renderers disagreed about anything. A tap on
+       * the grey one turns them on, matching the tile, where this chip has
+       * always been a toggle rather than an off switch. */
+      if (show !== "always") continue;
+      out.push({ key, icon, col: CHIP_OFF, text: "",
+                 title: `${label} — all off. Tap to turn them on.`,
+                 tap: { kind: "on", domain, entities: lightIds(real) } });
+      continue;
+    }
     /* Naming them is what makes a surprising count answerable: a light the
      * layout never placed still counts, and before this the chip gave you
      * no way to tell which one it meant. */
@@ -3224,7 +3244,14 @@ function roomChips(r, hass) {
                  tap: { kind: "toggle", entity: id } });
       continue;
     }
-    if (!st || OFFISH.includes(st.state) || st.state === "idle") continue;
+    if (!st) continue;
+    if (OFFISH.includes(st.state) || st.state === "idle") {
+      if (chipLook(key, r).show !== "always") continue;
+      out.push({ key, icon, col: CHIP_OFF, text: "",
+                 title: `${label} — ${st.state}`,
+                 tap: { kind: "more-info", entity: id } });
+      continue;
+    }
     out.push({ key, icon, col, text: "",
                title: `${label} — ${st.state}`,
                tap: { kind: "more-info", entity: id } });
@@ -3885,6 +3912,9 @@ class RoomPopup {
     /* homeassistant.toggle rather than the domain's own: a projector can be
      * a switch, a light or a media_player, and the chip should not have to
      * know which one this room wired up. */
+    if (tap.kind === "on" && (tap.entities || []).length) {
+      this._hass.callService(tap.domain, "turn_on", { entity_id: tap.entities });
+    }
     if (tap.kind === "toggle" && tap.entity) {
       this._hass.callService("homeassistant", "toggle", { entity_id: tap.entity });
     }
