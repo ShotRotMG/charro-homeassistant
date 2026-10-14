@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.84.0";
+const VERSION = "5.85.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10893,11 +10893,15 @@ class CharroChipsEditor extends HTMLElement {
 
   async _doSave() {
     try {
-      /* Anything left entirely blank is not a setting, and a file full of
-       * empty objects makes "what has actually been changed here"
-       * unreadable the next time somebody opens it. */
+      /* The draft keeps _paint from inventing empties, but a file written
+       * by an older build can already contain them, and painting
+       * deliberately does not touch _cfg - cleaning on sight is what made
+       * the editor open dirty in the first place. So the tidy-up happens
+       * here, where a write is already going out. */
+      const clean = {};
       for (const k of Object.keys(this._cfg))
-        if (!this._cfg[k] || !Object.keys(this._cfg[k]).length) delete this._cfg[k];
+        if (this._cfg[k] && Object.keys(this._cfg[k]).length) clean[k] = this._cfg[k];
+      this._cfg = clean;
       await this._hass.callWS({ type: WS_SAVE_CHIPS, config: this._cfg });
       invalidateRooms();
       this._orig = JSON.stringify(this._cfg);
@@ -10909,7 +10913,26 @@ class CharroChipsEditor extends HTMLElement {
   }
 
   _paint() {
-    const f = fieldKit(this._hass, () => this._paint());
+    /* Rows edit a draft and the draft is folded back in, keeping only the
+     * chips that say something.
+     *
+     * Painting used to create `this._cfg[key] = {}` for all fifteen just
+     * by rendering them, which made a freshly loaded editor differ from
+     * what it had loaded. So it opened dirty, and after a save it painted
+     * itself dirty again the moment the write finished - the Save button
+     * never went back to "Saved" and the whole thing read as "chips can't
+     * save". The write had worked every time.
+     *
+     * The room panel got this right and this did not, which is the cost of
+     * writing the same screen twice in two styles. Both drafts now. */
+    const drafts = {};
+    const commit = () => {
+      const out = {};
+      for (const k of Object.keys(drafts))
+        if (Object.keys(drafts[k]).length) out[k] = drafts[k];
+      this._cfg = out;
+    };
+    const f = fieldKit(this._hass, () => { commit(); this._paint(); });
     const root = this._body;
     root.innerHTML = "";
 
@@ -10923,9 +10946,9 @@ class CharroChipsEditor extends HTMLElement {
     root.appendChild(note);
 
     for (const key of Object.keys(CHIP_SPECS)) {
-      const spec = CHIP_SPECS[key];
-      const cur = this._cfg[key] || (this._cfg[key] = {});
-      root.appendChild(chipRow(f, key, spec, cur, chipInherit(key, null)));
+      drafts[key] = JSON.parse(JSON.stringify(this._cfg[key] || {}));
+      root.appendChild(chipRow(f, key, CHIP_SPECS[key], drafts[key],
+                               chipInherit(key, null)));
     }
     this._saveLabel();
   }
