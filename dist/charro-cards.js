@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.89.0";
+const VERSION = "5.90.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -313,8 +313,17 @@ async function fetchAll(hass) {
       const d = await hass.callWS({ type: "charro/get_rooms" });
       if (n) console.info("charro: integration is up, cards loading");
       checkVersion(d && d.version, hass);
-      return { rooms: (d && d.rooms) || {}, remotes: (d && d.remotes) || {},
-               notify: (d && d.notify) || {} };
+      /* Pass the payload through rather than re-listing its keys. `chips`
+       * was added to the message and not to this line, so the house-wide
+       * chip look was read off the disk, sent over the socket and dropped
+       * on arrival: every card fell back to the built-in colours and the
+       * Chips tab opened blank over a file that had saved perfectly well,
+       * which is most of why saving chips looked broken. Spreading means
+       * the next key added to the payload cannot go the same way. */
+      const out = { ...(d || {}) };
+      for (const k of ["rooms", "remotes", "notify", "chips"])
+        if (!out[k] || typeof out[k] !== "object") out[k] = {};
+      return out;
     } catch (err) {
       if (n >= WS_TRIES || !wsRetryable(err)) throw err;
       if (!n) console.info("charro: waiting for the integration to start\u2026");
