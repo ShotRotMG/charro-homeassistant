@@ -1242,7 +1242,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -1267,7 +1267,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -1281,7 +1281,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.pool || {};\n  if (!(states[variables.pool_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.pool_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.pool_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },
@@ -1324,7 +1324,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.bg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -1349,7 +1349,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -1363,7 +1363,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable'\n      && cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.spa || {};\n  if (!(states[variables.spa_switch]?.state === 'on')) return variables.chips.off.fg;\n  const h = states[variables.spa_heater];\n  const a = h?.attributes || {};\n  const cur = a.current_temperature, set = a.temperature;\n  let mood = 'resting';\n  /* A climate-domain heater says outright whether it is firing; a\n     water_heater (which is what a Pentair publishes) does not, so\n     that one is read from how far it still has to go. */\n  if (variables.spa_heater && h && h.state !== 'off' && h.state !== 'unavailable') {\n    if (a.hvac_action === 'heating') mood = 'heating';\n    else if (a.hvac_action === 'idle' || a.hvac_action === 'off') mood = 'warm';\n    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? 'heating' : 'warm';\n  }\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },

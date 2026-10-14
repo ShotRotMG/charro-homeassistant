@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.91.0";
+const VERSION = "5.92.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1198,7 +1198,23 @@ function waterPart(r, kind) {
   return { sw: pool ? r.pool_switch : r.spa_switch,
            heater: pool ? r.pool_heater : r.spa_heater,
            name: (pool ? r.pool_name : r.spa_name) || (pool ? "Pool" : "Spa"),
-           icon: pool ? "mdi:pool" : "mdi:hot-tub" };
+           icon: (pool ? r.pool_icon : r.spa_icon)
+              || (pool ? "mdi:pool" : "mdi:hot-tub") };
+}
+
+/* Which control the thermostat card should offer. This house's Pentair
+ * publishes its bodies as `water_heater` with operation_list ["off", "Gas
+ * Heater"], and "water-heater-operation-modes" was written in on that
+ * basis - so a heater published as `climate` instead, which is what
+ * ScreenLogic does on newer builds and what Jandy, Hayward and a plain
+ * thermostat do, was accepted by the picker and then asked for a feature
+ * its domain does not have. The domain is in the entity id, so this is
+ * read rather than configured. */
+function heaterFeatures(id) {
+  const dom = String(id || "").split(".")[0];
+  if (dom === "water_heater") return [{ type: "water-heater-operation-modes" }];
+  if (dom === "climate") return [{ type: "climate-hvac-modes" }];
+  return [];
 }
 
 function pumpCard(r, kind) {
@@ -1213,8 +1229,9 @@ function pumpCard(r, kind) {
 function heaterCard(r, kind) {
   const p = waterPart(r, kind);
   if (!p.heater) return null;
-  const card = { type: "thermostat", entity: p.heater, name: `${p.name} heater`,
-                 features: [{ type: "water-heater-operation-modes" }] };
+  const card = { type: "thermostat", entity: p.heater, name: `${p.name} heater` };
+  const feats = heaterFeatures(p.heater);
+  if (feats.length) card.features = feats;
   if (!p.sw) return card;
   return { type: "conditional",
            conditions: [{ condition: "state", entity: p.sw, state: "on" }],
@@ -9493,20 +9510,31 @@ class CharroRoomsEditor extends HTMLElement {
     const r = this._room;
     const set = (k) => (v) => { if (v) r[k] = v; else delete r[k]; };
 
-    for (const [cap, sw, nm, ht] of [
-      ["Pool", "pool_switch", "pool_name", "pool_heater"],
-      ["Spa", "spa_switch", "spa_name", "spa_heater"],
+    for (const [cap, sw, nm, ht, ic, dflt] of [
+      ["Pool", "pool_switch", "pool_name", "pool_heater", "pool_icon", "mdi:pool"],
+      ["Spa", "spa_switch", "spa_name", "spa_heater", "spa_icon", "mdi:hot-tub"],
     ]) {
       const row = f.rowBox();
-      row.appendChild(f.ent(`${cap} pump`, r[sw], ["switch"], set(sw)));
+      /* A variable-speed pump is a fan on some controllers and a plain
+       * switch on others; both read on/off, which is all anything here
+       * asks of it. */
+      row.appendChild(f.ent(`${cap} pump`, r[sw], ["switch", "fan", "input_boolean"],
+        set(sw)));
       row.appendChild(f.text(`${cap} tile name`, r[nm], set(nm), cap));
+      /* "tile", to say which icon this is: the chip's own glyph is set in
+       * the Chips panel, and two fields called "Pool icon" would be one
+       * too many. */
+      row.appendChild(f.icon(`${cap} tile icon`, r[ic], set(ic), "", dflt));
       row.appendChild(f.ent(`${cap} heater`, r[ht], ["water_heater", "climate"], set(ht)));
       box.appendChild(row);
     }
     const n1 = document.createElement("div");
     n1.className = "vnote";
-    n1.textContent = "The heater only shows while its pump is on. "
-      + "The chip takes its temperature and warming colour from the heater.";
+    n1.textContent = "The heater only shows while its pump is on — nothing "
+      + "heats water it is not circulating. The chip takes its temperature "
+      + "and its warming colour from the heater: a climate heater is read "
+      + "from what it says it is doing, a water_heater (which is what a "
+      + "Pentair publishes) from how far it still has to go.";
     box.appendChild(n1);
 
     box.appendChild(f.many("Water features", lightIds(r.fountain_entities),
