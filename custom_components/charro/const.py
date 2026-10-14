@@ -42,6 +42,17 @@ NOTIFY_FILE = "_notify.json"
 # key, so this is the default everything starts from rather than a rule.
 CHIPS_FILE = "_chips.json"
 
+# House-wide settings: things that were constants in the bundle until
+# somebody who is not this house installed it. A room can still override
+# any of them in its own file - this is only what a room inherits when it
+# says nothing.
+HOUSE_FILE = "_house.json"
+# Where the full-page view of a room lives. A room key is appended, or
+# substituted for {room} if the path names it somewhere other than the end:
+# "/lovelace/room-{room}" works as well as "/d-charro".
+HOUSE_PAGE_BASE = "/d-charro"
+HOUSE_DEFAULTS = {"page_base": HOUSE_PAGE_BASE}
+
 # iOS has no notification channels, so the urgency is decided here and
 # carried in push.interruption-level. These are the five settings a cell in
 # the matrix can hold, in order.

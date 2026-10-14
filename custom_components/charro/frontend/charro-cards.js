@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.90.0";
+const VERSION = "5.91.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -321,8 +321,11 @@ async function fetchAll(hass) {
        * which is most of why saving chips looked broken. Spreading means
        * the next key added to the payload cannot go the same way. */
       const out = { ...(d || {}) };
-      for (const k of ["rooms", "remotes", "notify", "chips"])
-        if (!out[k] || typeof out[k] !== "object") out[k] = {};
+      for (const k of ["rooms", "remotes", "notify", "chips", "house"])
+        /* an array is typeof "object" and would survive a looser check,
+         * then read as a dict with no keys everywhere downstream */
+        if (!out[k] || typeof out[k] !== "object" || Array.isArray(out[k]))
+          out[k] = {};
       return out;
     } catch (err) {
       if (n >= WS_TRIES || !wsRetryable(err)) throw err;
@@ -359,6 +362,28 @@ function loadRemotes(hass) {
  * page, so asking for this per card costs nothing. */
 function loadChips(hass) {
   return loadAll(hass).then(({ chips }) => chips || {}).catch(() => ({}));
+}
+
+/* House-wide settings - the things that were constants in here until
+ * somebody who is not this house installed it. */
+function loadHouse(hass) {
+  return loadAll(hass).then(({ house }) => house || {}).catch(() => ({}));
+}
+
+/* Where a room's full-page view lives. "/d-charro" was written into the
+ * bundle, which is fine for one house and wrong for every other: a
+ * dashboard is called whatever its owner called it. `{room}` lets the key
+ * sit anywhere in the path - "/lovelace/room-{room}" - and without it the
+ * key is appended, which is the common shape. */
+const HOUSE_PAGE_BASE = "/d-charro";
+
+function pagePath(base, room) {
+  if (!room) return "";
+  let b = String(base == null || base === "" ? HOUSE_PAGE_BASE : base).trim();
+  if (!b) b = HOUSE_PAGE_BASE;
+  if (b.includes("{room}")) return b.split("{room}").join(room);
+  if (!b.startsWith("/")) b = "/" + b;
+  return b.replace(/\/+$/, "") + "/" + room;
 }
 
 const roomHash = (c) => {
@@ -4172,11 +4197,13 @@ class CharroRoomCard extends CharroBase {
     if ((room.remotes || this._config.remotes || []).length || room.video)
       room._remotes = await loadRemotes(this._hass);
     room._chips = await loadChips(this._hass);
+    const house = await loadHouse(this._hass);
     const m = { ...room, ...this._config };
     for (const k of ROOM_LISTS) if (!m[k]) m[k] = room[k] || [];
     if (!m.room_name) m.room_name = room.room_name || this._config.room || "";
     if (!m.room_icon) m.room_icon = room.room_icon || "mdi:home";
-    if (!m.page_path && this._config.room) m.page_path = `/d-charro/${this._config.room}`;
+    if (!m.page_path && this._config.room)
+      m.page_path = pagePath(house.page_base, this._config.room);
     this._merged = m;
     return m;
   }
@@ -8075,6 +8102,7 @@ function mountGutters(cols, kids) {
 
 /* ======================================================= CHIP EDITING == */
 const WS_SAVE_CHIPS = "charro/save_chips";
+const WS_SAVE_HOUSE = "charro/save_house";
 
 /* <input type=color> wants six hex digits, and a palette foreground is
  * often a CSS variable carrying its fallback - "var(--green-color,
@@ -11422,6 +11450,148 @@ class CharroChipsEditor extends HTMLElement {
 }
 def("charro-chips-editor", CharroChipsEditor);
 
+/* ====================================================== HOUSE SETTINGS == */
+/* The things that were constants in this bundle until somebody who is not
+ * this house installed it. Every one of them is a default a room can still
+ * override in its own file, so an absent key means "the built-in", which is
+ * what every install that has never opened this tab is doing. */
+class CharroHouseEditor extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-house-editor" }; }
+  setConfig(config) { this._config = config || {}; }
+  set hass(h) { this._hass = h; if (!this._built) this._build(); }
+  getCardSize() { return 6; }
+
+  connectedCallback() { bindEditorKeys(this); }
+  disconnectedCallback() { unbindEditorKeys(this); }
+
+  _say(msg, cls) {
+    if (this._status) {
+      this._status.textContent = msg;
+      this._status.className = "status " + (cls || "");
+    }
+  }
+
+  _dirty() { return !!this._cfg && JSON.stringify(this._cfg) !== this._orig; }
+
+  _saveLabel() {
+    if (!this._save) return;
+    const d = this._dirty();
+    this._save.textContent = d ? "Save changes" : "Saved";
+    this._save.disabled = !d;
+    this._revert.disabled = !d;
+  }
+
+  dirtyCheck() {
+    if (!this._dirty()) return true;
+    return confirm("The settings have unsaved changes. Leave and lose them?");
+  }
+
+  _build() {
+    this._built = true;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = RE_CSS + NT_CSS;
+    const card = document.createElement("ha-card");
+
+    const bar = document.createElement("div"); bar.className = "bar";
+    const t = document.createElement("div");
+    t.className = "ttl"; t.textContent = "Settings";
+    const sp = document.createElement("div"); sp.className = "sp";
+    this._revert = document.createElement("button");
+    this._revert.textContent = "Revert";
+    this._revert.addEventListener("click", () => this._load());
+    this._save = document.createElement("button");
+    this._save.className = "primary";
+    this._save.textContent = "Save";
+    this._save.addEventListener("click", () => this._doSave());
+    bar.append(t, sp, this._revert, this._save);
+
+    this._body = document.createElement("div");
+    this._status = document.createElement("div");
+    this._status.className = "status";
+    card.append(bar, this._body, this._status);
+    root.innerHTML = ""; root.append(style, card);
+    this._load();
+  }
+
+  async _load() {
+    try {
+      invalidateRooms();
+      const all = await loadAll(this._hass);
+      this._cfg = JSON.parse(JSON.stringify(all.house || {}));
+      this._rooms = Object.keys(all.rooms || {}).sort();
+      this._orig = JSON.stringify(this._cfg);
+      this._say("");
+      this._paint();
+    } catch (err) {
+      this._say(`Could not read the settings — ${err.message}`, "err");
+    }
+  }
+
+  async _doSave() {
+    try {
+      /* Only the keys that say something. A blank field means "the
+       * built-in default", which is not the same as an empty string - the
+       * empty string would be saved and then used. */
+      const clean = {};
+      for (const [k, v] of Object.entries(this._cfg))
+        if (v !== "" && v != null) clean[k] = v;
+      await this._hass.callWS({ type: WS_SAVE_HOUSE, config: clean });
+      this._cfg = clean;
+      this._orig = JSON.stringify(this._cfg);
+      invalidateRooms();
+      this._say("Saved. Other cards pick it up on the next page load.", "ok");
+      this._paint();
+    } catch (err) {
+      this._say(`Could not save — ${err.message || err.code || err}`, "err");
+    }
+  }
+
+  _paint() {
+    const root = this._body;
+    root.innerHTML = "";
+    const f = fieldKit(this._hass, () => this._paint());
+    const set = (k) => (v) => { if (v) this._cfg[k] = v; else delete this._cfg[k]; };
+
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "House-wide defaults. Every one of these can still be "
+      + "overridden on a single room, in that room’s own fields — this is "
+      + "only what a room inherits when it says nothing. Blank means the "
+      + "built-in, shown as the placeholder.";
+    root.appendChild(note);
+
+    const cap = document.createElement("div");
+    cap.className = "vcap"; cap.textContent = "Dashboard";
+    root.appendChild(cap);
+
+    const box = document.createElement("div"); box.className = "vrowbox";
+    box.appendChild(f.text("Full-page path", this._cfg.page_base,
+      set("page_base"), HOUSE_PAGE_BASE));
+    const h = document.createElement("div");
+    h.className = "vhelp";
+    h.textContent = "Where a room’s full-page view lives. The room key is "
+      + "added on the end, or put {room} in the path to place it yourself "
+      + "— /lovelace/room-{room} works as well as /d-charro. A room with "
+      + "its own Full-page path set is unaffected.";
+    box.appendChild(h);
+
+    /* An example beats the sentence above it: the path it will actually
+     * build, for a room that actually exists. */
+    const eg = document.createElement("div");
+    eg.className = "vnote";
+    const sample = (this._rooms || [])[0];
+    eg.textContent = sample
+      ? `${sample} → ${pagePath(this._cfg.page_base, sample)}`
+      : `saloon → ${pagePath(this._cfg.page_base, "saloon")}`;
+    box.appendChild(eg);
+    root.appendChild(box);
+
+    this._saveLabel();
+  }
+}
+def("charro-house-editor", CharroHouseEditor);
+
 /* ====================================================== NOTIFY EDITOR == */
 /*
  * Who gets told what, and how loudly.
@@ -11635,6 +11805,9 @@ class CharroNotifyEditor extends HTMLElement {
     try {
       invalidateRooms();
       const all = await loadAll(this._hass);
+      /* only to show this house's own dashboard in the "Opens" placeholder
+       * rather than the one this bundle happened to be written in */
+      this._pageBase = (all.house || {}).page_base;
       const cfg = JSON.parse(JSON.stringify(all.notify || {}));
       if (!Array.isArray(cfg.people)) cfg.people = [];
       if (!Array.isArray(cfg.categories) || !cfg.categories.length)
@@ -11994,7 +12167,8 @@ class CharroNotifyEditor extends HTMLElement {
         + "in What sets it off. Blank means the same colour as opening.",
         c.color || "#888888"));
       row.appendChild(f.ent("Camera", c.camera, ["camera"], set("camera")));
-      row.appendChild(f.text("Opens", c.url, set("url"), "/d-charro/security"));
+      row.appendChild(f.text("Opens", c.url, set("url"),
+        pagePath(this._pageBase, "security")));
       row.appendChild(f.text("Title", c.title, set("title"), "{name}"));
       row.appendChild(f.text("Message", c.message, set("message"),
         "{status} \u00b7 {room}"));
@@ -12304,7 +12478,8 @@ class CharroNotifyEditor extends HTMLElement {
     trow.appendChild(f.text("About", t.about, (v) => { t.about = v; },
       "binary_sensor.front_door"));
     trow.appendChild(f.ent("Camera", t.camera, ["camera"], (v) => { t.camera = v; }));
-    trow.appendChild(f.text("Opens", t.url, (v) => { t.url = v; }, "/d-charro/security"));
+    trow.appendChild(f.text("Opens", t.url, (v) => { t.url = v; },
+      pagePath(this._pageBase, "security")));
     trow.appendChild(f.bool("Closing", t.shut, (v) => { t.shut = v; }));
     box.appendChild(trow);
 
@@ -12390,6 +12565,7 @@ const CONFIG_TABS = [
   ["remotes", "Remotes"],
   ["notify", "Notifications"],
   ["chips", "Chips"],
+  ["settings", "Settings"],
   ["unifi", "UniFi"],
 ];
 
@@ -12480,7 +12656,7 @@ class CharroConfigPanel extends HTMLElement {
 
   /* Rooms and Remotes are the same element, so they are the same pane. */
   _paneKey(tab) {
-    return tab === "unifi" || tab === "notify" || tab === "chips"
+    return ["unifi", "notify", "chips", "settings"].includes(tab)
       ? tab : "editor";
   }
 
@@ -12499,6 +12675,9 @@ class CharroConfigPanel extends HTMLElement {
     } else if (key === "chips") {
       el = document.createElement("charro-chips-editor");
       el.setConfig({ type: "custom:charro-chips-editor" });
+    } else if (key === "settings") {
+      el = document.createElement("charro-house-editor");
+      el.setConfig({ type: "custom:charro-house-editor" });
     } else {
       el = document.createElement("charro-rooms-editor");
       el.setConfig({ type: "custom:charro-rooms-editor", panel: true });
@@ -12516,7 +12695,7 @@ class CharroConfigPanel extends HTMLElement {
     /* The notifications editor saves explicitly, so leaving it is the one
      * place in here that can lose work. */
     /* Two tabs save explicitly, so leaving either can lose work. */
-    for (const k of ["notify", "chips"]) {
+    for (const k of ["notify", "chips", "settings"]) {
       if (this._tab !== k || tab === k) continue;
       const ed = this._els && this._els[k];
       if (ed && ed.dirtyCheck && !ed.dirtyCheck()) return;

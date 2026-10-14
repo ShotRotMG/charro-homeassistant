@@ -38,14 +38,18 @@ const hassWith = (payload) => ({ callWS: async () => payload, states: {} });
   /* and the dicts are always dicts, whatever arrives */
   T.invalidateRooms();
   const junk = await T.fetchAll(hassWith({ rooms: null, remotes: "nope",
-    notify: 7, chips: undefined }));
-  for (const k of ["rooms", "remotes", "notify", "chips"])
+    notify: 7, chips: undefined, house: [] }));
+  for (const k of ["rooms", "remotes", "notify", "chips", "house"])
     eq(junk[k], {}, k + " is an object even when it arrives as junk");
 
+  /* listing the guaranteed keys here as well would just mean editing this
+   * test every time one is added, so check the shape instead */
   T.invalidateRooms();
   const none = await T.fetchAll(hassWith(null));
-  eq(none, { rooms: {}, remotes: {}, notify: {}, chips: {} },
-    "an empty reply is four empty dicts, not a throw");
+  ok(Object.keys(none).length >= 5, "an empty reply is still every dict");
+  ok(Object.values(none).every((v) => v && typeof v === "object"
+    && !Array.isArray(v) && !Object.keys(v).length),
+    "and each one is an empty object, not a throw");
 
   /* loadAll is one shared promise - a page of twenty cards asks once */
   T.invalidateRooms();

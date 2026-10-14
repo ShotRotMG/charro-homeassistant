@@ -49,6 +49,7 @@ from .const import (
     LEGACY_SUBDIR,
     NOTIFY_FIELDS,
     CHIPS_FILE,
+    HOUSE_FILE,
     NOTIFY_FILE,
     NOTIFY_LEVELS,
     NOTIFY_MESSAGE,
@@ -1080,6 +1081,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_save_remotes)
     websocket_api.async_register_command(hass, ws_save_notify)
     websocket_api.async_register_command(hass, ws_save_chips)
+    websocket_api.async_register_command(hass, ws_save_house)
     websocket_api.async_register_command(hass, ws_watching)
     websocket_api.async_register_command(hass, ws_journal)
     websocket_api.async_register_command(hass, ws_journal_read)
@@ -1359,10 +1361,11 @@ def _read_all(path: str) -> dict[str, Any]:
     remotes: dict[str, Any] = {}
     notify: dict[str, Any] = {}
     chips: dict[str, Any] = {}
+    house: dict[str, Any] = {}
     bad: list[str] = []
     if not os.path.isdir(path):
         return {"rooms": rooms, "remotes": remotes, "notify": notify,
-                "chips": chips, "bad": bad}
+                "chips": chips, "house": house, "bad": bad}
     for name in sorted(os.listdir(path)):
         if not name.endswith(".json") or name.endswith(".tmp.json"):
             continue
@@ -1378,6 +1381,8 @@ def _read_all(path: str) -> dict[str, Any]:
             notify = data if isinstance(data, dict) else {}
         elif name == CHIPS_FILE:
             chips = data if isinstance(data, dict) else {}
+        elif name == HOUSE_FILE:
+            house = data if isinstance(data, dict) else {}
         elif not name.startswith("_") and isinstance(data, dict):
             key = name[:-5]
             # tolerate a file that wraps the room in its own key
@@ -1385,7 +1390,7 @@ def _read_all(path: str) -> dict[str, Any]:
                 data = data[key]
             rooms[key] = data
     return {"rooms": rooms, "remotes": remotes, "notify": notify,
-            "chips": chips, "bad": bad}
+            "chips": chips, "house": house, "bad": bad}
 
 
 def _read_notify(path: str) -> dict:
@@ -1536,6 +1541,32 @@ async def ws_save_chips(hass, connection, msg):
         connection.send_error(msg["id"], "write_failed", str(err))
         return
     connection.send_result(msg["id"], {"path": os.path.join(path, CHIPS_FILE)})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/save_house",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_save_house(hass, connection, msg):
+    """Write the house-wide settings. Admin only.
+
+    Same writer as the rooms, so it is snapshotted before it is replaced
+    and swapped in atomically. Nothing in here is required: a key that is
+    absent means "use the built-in default", which is what every install
+    that has never opened the Settings tab is doing.
+    """
+    path = _rooms_dir(hass)
+    key = HOUSE_FILE[:-5] if HOUSE_FILE.endswith(".json") else HOUSE_FILE
+    try:
+        await hass.async_add_executor_job(_write_room, path, key, msg["config"])
+    except OSError as err:
+        connection.send_error(msg["id"], "write_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"path": os.path.join(path, HOUSE_FILE)})
 
 
 @websocket_api.require_admin
