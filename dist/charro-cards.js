@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.86.0";
+const VERSION = "5.87.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7337,6 +7337,116 @@ function refWhere(room, path) {
   return typeof p[1] === "number" ? `${head} \u2192 #${nth(p[1])}` : head;
 }
 
+/* ---------------------------------------------------------- areas ----- */
+/* Home Assistant already knows that light.saloon_cans is in "Saloon", so
+ * filling a room from the area turns twenty entity pickers into one press.
+ * The grouping below is a guess about intent rather than a fact - a switch
+ * called "Saloon Shade Left" is a shade and nothing in the registry says so -
+ * so every list is its own button and the ids it would add are printed under
+ * it. Nothing is applied until a button is pressed. */
+const AREA_WORDS = [
+  ["shade_entities",     /shade|blind|drape|curtain|awning|screen/i],
+  ["fountain_entities",  /fountain|waterfall|bubbler|pond|spout/i],
+  ["landscape_entities", /landscape|path ?light|up ?light|garden|tree ?light/i],
+  ["bath_fan_entities",  /bath|exhaust|\bvent\b|powder/i],
+  ["fan_entities",       /\bfans?\b/i],
+];
+const AREA_ALERT = new Set(["door", "window", "garage_door", "opening",
+                            "motion", "occupancy"]);
+/* Insertion order is the order the rows appear in. `many` lists append;
+ * a single field is only offered while it is empty. */
+const AREA_TARGETS = {
+  light_entities:     { label: "lights", many: true },
+  landscape_entities: { label: "landscape lights", many: true },
+  shade_entities:     { label: "shades", many: true },
+  fan_entities:       { label: "ceiling fans", many: true },
+  bath_fan_entities:  { label: "other fans", many: true },
+  fountain_entities:  { label: "water features", many: true },
+  alert_sensors:      { label: "door / motion sensors", many: true },
+  cameras:            { label: "cameras", many: true, wrap: (id) => ({ entity: id }) },
+  locks:              { label: "locks", many: true, wrap: (id) => ({ entity: id }) },
+  climate_entity:     { label: "thermostat", many: false },
+  tv_entity:          { label: "TV", many: false },
+  receiver_entity:    { label: "receiver", many: false },
+};
+
+/* An entity's area is its own if it has one, otherwise its device's. */
+function entityArea(hass, id) {
+  const e = ((hass && hass.entities) || {})[id];
+  if (!e) return "";
+  if (e.area_id) return e.area_id;
+  const d = e.device_id && ((hass && hass.devices) || {})[e.device_id];
+  return (d && d.area_id) || "";
+}
+
+function entityLabel(hass, id) {
+  const e = ((hass && hass.entities) || {})[id];
+  const st = ((hass && hass.states) || {})[id];
+  return (e && (e.name || e.original_name))
+      || (st && st.attributes && st.attributes.friendly_name) || id;
+}
+
+/* Every area, as [id, name], by name. */
+function areaChoices(hass) {
+  const areas = (hass && hass.areas) || {};
+  return Object.keys(areas)
+    .map((k) => [k, (areas[k] && (areas[k].name || areas[k].area_id)) || k])
+    .sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+}
+
+/* Which room field each entity in `areaId` would go in. `taken` is every id
+ * the room already mentions anywhere, so pressing twice adds nothing. */
+function areaBuckets(hass, areaId, taken) {
+  const out = {};
+  const put = (k, id) => { (out[k] = out[k] || []).push(id); };
+  const have = taken || new Set();
+  const ents = (hass && hass.entities) || {};
+  if (!areaId) return out;
+  const ids = Object.keys(ents).filter((id) =>
+    entityArea(hass, id) === areaId && !have.has(id)
+      && !ents[id].hidden_by && !ents[id].disabled_by);
+  for (const id of ids.sort()) {
+    const dom = id.split(".")[0];
+    const st = ((hass && hass.states) || {})[id];
+    const cls = (st && st.attributes && st.attributes.device_class) || "";
+    if (dom === "camera") { put("cameras", id); continue; }
+    if (dom === "lock") { put("locks", id); continue; }
+    if (dom === "climate") { put("climate_entity", id); continue; }
+    if (dom === "cover") { put("shade_entities", id); continue; }
+    if (dom === "binary_sensor") {
+      if (AREA_ALERT.has(cls)) put("alert_sensors", id);
+      continue;
+    }
+    if (dom === "media_player") {
+      if (cls === "tv") put("tv_entity", id);
+      else if (cls === "receiver") put("receiver_entity", id);
+      continue;
+    }
+    if (dom === "light" || dom === "switch" || dom === "fan") {
+      const word = AREA_WORDS.find((w) => w[1].test(`${id} ${entityLabel(hass, id)}`));
+      if (word) put(word[0], id);
+      else if (dom === "fan") put("fan_entities", id);
+      else put("light_entities", id);
+    }
+  }
+  return out;
+}
+
+/* Returns how many it actually added, so the editor can say so. */
+function areaApply(r, key, ids) {
+  const t = AREA_TARGETS[key];
+  if (!r || !t || !ids || !ids.length) return 0;
+  if (!t.many) {
+    if (r[key]) return 0;
+    r[key] = ids[0];
+    return 1;
+  }
+  const cur = Array.isArray(r[key]) ? r[key].slice() : r[key] ? [r[key]] : [];
+  const add = t.wrap ? ids.map(t.wrap) : ids.slice();
+  r[key] = cur.concat(add);
+  return add.length;
+}
+
 function unknownEntities(room, hass) {
   if (!room || !hass || !hass.states) return [];
   const refs = new Map();
@@ -8852,6 +8962,11 @@ class CharroRoomsEditor extends HTMLElement {
       this._renderLights();
       this._renderPreview();
     });
+    this._areaBox = document.createElement("div");
+    this._left.appendChild(this._panel("Fill from area",
+      "Pull a Home Assistant area's entities into this room in one press",
+      "mdi:texture-box", "_areaOpen", this._areaBox));
+    this._renderArea();
     this._left.appendChild(this._form);
 
     this._mid.innerHTML = "";
@@ -9258,6 +9373,85 @@ class CharroRoomsEditor extends HTMLElement {
       box.appendChild(chipRow(f, key, CHIP_SPECS[key], draft[key],
                               chipInherit(key, house)));
     }
+  }
+
+  /* The single biggest cost of a new room is typing entity ids Home Assistant
+   * has already grouped into areas. One press per list; what it would add is
+   * spelled out first, because the sorting of a bare switch is a guess. */
+  _renderArea() {
+    const box = this._areaBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const hass = this._hass;
+    const r = this._room;
+    const note = (t) => {
+      const d = document.createElement("div");
+      d.className = "vnote"; d.textContent = t;
+      return d;
+    };
+    const choices = areaChoices(hass);
+    if (!choices.length) {
+      box.appendChild(note("Home Assistant has no areas set up, so there is "
+        + "nothing to fill from. Assign your devices to areas and come back."));
+      return;
+    }
+    const f = this._fields(() => this._renderArea());
+    if (this._areaId == null) this._areaId = this._guessArea(choices);
+    box.appendChild(f.sel("Area", this._areaId,
+      [["", "Pick an area…"]].concat(choices),
+      (v) => { this._areaId = v; }));
+    if (!this._areaId) return;
+
+    const refs = new Map();
+    entityRefs(r, refs, "");
+    const buckets = areaBuckets(hass, this._areaId, new Set(refs.keys()));
+    const keys = Object.keys(AREA_TARGETS).filter((k) =>
+      (buckets[k] || []).length && (AREA_TARGETS[k].many || !r[k]));
+    if (!keys.length) {
+      box.appendChild(note("Everything in this area that this room has a place "
+        + "for is already in it."));
+      return;
+    }
+
+    for (const k of keys) {
+      const ids = buckets[k];
+      const row = document.createElement("div");
+      row.className = "vrowbox";
+      const b = document.createElement("button");
+      b.textContent = `+ ${ids.length} ${AREA_TARGETS[k].label}`;
+      b.addEventListener("click", () => this._areaAdd([k], buckets));
+      row.append(b, note(ids.map((id) => entityLabel(hass, id)).join(", ")));
+      box.appendChild(row);
+    }
+
+    if (keys.length > 1) {
+      const all = document.createElement("button");
+      all.className = "primary";
+      all.textContent = "Add all of it";
+      all.addEventListener("click", () => this._areaAdd(keys, buckets));
+      box.appendChild(all);
+    }
+    box.appendChild(note("A plain switch is sorted by its name — shade, fan, "
+      + "fountain, landscape — so read the lists before pressing. Everything "
+      + "lands in the fields below, where you can move or remove it, and "
+      + "nothing is written until you Save."));
+  }
+
+  _areaAdd(keys, buckets) {
+    let n = 0;
+    for (const k of keys) n += areaApply(this._room, k, buckets[k]);
+    this._renderForm();
+    this._say(n ? `Added ${n} ${n === 1 ? "entity" : "entities"} — Save to keep it`
+                : "Nothing to add", n ? "ok" : "");
+  }
+
+  /* An area called exactly what the room is called is almost always the one. */
+  _guessArea(choices) {
+    const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const want = flat(this._room.room_name) || flat(this._room.room);
+    if (!want) return "";
+    for (const [id, name] of choices) if (flat(name) === want) return id;
+    return "";
   }
 
   _renderCams() {

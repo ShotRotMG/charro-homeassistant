@@ -36,5 +36,5 @@ global.navigator = { clipboard:{ writeText: async()=>{} } };
 global.fetch = async () => ({ ok:true, json: async()=>({}), text: async()=>"" });
 const src = require("fs").readFileSync(require("path").join(__dirname, "..", "dist", "charro-cards.js"), "utf8");
 // the bundle is a classic script; expose what the test needs
-eval(src.replace(/import\.meta\.url/g, JSON.stringify("https://x/charro-cards.js")) + "\n;globalThis.__T = { roomChips, chipLook, chipCol, tileChips, roomBody, VIDEO_CSS,\n  CHIP_PAL, CHIP_SPECS, CHIP_OFF, CHIP_GROUPS, TILE_CHIPS };");
+eval(src.replace(/import\.meta\.url/g, JSON.stringify("https://x/charro-cards.js")) + "\n;globalThis.__T = { roomChips, chipLook, chipCol, tileChips, roomBody, VIDEO_CSS,\n  CHIP_PAL, CHIP_SPECS, CHIP_OFF, CHIP_GROUPS, TILE_CHIPS,\n  areaBuckets, areaApply, areaChoices, entityArea, entityLabel,\n  entityRefs, AREA_TARGETS, AREA_WORDS };");
 module.exports = globalThis.__T;
