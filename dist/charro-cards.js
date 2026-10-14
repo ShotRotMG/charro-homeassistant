@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.92.0";
+const VERSION = "5.93.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -12146,6 +12146,17 @@ class CharroNotifyEditor extends HTMLElement {
         { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
         "javon"));
       row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
+      /* iOS and Android want different payloads for the same notification,
+       * and the iOS spelling on an Android phone is not an error - it just
+       * arrives without its urgency, its camera frame and the thing it
+       * opens when tapped. Nothing in Home Assistant reliably says which
+       * a notify service is, so this is asked rather than guessed, and iOS
+       * is the default because that is what every existing row is. */
+      row.appendChild(f.sel("Phone runs", p.platform || "ios",
+        [["ios", "iOS"], ["android", "Android"]], set("platform"),
+        "Which spelling of the payload this phone gets. iOS carries "
+        + "urgency per notification; Android carries it in a channel you "
+        + "then control in Android's own settings."));
       /* Typing a login by hand is a spelling test nobody needs to sit:
        * the match is on the name, so one wrong letter silently means
        * "this row is nobody" and Mark all read stops working. */
@@ -12172,6 +12183,16 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(row);
     });
     box.appendChild(f.add("+ Phone", () => { cfg.people.push({ key: "", name: "", levels: {} }); }));
+    const an = document.createElement("div");
+    an.className = "vnote";
+    an.textContent = "On an Android phone, urgency is a notification channel "
+      + "rather than something each notification carries — so each category "
+      + "gets its own channel, and Critical gets one called “Charro "
+      + "critical”. Nothing in a payload can make Android ignore Do Not "
+      + "Disturb, so that one channel has to be allowed through by hand, once, "
+      + "in Android’s notification settings for the Home Assistant app. "
+      + "Critical volume is an iOS setting and does nothing on Android.";
+    box.appendChild(an);
 
     /* ---- categories ---- */
     box = this._section(root, "cats", "Categories",

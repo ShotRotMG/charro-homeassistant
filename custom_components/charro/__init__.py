@@ -50,6 +50,9 @@ from .const import (
     NOTIFY_FIELDS,
     CHIPS_FILE,
     HOUSE_FILE,
+    NOTIFY_PLATFORMS,
+    NOTIFY_ANDROID_IMPORTANCE,
+    NOTIFY_ANDROID_CRITICAL_CHANNEL,
     NOTIFY_FILE,
     NOTIFY_LEVELS,
     NOTIFY_MESSAGE,
@@ -177,17 +180,27 @@ def _in_window(now: str, start: str | None, end: str | None) -> bool:
 
 
 def _notify_payload(cat: dict, call_data: dict, tag: str,
-                    color: str = "", icon: str = "") -> dict:
-    """The part of the iOS payload that is the same for everybody.
+                    color: str = "", icon: str = "",
+                    platform: str = "ios") -> dict:
+    """One phone's payload, in that phone's own spelling.
 
-    iOS has no notification channels, so everything that tells one of these
-    apart at a glance has to be in the payload: `notification_icon` with
-    `color` draws the category's glyph on a coloured disc, `subtitle`
-    names the category under the title, `group` threads them together and
-    `tag` means the next event for the same door replaces the last one
-    rather than making a pile. The title is the sender name on a
-    communication notification, so it is the thing, not the house.
+    Half of it is shared. Everything that tells one of these apart at a
+    glance has to be in the payload, because iOS has no notification
+    channels: `notification_icon` with `color` draws the category's glyph
+    on a coloured disc, `group` threads them together and `tag` means the
+    next event for the same door replaces the last one rather than making
+    a pile. Those four are read by both platforms, though the icon and the
+    colour mean slightly different things on each.
+
+    The other half is not shared at all, and the iOS spelling sent to an
+    Android phone is not an error - it is a notification that silently
+    arrives without its urgency, its camera frame, and the thing it was
+    supposed to open when tapped. So the keys that differ are written per
+    platform: url/clickAction, entity_id/image, subtitle/subject, and the
+    whole push block, which Android replaces with channel + importance at
+    the call site.
     """
+    android = platform == "android"
     data: dict[str, Any] = {"tag": tag, "group": cat.get("group") or cat.get("key")}
     # Both of these depend on which way the thing went, and only the
     # caller knows that, so they arrive already settled.
@@ -197,23 +210,39 @@ def _notify_payload(cat: dict, call_data: dict, tag: str,
     shade = color or cat.get("color")
     if shade:
         data["color"] = shade
-    # iOS drops the subtitle on a communication notification - which is
-    # what notification_icon makes this - so the category name only earns
-    # its place when there is no glyph to carry it.
-    if cat.get("name") and not glyph:
-        data["subtitle"] = cat["name"]
+    name = cat.get("name")
+    if name and android:
+        # Android's own second line, and unlike the iOS subtitle it is not
+        # displaced by notification_icon, so it is always worth sending.
+        data["subject"] = name
+    elif name and not glyph:
+        # iOS drops the subtitle on a communication notification - which is
+        # what notification_icon makes this - so the category name only earns
+        # its place when there is no glyph to carry it.
+        data["subtitle"] = name
     url = call_data.get("url") or cat.get("url")
     if url:
-        data["url"] = url
-    # On iOS a camera entity id IS the attachment - the phone lazy-loads a
-    # frame. Worth more than the text it sits above.
+        data["clickAction" if android else "url"] = url
     camera = call_data.get("camera") or cat.get("camera")
     if camera:
-        data["entity_id"] = camera
+        if android:
+            # Android wants a picture rather than an entity: the camera
+            # proxy is the still iOS would have lazy-loaded.
+            data["image"] = f"/api/camera_proxy/{camera}"
+        else:
+            # On iOS a camera entity id IS the attachment - the phone
+            # lazy-loads a frame. Worth more than the text it sits above.
+            data["entity_id"] = camera
     actions = call_data.get("actions")
     if actions:
         data["actions"] = actions
     return data
+
+
+def _notify_platform(person: dict) -> str:
+    """Which spelling this phone reads. Anything unrecognised is iOS."""
+    p = str(person.get("platform") or "ios").strip().lower()
+    return p if p in NOTIFY_PLATFORMS else "ios"
 
 
 async def _async_notify(hass: HomeAssistant, call) -> None:
@@ -545,16 +574,36 @@ class CharroNotifier:
         else:
             tag = (f"charro-{entry['category']}-{entry['entity'] or 'all'}"
                    f"-{'shut' if entry.get('shut') else 'open'}")
+        platform = _notify_platform(person)
         payload = _notify_payload(
             cat, data, tag,
-            entry.get("color") or "", entry.get("icon") or "")
-        payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
-        if level == "critical":
-            volume = person.get("critical_volume")
-            payload["push"]["sound"] = {
-                "name": "default", "critical": 1,
-                "volume": float(volume) if volume is not None else 1.0,
-            }
+            entry.get("color") or "", entry.get("icon") or "", platform)
+        if platform == "android":
+            # The channel is what an Android owner actually configures:
+            # sound, vibration and whether it may interrupt Do Not Disturb
+            # are all per channel. So a category gets its own, and critical
+            # gets one of its own again - the single switch to allow past
+            # DND by hand, without that also letting every door through.
+            # importance only takes effect the first time a channel
+            # appears, which is why the channel split is the real answer
+            # and importance is the hint that goes with it.
+            payload["channel"] = (
+                NOTIFY_ANDROID_CRITICAL_CHANNEL if level == "critical"
+                else (cat.get("name") or cat.get("key") or "Charro")
+            )
+            payload["importance"] = NOTIFY_ANDROID_IMPORTANCE[level]
+            if level == "critical":
+                # worth reading off a locked screen, which is the whole
+                # point of waking somebody for it
+                payload["visibility"] = "public"
+        else:
+            payload["push"] = {"interruption-level": NOTIFY_PUSH_LEVEL[level]}
+            if level == "critical":
+                volume = person.get("critical_volume")
+                payload["push"]["sound"] = {
+                    "name": "default", "critical": 1,
+                    "volume": float(volume) if volume is not None else 1.0,
+                }
         service = (person.get("service") or "").split(".")[-1]
         try:
             # blocking, so a failure is something we know about rather than

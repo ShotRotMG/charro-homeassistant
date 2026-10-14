@@ -158,6 +158,30 @@ NOTIFY_PUSH_LEVEL = {
     "critical": "critical",
 }
 
+# Which spelling of the payload a phone gets. iOS is the default because
+# an install that has never been asked is the one this was written for,
+# and sending the Android keys to an iPhone loses more than the reverse.
+NOTIFY_PLATFORMS = ("ios", "android")
+
+# The Android end of NOTIFY_PUSH_LEVEL. Android has notification channels
+# and iOS does not, so urgency lives in a different place on each: iOS
+# carries it per notification in push.interruption-level, Android sets it
+# once when a channel first appears and then the phone's owner is in
+# charge of it.
+NOTIFY_ANDROID_IMPORTANCE = {
+    "quiet": "low",
+    "normal": "default",
+    "urgent": "high",
+    "critical": "max",
+}
+
+# Android has no equivalent of iOS's critical flag - no payload key can
+# make a notification ignore Do Not Disturb. The channel is the mechanism:
+# one channel, kept apart from the ordinary ones, so there is exactly one
+# switch to find in Android's own settings and allowing it past DND does
+# not also let every door through.
+NOTIFY_ANDROID_CRITICAL_CHANNEL = "Charro critical"
+
 # Where they used to live, so an existing install can be moved across once.
 LEGACY_SUBDIR = ("www", "rooms")
 

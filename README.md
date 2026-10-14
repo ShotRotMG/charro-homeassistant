@@ -727,7 +727,15 @@ shown only while it's the one worth pressing:
 
 Both are `conditional` cards, so they appear and disappear live. An action with
 neither `when_off` nor `when_on` is always shown. `pool_name` and `spa_name`
-rename the pump tiles.
+rename the pump tiles, and `pool_icon` and `spa_icon` change their glyphs.
+
+The heater may be a `water_heater` or a `climate` entity, and the card asks for
+whichever controls that domain has — a Pentair publishes `water_heater` with an
+operation list, ScreenLogic on newer builds and Jandy, Hayward and a plain
+thermostat publish `climate`. The chip's warming colour is read from
+`hvac_action` when the heater reports one, and otherwise from how far the
+current temperature still has to go. The pump may be a `switch`, a `fan` (a
+variable-speed pump is a fan on some controllers) or an `input_boolean`.
 
 Each piece is also a layout row, so none of it is stuck inside the block:
 
@@ -1141,6 +1149,33 @@ Landmarks in `room-card.json`:
 - `custom_fields.alert` — the red door indicator
 
 Break the JSON and the card shows a red error instead of failing silently.
+
+## Notifications on iOS and Android
+
+Each phone in the **Notifications** tab says which platform it runs, and the
+payload is written in that phone's own spelling. The shared half is `tag`,
+`group`, `notification_icon` and `color`. The rest is not shared, and the wrong
+spelling is not an error — it is a notification that arrives without its
+urgency, its camera frame, or the thing it was supposed to open when tapped:
+
+| | iOS | Android |
+| --- | --- | --- |
+| urgency | `push.interruption-level` | `channel` + `importance` |
+| what a tap opens | `url` | `clickAction` |
+| the camera | `entity_id`, lazy-loaded | `image`, via the camera proxy |
+| second line | `subtitle` | `subject` |
+| critical volume | `push.sound.volume` | — not a thing on Android |
+
+A row with no platform set is iOS, so an install that has never been asked
+behaves exactly as it did.
+
+On Android, urgency belongs to a notification channel rather than to each
+notification, so each category gets a channel of its own and Critical gets one
+called **Charro critical**. No payload key can make Android ignore Do Not
+Disturb — the channel is the mechanism — so that one channel has to be allowed
+through by hand, once, in Android's notification settings for the Home
+Assistant app. `importance` only takes effect the first time a channel appears,
+which is why the split matters more than the value.
 
 ## Notes
 
