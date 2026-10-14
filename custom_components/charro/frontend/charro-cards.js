@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.85.0";
+const VERSION = "5.86.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6027,7 +6027,13 @@ const LB_CSS = `
 .it.blk{ border-left:3px solid var(--primary-color); }
 .it.dropbefore{ box-shadow:0 -3px 0 -1px var(--primary-color); }
 .it.dropafter{ box-shadow:0 3px 0 -1px var(--primary-color); }
-.grip{ cursor:grab; color:var(--secondary-text-color); --mdc-icon-size:18px; flex:none; }
+.grip{
+  cursor:grab; color:var(--secondary-text-color); --mdc-icon-size:18px; flex:none;
+  /* without this the browser pans the list instead of starting a drag */
+  touch-action:none; border-radius:6px;
+}
+.grip:focus-visible{ outline:2px solid var(--primary-color); outline-offset:1px; }
+.hidzone.over{ outline:2px dashed var(--primary-color); outline-offset:3px; border-radius:8px; }
 .grip:active{ cursor:grabbing; }
 .it .lbl{ flex:1 1 130px; min-width:110px; font-size:13px; overflow:hidden; }
 .it .lbl, .it .sub{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -6779,33 +6785,99 @@ const LayoutUI = {
     return row;
   },
 
+  /* Dragging, on pointer events rather than HTML5 drag-and-drop.
+   *
+   * The old version used draggable="true" with dragstart/dragover/drop,
+   * which iOS Safari and iPadOS do not implement at all - those events
+   * simply never fire. So the layout builder, the central thing in this
+   * editor, did not work on a tablet, which is where this dashboard is
+   * mostly used. Pointer events are one code path for mouse, trackpad,
+   * touch and pen.
+   *
+   * Two deliberate changes that come with it. The handle is the grip
+   * rather than the whole row, because a row you can drag from anywhere
+   * is a row you cannot scroll past on a touch screen. And the grip takes
+   * keyboard focus: arrow up and down move an item without any pointer at
+   * all, which is the escape hatch for a drag that keeps missing as much
+   * as it is an accessibility fix. */
   _lbWireDrag(row, list, i) {
-    row.draggable = true;
-    row.dataset.list = list; row.dataset.i = String(i);
-    row.addEventListener("dragstart", (ev) => {
-      this._drag = { list, i };
-      row.classList.add("drag");
+    row.dataset.list = list;
+    row.dataset.i = String(i);
+    const grip = row.querySelector(".grip") || row;
+
+    const hit = (x, y) => {
+      const el = this.shadowRoot.elementFromPoint(x, y);
+      if (!el || !el.closest) return null;
+      const it = el.closest(".it");
+      if (it && it.dataset.list !== undefined) {
+        const r = it.getBoundingClientRect();
+        const after = y > r.top + r.height / 2;
+        return { el: it, after,
+                 list: it.dataset.list, i: Number(it.dataset.i) + (after ? 1 : 0) };
+      }
+      // the empty space in a list, a column, or the hidden tray
+      const box = el.closest("[data-lb-list]");
+      if (box) return { el: box, box: true,
+                        list: box.dataset.lbList, i: Number(box.dataset.lbEnd) };
+      return null;
+    };
+
+    grip.addEventListener("pointerdown", (ev) => {
+      if (ev.button != null && ev.button > 0) return;
+      ev.preventDefault();
       ev.stopPropagation();
-      ev.dataTransfer.effectAllowed = "move";
-      try { ev.dataTransfer.setData("text/plain", `${list}:${i}`); } catch (e) {}
+      const startY = ev.clientY, startX = ev.clientX;
+      let live = false;
+      this._drag = { list, i };
+      this._dropAt = null;
+
+      const move = (e) => {
+        if (!live) {
+          // a tap on the grip is not a drag; wait for real movement
+          if (Math.abs(e.clientY - startY) + Math.abs(e.clientX - startX) < 4) return;
+          live = true;
+          row.classList.add("drag");
+          try { grip.setPointerCapture(ev.pointerId); } catch (err) {}
+        }
+        const t = hit(e.clientX, e.clientY);
+        this._lbClearMarks();
+        this._dropAt = null;
+        if (!t) return;
+        // a column cannot be dropped inside a column
+        if (this._dragIsGroup && String(t.list).startsWith("g:")) return;
+        t.el.classList.add(t.box ? "over" : (t.after ? "dropafter" : "dropbefore"));
+        this._dropAt = { list: t.list, i: t.i };
+      };
+      const up = () => {
+        grip.removeEventListener("pointermove", move);
+        row.classList.remove("drag");
+        try { grip.releasePointerCapture(ev.pointerId); } catch (err) {}
+        if (live && this._dropAt) this._lbDrop();
+        else { this._drag = null; this._dropAt = null; this._lbClearMarks(); }
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up, { once: true });
+      grip.addEventListener("pointercancel", up, { once: true });
     });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("drag"); this._drag = null; this._lbClearMarks();
-    });
-    row.addEventListener("dragover", (ev) => {
-      if (!this._drag) return;
-      // a group can't be dropped inside a group
-      if (this._dragIsGroup && String(list).startsWith("g:")) return;
-      ev.preventDefault(); ev.stopPropagation();
-      ev.dataTransfer.dropEffect = "move";
-      const r = row.getBoundingClientRect();
-      const after = ev.clientY > r.top + r.height / 2;
-      this._lbClearMarks();
-      row.classList.add(after ? "dropafter" : "dropbefore");
-      this._dropAt = { list, i: after ? i + 1 : i };
-    });
-    row.addEventListener("drop", (ev) => {
-      ev.preventDefault(); ev.stopPropagation(); this._lbDrop();
+
+    grip.tabIndex = 0;
+    grip.setAttribute("role", "button");
+    grip.title = "Drag to move, or focus and use the arrow keys";
+    grip.addEventListener("keydown", (ev) => {
+      const d = ev.key === "ArrowUp" ? -1 : ev.key === "ArrowDown" ? 1 : 0;
+      if (!d || list === "avail") return;
+      ev.preventDefault();
+      const L = this._lbList(list);
+      const to = i + d;
+      if (to < 0 || to >= L.length) return;
+      L.splice(to, 0, L.splice(i, 1)[0]);
+      this._lbRender();
+      this._lbChanged();
+      /* The list was rebuilt, so the grip that had focus no longer exists.
+       * Put it back on the one that moved or the keys only work once. */
+      const sel = `.it[data-list="${list}"][data-i="${to}"] .grip`;
+      const next = this.shadowRoot.querySelector(sel);
+      if (next) next.focus();
     });
   },
 
@@ -6854,31 +6926,21 @@ const LayoutUI = {
 
     const inner = document.createElement("div");
     inner.className = "lb inner";
+    inner.dataset.lbList = "g:" + idx;
+    inner.dataset.lbEnd = String((g.items || []).length);
     (g.items || []).forEach((it, i) => inner.appendChild(this._lbRow(it, "g:" + idx, i)));
     if (!(g.items || []).length) {
       const e = document.createElement("div");
       e.className = "hidempty"; e.textContent = "Empty column — drag items in.";
       inner.appendChild(e);
     }
-    inner.addEventListener("dragover", (ev) => {
-      if (!this._drag || this._dragIsGroup) return;
-      ev.preventDefault(); this._lbClearMarks();
-      inner.classList.add("over");
-      this._dropAt = { list: "g:" + idx, i: (g.items || []).length };
-    });
-    inner.addEventListener("dragleave", () => inner.classList.remove("over"));
-    inner.addEventListener("drop", (ev) => {
-      ev.preventDefault(); ev.stopPropagation();
-      inner.classList.remove("over"); this._lbDrop();
-    });
-
     box.append(head, inner);
     return box;
   },
 
   _lbClearMarks() {
-    for (const el of this.shadowRoot.querySelectorAll(".dropbefore,.dropafter"))
-      el.classList.remove("dropbefore", "dropafter");
+    for (const el of this.shadowRoot.querySelectorAll(".dropbefore,.dropafter,.over"))
+      el.classList.remove("dropbefore", "dropafter", "over");
   },
 
   _lbDrop() {
@@ -6964,6 +7026,8 @@ const LayoutUI = {
 
     const wrap = document.createElement("div"); wrap.className = "lbwrap";
     const list = document.createElement("div"); list.className = "lb";
+    list.dataset.lbList = "layout";
+    list.dataset.lbEnd = String(r.layout.length);
     const rowEls = [];
     r.layout.forEach((it, i) => {
       const el = it && it.group !== undefined ? this._lbGroup(it, i)
@@ -6976,17 +7040,6 @@ const LayoutUI = {
       e.className = "hidempty"; e.textContent = "Empty — drag something here.";
       list.appendChild(e);
     }
-    // dropping onto the gap at the end
-    list.addEventListener("dragover", (ev) => {
-      if (!this._drag || ev.target !== list) return;
-      ev.preventDefault(); this._lbClearMarks();
-      list.classList.add("over"); this._dropAt = { list: "layout", i: r.layout.length };
-    });
-    list.addEventListener("dragleave", () => list.classList.remove("over"));
-    list.addEventListener("drop", (ev) => {
-      ev.preventDefault(); list.classList.remove("over"); this._lbDrop();
-    });
-
     const bar = document.createElement("div"); bar.className = "lbbar";
     const addHead = document.createElement("button");
     addHead.textContent = "+ Heading";
@@ -7067,6 +7120,8 @@ const LayoutUI = {
     hh.append(hhh, hn);
 
     const hz = document.createElement("div"); hz.className = "hidzone";
+    hz.dataset.lbList = "hidden";
+    hz.dataset.lbEnd = String((r.hidden || []).length);
     (r.hidden || []).forEach((it, i) => hz.appendChild(this._lbRow(it, "hidden", i)));
     if (!(r.hidden || []).length) {
       const e = document.createElement("div");
@@ -7074,17 +7129,6 @@ const LayoutUI = {
       e.textContent = "Nothing hidden. Drag here, or use the eye, to park something.";
       hz.appendChild(e);
     }
-    hz.addEventListener("dragover", (ev) => {
-      if (!this._drag) return;
-      ev.preventDefault(); this._lbClearMarks();
-      hz.classList.add("over");
-      this._dropAt = { list: "hidden", i: (r.hidden || []).length };
-    });
-    hz.addEventListener("dragleave", () => hz.classList.remove("over"));
-    hz.addEventListener("drop", (ev) => {
-      ev.preventDefault(); hz.classList.remove("over"); this._lbDrop();
-    });
-
     wrap.append(list, bar);
     let panel = null;
     if (this._cardCtx) {

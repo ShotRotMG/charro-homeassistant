@@ -10,8 +10,14 @@
  */
 // Enough of a browser for the bundle to finish loading, so the real
 // roomChips() can be called instead of a re-typed copy of it.
-const el = () => new Proxy({ style:{}, classList:{ add(){}, remove(){}, toggle(){} },
-  children:[], shadowRoot:null, innerHTML:"", textContent:"" }, {
+/* dataset and style are real objects: code under test writes to them and
+ * a test wants to read back what it wrote. */
+const el = () => new Proxy({ style:{}, dataset:{}, attributes:{},
+  classList:{ add(){}, remove(){}, toggle(){}, contains:()=>false },
+  children:[], shadowRoot:null, innerHTML:"", textContent:"", tabIndex:0,
+  setAttribute(k,v){ this.attributes[k]=v; }, getAttribute(k){ return this.attributes[k]; },
+  closest(){ return null; }, querySelectorAll(){ return []; },
+  getBoundingClientRect(){ return {top:0,left:0,width:0,height:0}; } }, {
   get(t,k){ if(k in t) return t[k];
     return (...a)=>{ if(k==="attachShadow"){ t.shadowRoot=el(); return t.shadowRoot; } return el(); }; },
   set(t,k,v){ t[k]=v; return true; } });
