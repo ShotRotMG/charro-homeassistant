@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.83.0";
+const VERSION = "5.84.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4535,7 +4535,17 @@ class CharroLockCard extends CharroBase {
     const state = (st && st.state) || "";
     return {
       label: c.label || "",
-      icon: c.icon || LOCK_ICON[state] || "mdi:lock-question",
+      /* The glyph used to be resolved right here, from the state at the
+       * moment the card was built - and variables() does not run again
+       * when hass changes. CharroBase hands the new hass to the child
+       * card, which re-evaluates its own [[[ ]]] expressions and nothing
+       * else, so the padlock froze at whatever the lock was doing when
+       * the page loaded: a tile reading "Unlocked" under a shut padlock.
+       * The colour never had the bug because the colour was always an
+       * expression. Now the map goes down and the template picks, so both
+       * halves of the tile are live and read from the same state. */
+      icon: c.icon || "",
+      icons: LOCK_BADGE_ICON,
       pal: LOCK_PAL,
       /* Off by default: the only thing that acts is a 34px icon, which is
        * not something you hit by accident, and a dialog on every tap is

@@ -118,7 +118,7 @@
         "show_name": false,
         "show_icon": true,
         "show_state": false,
-        "icon": "[[[ return variables.icon ]]]",
+        "icon": "[[[\n  const s = entity.state;\n  /* the same five readings the colour below uses, so the glyph and the\n     colour can never disagree about what the lock is doing */\n  const k = s === 'locked' ? 'locked'\n          : (s === 'unlocked' || s === 'open') ? 'unlocked'\n          : (s === 'locking' || s === 'unlocking' || s === 'opening') ? 'moving'\n          : s === 'jammed' ? 'jammed' : 'unknown';\n  /* a room that named its own icon meant it */\n  return variables.icon || (variables.icons || {})[k] || 'mdi:lock-question';\n]]]\n",
         "tap_action": {
           "action": "call-service",
           "service": "[[[ return entity.state === 'locked' ? 'lock.unlock' : 'lock.lock' ]]]",
