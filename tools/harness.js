@@ -200,5 +200,5 @@ eval(src.replace(/import\.meta\.url/g, JSON.stringify("https://x/charro-cards.js
   "\n;globalThis.__T = { roomChips, chipLook, chipCol, tileChips, roomBody, VIDEO_CSS," +
   "\n  CHIP_PAL, CHIP_SPECS, CHIP_OFF, CHIP_GROUPS, TILE_CHIPS," +
   "\n  areaBuckets, areaApply, areaChoices, entityArea, entityLabel," +
-  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine };");
+  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine,\n  PANEL_USED, PANEL_ADD, PANEL_OPEN, PREV_MODES, lightIds };");
 module.exports = Object.assign(globalThis.__T, { El, el });

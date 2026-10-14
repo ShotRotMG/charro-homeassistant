@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.88.0";
+const VERSION = "5.89.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6163,6 +6163,12 @@ button.vx:hover{
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .vstate.bad{ color:#ef5350; }
 .vstate:empty{ display:none; }
+.vseg{ margin:4px 0 2px; align-self:flex-start; }
+.pcap{ padding:0 2px 6px; }
+.pcap:empty{ display:none; }
+.vmore{ margin:14px 0 4px; }
+.vmorerow{ display:flex; flex-wrap:wrap; gap:6px; }
+.vmorerow button.tiny{ align-self:auto; }
 
 
 .traycat .cap{ display:block; margin:2px 2px 4px; }
@@ -7448,6 +7454,47 @@ function areaBuckets(hass, areaId, taken) {
   return out;
 }
 
+/* `mode` is set on the card in the dashboard, not in the room file: the same
+ * file feeds the tile, the pop-up it owns and the full-page subview. Two of
+ * those three were previewable and the page was not, which is the one that
+ * renders differently - twelve grid columns and the photo header - so it is
+ * the easiest to get wrong unseen. The caption says which you are looking
+ * at, because a pop-up and a page are similar enough to confuse. */
+const PREV_MODES = [
+  ["tile", "Tile", "The tile, as it sits on a dashboard"],
+  ["popup", "Pop-up", "The pop-up this tile opens"],
+  ["page", "Page", "The same room as a full-page subview - wider, with the photo header"],
+];
+
+/* Does this room use that panel? Not "is the panel open", which is a
+ * separate thing people set and expect to stay set. The Simple view of the
+ * room editor shows the panels that answer yes and offers the rest as
+ * buttons - twelve panels is why the left column reads as hard when a room
+ * is usually four of them. */
+const PANEL_USED = {
+  video: (r) => !!(r.video || (r.remotes || []).length || r.tv_entity
+                || r.projector_entity || r.receiver_entity || r.media_player),
+  music: (r) => !!(r.music_player || (r.music_powers || []).length
+                || r.music_sources || r.zone_players),
+  water: (r) => !!(lightIds(r.fountain_entities).length
+                || (r.water_actions || []).length || r.pool_switch
+                || r.pool_heater || r.spa_switch || r.spa_heater),
+  doors: (r) => !!((r.alert_sensors || []).length || (r.locks || []).length
+                || r.confirm_sensor),
+  gates: (r) => !!(r.gates || []).length,
+  cams:  (r) => !!(r.cameras || []).length,
+  chips: (r) => !!(r.chips && Object.keys(r.chips).length),
+  adv:   (r) => !!(r.sections || r.cards || r.media_card || r.camera_card),
+};
+const PANEL_ADD = { video: "Media & remotes", music: "Music", water: "Pool & water",
+  doors: "Door / motion alert", gates: "Gates", cams: "Cameras",
+  chips: "Chips", adv: "Advanced" };
+/* Which expansion-panel flag each one reads, so revealing a panel can open
+ * it rather than leaving a shut panel the button appeared to do nothing to. */
+const PANEL_OPEN = { video: "_videoOpen", music: "_zoneOpen", water: "_waterOpen",
+  doors: "_doorsOpen", gates: "_gatesOpen", cams: "_camsOpen",
+  chips: "_chipsOpen", adv: "_advOpen" };
+
 /* Returns how many it actually added, so the editor can say so. */
 function areaApply(r, key, ids) {
   const t = AREA_TARGETS[key];
@@ -8173,6 +8220,15 @@ class CharroRoomsEditor extends HTMLElement {
   }
 
   /* ---------------------------------------------------------- workspace -- */
+  /* Simple unless turned off, remembered per browser. */
+  _simpleOn() {
+    if (this._simpleMem !== undefined) return this._simpleMem;
+    try {
+      const v = localStorage.getItem("charro-simple");
+      return v === null ? true : v === "1";
+    } catch (e) { return true; }
+  }
+
   _autoOn() {
     if (this._autoMem !== undefined) return this._autoMem;
     try {
@@ -8572,25 +8628,18 @@ class CharroRoomsEditor extends HTMLElement {
     const right = document.createElement("div"); right.className = "preview colscroll";
     const prow = document.createElement("div"); prow.className = "h4row sticky";
     const ph = document.createElement("h4"); ph.textContent = "Preview";
-    const seg = document.createElement("div"); seg.className = "seg";
-    seg.style.marginLeft = "auto";
+    /* what the switch offers depends on the room's mode, so it is rebuilt
+     * per room rather than once here */
+    this._pseg = document.createElement("div");
+    this._pseg.style.marginLeft = "auto";
     this._pmode = "tile";
-    for (const [k, label] of [["tile", "Tile"], ["popup", "Pop-up"]]) {
-      const b = document.createElement("button");
-      b.textContent = label;
-      b.setAttribute("aria-pressed", String(k === this._pmode));
-      b.addEventListener("click", () => {
-        this._pmode = k;
-        seg.querySelectorAll("button").forEach((x, i) =>
-          x.setAttribute("aria-pressed", String(["tile", "popup"][i] === k)));
-        cols.classList.toggle("pop", k === "popup");
-        this._renderPreview();
-      });
-      seg.appendChild(b);
-    }
-    prow.append(ph, seg);
+    this._cols = cols;
+    prow.append(ph, this._pseg);
+    this._pcap = document.createElement("div");
+    this._pcap.className = "vnote pcap";
     this._prevWrap = document.createElement("div");
-    right.append(prow, this._prevWrap);
+    right.append(prow, this._pcap, this._prevWrap);
+    this._renderPrevSeg();
     cols.append(this._rail, this._left, this._mid, right);
     mountGutters(cols, [this._rail, this._left, this._mid, right]);
     applyCols(cols, readCols());
@@ -8717,6 +8766,7 @@ class CharroRoomsEditor extends HTMLElement {
       // can offer them before a room has any remotes of its own
       j._remotes = remotes;
       this._room = j; this._orig = JSON.parse(JSON.stringify(j));
+      this._shownPanels = {};         // panels revealed in the room you left
       // after _orig, so the room reads as changed and the move gets saved
       const moved = this._migrateCounts();
       if (!quiet) {
@@ -9017,6 +9067,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._room = { room_name: key.charAt(0).toUpperCase() + key.slice(1),
                    room_icon: "mdi:home", light_entities: [] };
     this._orig = null;
+    this._shownPanels = {};
     this._say(`New room — Save writes ${this._path(key)}`);
     this._renderForm();
   }
@@ -9042,6 +9093,29 @@ class CharroRoomsEditor extends HTMLElement {
       this._renderLights();
       this._renderPreview();
     });
+    /* Simple is the default and the choice is remembered per browser, the
+     * same way autosave is - it is a view of the same room either way, so
+     * nothing about it is written to the file. */
+    const seg = document.createElement("div");
+    seg.className = "seg vseg";
+    for (const [k, label, hint] of [
+      ["simple", "Simple", "Only the sections this room has something in"],
+      ["all", "Everything", "Every section, whether this room uses it or not"],
+    ]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.title = hint;
+      b.setAttribute("aria-pressed", String((k === "simple") === this._simpleOn()));
+      b.addEventListener("click", () => {
+        const on = k === "simple";
+        this._simpleMem = on;
+        try { localStorage.setItem("charro-simple", on ? "1" : "0"); } catch (e) { /**/ }
+        this._renderForm();
+      });
+      seg.appendChild(b);
+    }
+    this._left.appendChild(seg);
+
     this._areaBox = document.createElement("div");
     this._left.appendChild(this._panel("Fill from area",
       "Pull a Home Assistant area's entities into this room in one press",
@@ -9184,8 +9258,43 @@ class CharroRoomsEditor extends HTMLElement {
       "Section order, the media card override, and raw cards", "mdi:tune",
       "_advOpen", advBody);
 
-    this._left.append(videoHost, zoneHost, waterHost, doorsHost,
-                     gatesHost, camsHost, chipsHost, advanced);
+    const hosts = [["video", videoHost], ["music", zoneHost], ["water", waterHost],
+                   ["doors", doorsHost], ["gates", gatesHost], ["cams", camsHost],
+                   ["chips", chipsHost], ["adv", advanced]];
+    const simple = this._simpleOn();
+    this._shownPanels = this._shownPanels || {};
+    /* A panel revealed by one of the buttons below stays until the room is
+     * closed, even while it is still empty - otherwise pressing "Cameras"
+     * and then adding nothing makes the panel vanish under you. */
+    const keep = ([k]) => !simple || PANEL_USED[k](this._room)
+                       || this._shownPanels[k];
+    for (const h of hosts.filter(keep)) this._left.appendChild(h[1]);
+
+    const rest = hosts.filter((h) => !keep(h));
+    if (rest.length) {
+      const more = document.createElement("div");
+      more.className = "vmore";
+      const cap = document.createElement("div");
+      cap.className = "vcap";
+      cap.textContent = "This room has no\u2026";
+      more.appendChild(cap);
+      const row = document.createElement("div");
+      row.className = "vmorerow";
+      for (const [k] of rest) {
+        const b = document.createElement("button");
+        b.className = "tiny";
+        b.textContent = PANEL_ADD[k];
+        b.title = `Show the ${PANEL_ADD[k]} section for this room`;
+        b.addEventListener("click", () => {
+          this._shownPanels[k] = true;
+          this[PANEL_OPEN[k]] = true;
+          this._renderForm();
+        });
+        row.appendChild(b);
+      }
+      more.appendChild(row);
+      this._left.appendChild(more);
+    }
     this._renderVideo();
     this._renderZonePlayers();
     this._renderWaterActions();
@@ -10672,6 +10781,32 @@ class CharroRoomsEditor extends HTMLElement {
     this._lightsBox.append(row, tbl);
   }
 
+  _renderPrevSeg() {
+    if (!this._pseg) return;
+    this._pseg.innerHTML = "";
+    const opts = PREV_MODES;
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    for (const [k, label, hint] of opts) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.title = hint;
+      b.setAttribute("aria-pressed", String(k === this._pmode));
+      b.addEventListener("click", () => {
+        if (k === this._pmode) return;
+        this._pmode = k;
+        this._renderPrevSeg();
+        this._renderPreview();
+      });
+      seg.appendChild(b);
+    }
+    this._pseg.appendChild(seg);
+    const hit = opts.find(([k]) => k === this._pmode);
+    if (this._pcap) this._pcap.textContent = hit ? hit[2] : "";
+    /* a pop-up and a page both want the room the tile does not */
+    if (this._cols) this._cols.classList.toggle("pop", this._pmode !== "tile");
+  }
+
   async _renderPreview() {
     this._queueSave();
     if (!this._room) return;
@@ -10705,7 +10840,10 @@ class CharroRoomsEditor extends HTMLElement {
       }
 
       const el = helpers.createCardElement({
-        type: "custom:charro-room-card", popup: false, ...this._room });
+        type: "custom:charro-room-card", popup: false, ...this._room,
+        /* the room file carries no mode - the card in the dashboard does -
+         * so the page preview asks for it here rather than reading it */
+        mode: this._pmode === "page" ? "page" : "tile" });
       el.hass = this._hass;
       this._prevWrap.appendChild(el);
       this._prev = el;
