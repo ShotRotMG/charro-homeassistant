@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.87.0";
+const VERSION = "5.88.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6147,6 +6147,22 @@ ha-expansion-panel{ display:block; margin:14px 0 4px; --expansion-panel-content-
 ha-expansion-panel h4:first-of-type{ margin-top:4px; }
 
 .vfield ha-entity-picker, .vfield ha-icon-picker{ display:block; width:100%; }
+/* The picker and whatever sits beside it share a line; the state wraps to
+ * its own because flex-basis:100% cannot fit next to anything. */
+.vent{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.vent > ha-entity-picker, .vent > input{ flex:1 1 170px; width:auto; min-width:0; }
+button.vx{
+  flex:none; width:26px; height:26px; padding:0; line-height:1; font-size:16px;
+  cursor:pointer; border-radius:7px; background:transparent;
+  border:1px solid var(--divider-color); color:var(--secondary-text-color);
+}
+button.vx:hover{
+  background:rgba(244,67,54,.16); color:#ef5350; border-color:rgba(244,67,54,.5);
+}
+.vstate{ font-size:11px; color:var(--secondary-text-color); padding:1px 2px 0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vstate.bad{ color:#ef5350; }
+.vstate:empty{ display:none; }
 
 
 .traycat .cap{ display:block; margin:2px 2px 4px; }
@@ -7506,6 +7522,32 @@ const WS_SAVE_REMOTES = "charro/save_remotes";
 /* The form controls the panel's hand-built sections are made of.
  * A free function rather than a method because the Notifications tab
  * is a separate element and wanted the same ones. */
+/* What the entity is doing right now, under its picker. A list of ids
+ * cannot answer the question you actually have - is light.saloon_4 the one
+ * over the bar - and watching it answer is faster than reading the id. An
+ * entity Home Assistant has never heard of says so here as well as in the
+ * rail badge, at the moment you mistype it rather than on the way out. */
+function entStateLine(hass, id) {
+  const d = document.createElement("div");
+  d.className = "vstate";
+  if (!id) return d;
+  const st = ((hass && hass.states) || {})[id];
+  if (!st) {
+    d.className = "vstate bad";
+    d.textContent = id + " \u2014 not in Home Assistant";
+    return d;
+  }
+  const a = st.attributes || {};
+  const bits = [id, st.state];
+  if (a.brightness != null) bits.push(Math.round((a.brightness / 255) * 100) + "%");
+  if (a.current_position != null) bits.push(a.current_position + "% open");
+  if (a.current_temperature != null) bits.push(a.current_temperature + "\u00b0");
+  if (a.percentage != null) bits.push(a.percentage + "%");
+  if (st.state === "unavailable" || st.state === "unknown") d.className = "vstate bad";
+  d.textContent = bits.join(" \u00b7 ");
+  return d;
+}
+
 function fieldKit(hass, redraw) {
   const wrap = (label, el) => {
     const w = document.createElement("div");
@@ -7520,19 +7562,40 @@ function fieldKit(hass, redraw) {
     i.addEventListener("change", () => { onChange(i.value.trim()); redraw(); });
     return wrap(label, i);
   };
-  const ent = (label, value, domains, onChange, hint) => {
-    if (!customElements.get("ha-entity-picker")) return text(label, value, onChange, hint);
-    const p = document.createElement("ha-entity-picker");
-    p.hass = hass;
-    p.value = value || "";
-    p.allowCustomEntity = true;
-    if (domains && domains.length) p.includeDomains = domains;
-    p.addEventListener("value-changed", (ev) => {
-      ev.stopPropagation();
-      onChange((ev.detail && ev.detail.value) || "");
-      redraw();
-    });
-    return wrap(label, p);
+  /* `opts.exclude` hides ids a sibling row already holds, so the same entity
+   * cannot be picked twice - a duplicate doubles that entity in every count
+   * and chip that reads the list, and looks like a bug in the chip rather
+   * than a typo in the config. `opts.trail` puts a control on the picker's
+   * own line, which is where a remove button belongs. */
+  const ent = (label, value, domains, onChange, hint, opts) => {
+    const o = opts || {};
+    let p;
+    if (customElements.get("ha-entity-picker")) {
+      p = document.createElement("ha-entity-picker");
+      p.hass = hass;
+      p.value = value || "";
+      p.allowCustomEntity = true;
+      if (domains && domains.length) p.includeDomains = domains;
+      if (o.exclude && o.exclude.length) p.excludeEntities = o.exclude.filter(Boolean);
+      p.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        onChange((ev.detail && ev.detail.value) || "");
+        redraw();
+      });
+    } else {
+      p = document.createElement("input");
+      p.type = "text"; p.value = value || ""; p.placeholder = hint || "";
+      p.addEventListener("change", () => { onChange(p.value.trim()); redraw(); });
+    }
+    const w = document.createElement("div");
+    w.className = "vfield";
+    const t = document.createElement("span"); t.textContent = label;
+    const line = document.createElement("div");
+    line.className = "vent";
+    line.appendChild(p);
+    if (o.trail) line.appendChild(o.trail);
+    w.append(t, line, entStateLine(hass, value));
+    return w;
   };
   /* `suggest` offers a sensible glyph for an empty optional field, as a
    * button rather than a silent default: typing MDI names by hand is a
@@ -7562,21 +7625,38 @@ function fieldKit(hass, redraw) {
     return wrap(label, box);
   };
   /* A list of entities, as one picker per entry plus an empty one to
-   * grow into — simpler to reason about than a multi-select. */
+   * grow into — simpler to reason about than a multi-select. Clearing a
+   * picker still removes the row, but nothing said so, so every filled row
+   * now carries an × as well. The label counts what is in the list, because
+   * "six of my seven lights" is a thing you want to notice here. */
   const many = (label, values, domains, onChange) => {
     const box = document.createElement("div");
     box.className = "vfield";
-    const t = document.createElement("span"); t.textContent = label;
+    const list = [].concat(values || []).filter((x) => x != null && x !== "");
+    const t = document.createElement("span");
+    t.textContent = list.length ? label + " (" + list.length + ")" : label;
     box.appendChild(t);
-    const list = [].concat(values || []);
+    const commit = (next) => onChange(next.filter(Boolean));
     [...list, ""].forEach((v, i) => {
+      const last = i >= list.length;
+      let x = null;
+      if (!last) {
+        x = document.createElement("button");
+        x.className = "vx";
+        x.textContent = "\u00d7";
+        x.title = "Remove " + v;
+        x.setAttribute("aria-label", "Remove " + v);
+        x.addEventListener("click", () => {
+          const next = [...list]; next.splice(i, 1); commit(next); redraw();
+        });
+      }
       const row = ent("", v, domains, (nv) => {
         const next = [...list];
-        if (i < next.length) { if (nv) next[i] = nv; else next.splice(i, 1); }
+        if (!last) { if (nv) next[i] = nv; else next.splice(i, 1); }
         else if (nv) next.push(nv);
-        onChange(next);
-      });
-      row.querySelector("span").remove();
+        commit(next);
+      }, "", { trail: x, exclude: list.filter((y, j) => j !== i) });
+      row.firstChild.remove();                 // the empty label
       box.appendChild(row);
     });
     return box;
@@ -9748,7 +9828,9 @@ class CharroRoomsEditor extends HTMLElement {
       const h = document.createElement("div");
       h.className = "vhelp";
       h.textContent = t;
-      el.appendChild(h);
+      /* the help explains the field, the state line reports the value, so
+       * the help goes above it rather than after everything */
+      el.insertBefore(h, el.querySelector(".vstate"));
       return el;
     };
 
