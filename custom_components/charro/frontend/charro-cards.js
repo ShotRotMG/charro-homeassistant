@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.95.0";
+const VERSION = "5.96.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -7415,6 +7415,7 @@ const FIELD_WHERE = {
   spa_heater: "Pool & water", water_actions: "Pool & water",
   alert_sensors: "Door / motion alert", confirm_sensor: "Door / motion alert",
   cameras: "Cameras", gates: "Gates",
+  locks: "Door / motion alert",
   remotes: "Media & remotes", video: "Media & remotes",
   sections: "Advanced",
 };
@@ -7476,6 +7477,15 @@ function refWhere(room, path) {
   if (k === "alert_sensors") {
     const x = (r.alert_sensors || [])[p[1]];
     const label = x && typeof x === "object" ? (x.label || x.entity) : x;
+    return `Door / motion alert \u2192 ${label || nth(p[1])}${tail(2)}`;
+  }
+
+  /* Locks are edited in the Doors panel beside the sensors, and this was
+   * the one field with no label at all - a bad lock id said "locks", the
+   * raw key, rather than where to go and fix it. */
+  if (k === "locks") {
+    const c = (r.locks || [])[p[1]];
+    const label = c && typeof c === "object" ? (c.name || c.entity) : c;
     return `Door / motion alert \u2192 ${label || nth(p[1])}${tail(2)}`;
   }
 

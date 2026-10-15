@@ -111,6 +111,66 @@ for (const kind of ["pool", "spa"]) {
   }
 }
 
+/* ------------------------------------------------------------------------
+ * And the same question for every chip rather than just the water: with a
+ * room that has one of everything, do the two renderers draw the same set?
+ * This is what would have caught pool and spa the day they were added, and
+ * it will catch the next one without anybody writing a test for it.
+ * ---------------------------------------------------------------------- */
+const SINK = require("./sink.js");
+
+/* The tile draws two of these as badges beside the name rather than as
+ * chips in the row, because the tile is small. Named, so this stays a
+ * parity test rather than one that tolerates any difference at all. */
+const BADGE_NOT_CHIP = new Set(["locks", "garage-on", "garage-open", "garage-shut"]);
+
+const sweep = (label, tweak) => {
+  const hass = SINK.hass();
+  if (tweak) tweak(hass.states);
+  /* the card's own variables: the room's fields, and `chips` LAST, because
+   * a room has a `chips` key of its own (its overrides) and the template
+   * wants the resolved looks under that name. Getting this backwards made
+   * every show:"always" chip read as show:undefined, which is how this
+   * sweep first "found" six disagreements that were all its own. */
+  const vars = {};
+  for (const k of Object.keys(SINK.room)) vars[k] = SINK.room[k];
+  vars.chips = T.tileChips(SINK.room);
+  const sc = { variables: vars, hass };
+
+  const header = new Set(T.roomChips(SINK.room, hass).map((c) => c.key));
+  const tile = new Set();
+  for (const field of Object.keys(chips.custom_fields)) {
+    let shown;
+    try { shown = run(styleOf(field, "field", "display"), sc) !== "none"; }
+    catch (err) { ok(false, `${label}: ${field} display threw - ${err.message}`); continue; }
+    if (shown) tile.add(T.TILE_CHIPS[field] || field);
+  }
+  const hOnly = [...header].filter((k) => !tile.has(k) && !BADGE_NOT_CHIP.has(k));
+  const tOnly = [...tile].filter((k) => !header.has(k));
+  ok(!hOnly.length, `${label}: nothing the pop-up draws is missing from the tile` +
+    (hOnly.length ? `  -- ${hOnly}` : ""));
+  ok(!tOnly.length, `${label}: nothing the tile draws is missing from the pop-up` +
+    (tOnly.length ? `  -- ${tOnly}` : ""));
+  return { header, tile };
+};
+
+console.log("\n-- every chip, a room with one of everything --");
+const all = sweep("everything on");
+/* and the sweep is only worth anything if it is actually seeing chips */
+ok(all.tile.size >= 13, `the tile drew ${all.tile.size} chips, so the sweep saw the row`);
+for (const k of Object.values(T.TILE_CHIPS))
+  ok(all.tile.has(k), `${k} is drawn by a room that has one`);
+
+sweep("projector on", (st) => { st["switch.proj"] = { state: "on", attributes: {} }; });
+sweep("music stopped", (st) => { st["media_player.ma"].state = "idle"; });
+sweep("pool off", (st) => { st["switch.pool"].state = "off"; });
+sweep("everything off", (st) => {
+  for (const id of Object.keys(st)) st[id].state = "off";
+});
+sweep("everything unavailable", (st) => {
+  for (const id of Object.keys(st)) st[id].state = "unavailable";
+});
+
 /* and the thing that started this: a room with a pool gets a pool chip */
 const live = T.roomChips(
   { pool_switch: "switch.p", pool_heater: "water_heater.p",
