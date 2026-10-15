@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.94.0";
+const VERSION = "5.95.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -503,6 +503,17 @@ function lightCard(l, noDim, fans) {
       card.hold_action = { action: "toggle" };
       card.double_tap_action = { action: "toggle" };
     }
+  } else if (domain === "cover") {
+    /* A shade may be wired as a switch, a light or a cover, and only the
+     * last one has anywhere to go but on and off. The core tile carries
+     * the cover features, so this needs no resource the room does not
+     * already load; a cover with no position reports none and the slider
+     * hides itself. */
+    card = { type: "tile", entity: id, vertical: false,
+             features_position: "bottom",
+             features: dims ? [{ type: "cover-open-close" },
+                               { type: "cover-position" }]
+                            : [{ type: "cover-open-close" }] };
   } else {
     card = { type: "custom:mushroom-entity-card", entity: id,
              tap_action: { action: "toggle" }, layout: "horizontal" };
@@ -2097,9 +2108,17 @@ function blockCards(name, r, hass) {
   return out;
 }
 
+/* The groups the body draws, in the order it draws them, which is also
+ * what materializeLayout expands into a layout and what the tray offers.
+ * Shades were added as a room field, a chip, an editor panel and a chip
+ * registry entry in 5.73 and never added here - so a shade had a chip that
+ * worked and no card anywhere: not in the automatic body, not in a layout
+ * taken over, not in the tray. A room whose only content was shades
+ * rendered an empty pop-up. The order matches the chip row's. */
 const LIGHT_GROUPS = [
   ["Lights", "light_entities"],
   ["Landscape", "landscape_entities"],
+  ["Shades", "shade_entities"],
   ["Fans", "fan_entities"],
   ["Other fans", "bath_fan_entities"],
   ["Water", "fountain_entities"],
@@ -4508,7 +4527,7 @@ const ROOM_HELPERS = {
   page_path: 'Where the pop-up\'s expand button goes. Blank derives it from the room key.',
   popup_width: 'Overrides the width the column count picks. A number is pixels, or give a CSS length.',
   landscape_entities: "Kept out of the lights count, gets a palm-tree chip.",
-  shade_entities: "Shades wired as switches. On means down, so the chip appears when something is down and shows how many; tapping it raises them. Kept out of the lights count, and All off leaves them alone.",
+  shade_entities: "Shades, wired as switches, lights or covers. On means down, so the chip appears when something is down and shows how many; tapping it raises them. They draw under a Shades heading of their own, are kept out of the lights count, and All off leaves them alone.",
   fan_entities: "The Lutron fan dimmers. Gets the ceiling-fan chip.",
   bath_fan_entities: "Everything else that moves air \u2014 exhaust fans, air purifiers, tower fans. Gets its own chip. A fan. entity gets fan controls, a light-domain dimmer gets a speed slider.",
   confirm_sensor: "Guards the garages against a false ratgdo Opening.",
@@ -7659,8 +7678,15 @@ function roomJson(r) {
   return JSON.stringify(out, null, 2);
 }
 
+/* The lists whose entries may be an object rather than a bare id - a name,
+ * an icon, a dim flag, a count flag. _applyForm rebuilds exactly these from
+ * the ids ha-form hands back, so a list missing from here loses every
+ * override the moment anything else in the form is touched. shade_entities
+ * was missing, which made a renamed shade a renamed shade until the next
+ * keystroke. */
 const RE_LIGHT_LISTS = ["light_entities", "landscape_entities", "fan_entities",
-                        "bath_fan_entities", "fountain_entities"];
+                        "bath_fan_entities", "fountain_entities",
+                        "shade_entities"];
 /* How a save gets to disk, best available first:
  *   "ws"      the charro integration's websocket command — admin-only, and
  *             the reason nothing has to go in configuration.yaml

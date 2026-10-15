@@ -128,7 +128,7 @@ the room defines those entities, so no room needs a hand-built layout.
 | `climate` | `climate_entity` |
 | `media` | `tv_entity`, `projector_entity`, `receiver_entity`, `remotes` |
 | `music` | `music_powers`, `media_player` |
-| `lights` | `light_entities`, `landscape_entities`, `fan_entities`, `bath_fan_entities`, `fountain_entities` |
+| `lights` | `light_entities`, `landscape_entities`, `shade_entities`, `fan_entities`, `bath_fan_entities`, `fountain_entities` |
 | `cameras` | `cameras` |
 | `security` | `alert_sensors` |
 
@@ -907,6 +907,7 @@ alert_sensors: [sensor.elkm1_master_bedroom]
 | `popup_hash` | Bubble Card hash. Blank derives it (`Garage East` → `#garage-east`) |
 | `light_entities` | Lightbulb chip with an on-count |
 | `landscape_entities` | Palm-tree chip, kept out of the lights count |
+| `shade_entities` | Blinds chip counting what is down, kept out of the lights count. Wired as switches, lights or covers; a cover gets open/close and a position slider |
 | `fan_entities` | Ceiling-fan chip with an on-count |
 | `bath_fan_entities` | Plain fan chip with an on-count |
 | `fountain_entity` | Fountain chip, taps to toggle |
