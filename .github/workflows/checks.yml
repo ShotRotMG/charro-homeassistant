@@ -1,5 +1,7 @@
 # Runs tools/check.py on every push, so a broken commit can't sit in the repo
-# waiting for HACS to hand it to Home Assistant.
+# waiting for HACS to hand it to Home Assistant. check.py discovers and runs
+# every tools/test-*.js and tools/test_*.py as its last step, so the suites
+# are covered here without this file having to name them.
 #
 # Node is pinned to 22 deliberately: `node --check` only treats a .mjs file as
 # an ES module from 21 onwards. On older Node the check falls back to stubbing

@@ -277,11 +277,46 @@ def c_bare_calls() -> None:
           ", ".join(missing))
 
 
+def c_suites() -> None:
+    """Run every test file beside this one.
+
+    Discovered rather than listed: a suite is any tools/test-*.js or
+    tools/test_*.py, so adding one is adding a file. Listing them here
+    would be another registry to forget to update, which is exactly the
+    class of bug half of them were written for.
+
+    They run last because they are the slow ones - each .js suite loads
+    the whole bundle - and because a failure here is far easier to read
+    once you know the bundle at least parses.
+    """
+    suites = sorted((ROOT / "tools").glob("test-*.js")) \
+        + sorted((ROOT / "tools").glob("test_*.py"))
+    check("test suites found", bool(suites), "no tools/test-* files at all")
+    for f in suites:
+        cmd = ["node", str(f)] if f.suffix == ".js" else [sys.executable, str(f)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT),
+                               timeout=120)
+        except FileNotFoundError:
+            notes.append(f"{f.name} not run - {cmd[0]} is not installed here")
+            continue
+        except subprocess.TimeoutExpired:
+            check(f.name, False, "timed out after 120s")
+            continue
+        out = (r.stdout or "") + (r.stderr or "")
+        n = out.count("  ok   ")
+        # the failing lines are the whole point of running these, so they
+        # are printed rather than summarised
+        bad = [ln for ln in out.splitlines() if "FAIL" in ln]
+        check(f"{f.name} ({n} assertions)", r.returncode == 0,
+              " | ".join(bad)[:600] or f"exit {r.returncode}")
+
+
 def main() -> int:
     print(f"charro checks - {ROOT}")
     for fn in (c_parses, c_methods, c_bare_calls, c_defines, c_templates,
                c_built, c_version, c_precompressed, c_python, c_json_files,
-               c_manifest_order):
+               c_manifest_order, c_suites):
         try:
             fn()
         except Exception as err:  # noqa: BLE001

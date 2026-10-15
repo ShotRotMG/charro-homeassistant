@@ -1178,6 +1178,31 @@ through by hand, once, in Android's notification settings for the Home
 Assistant app. `importance` only takes effect the first time a channel appears,
 which is why the split matters more than the value.
 
+## Checks and tests
+
+    python tools/check.py
+
+That is the whole thing: it parses the bundle (as .mjs, since `node --check`
+exits 0 on a syntax error in a .js file), proves every method and bare call
+resolves, validates the templates, verifies `dist/` and the integration's
+`frontend/` copy match, and then runs every test suite beside it. Suites are
+discovered, not listed - a `tools/test-*.js` or `tools/test_*.py` file is a
+suite by virtue of existing - and a failing one fails the run, prints its
+failing lines, and blocks `tools/release.py`. CI runs the same command.
+
+The suites load the real bundle through `tools/harness.js`, which stands up
+enough of a DOM for it to finish loading and then exports the actual
+functions, so a test calls `roomChips()` rather than a copy of it pasted into
+the test. `tools/test-chip-agree.js` goes further and evaluates the real
+button-card expressions out of `room-card.json`, so the tile and the pop-up
+header are compared against each other rather than against anybody's
+assumption about either. `tools/sink.js` is a room with one of everything,
+shared by the suites that need one.
+
+`tools/test_notify.py` lifts the payload builders out of `__init__.py` with
+`ast` and runs them, since `homeassistant` is not importable outside Home
+Assistant.
+
 ## Notes
 
 - `triggers_update` is computed from the entities you set, so a card only
