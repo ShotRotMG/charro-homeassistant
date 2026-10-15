@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.93.0";
+const VERSION = "5.94.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3202,12 +3202,62 @@ function climateChip(hass, id, r) {
   else if (st.state === "heat") mood = (known && cur >= set) ? "idle" : "heating";
   else if (st.state === "heat_cool") mood = "mixed";
   const { col, icon } = chipLook("climate", r, mood);
-  const unit = (hass.config && hass.config.unit_system
-                && hass.config.unit_system.temperature) || "°";
+  const unit = tempUnit(hass);
   return { key: "climate", icon, col,
            text: cur != null ? `${Math.round(cur)}${unit}` : "",
            title: `${st.attributes.friendly_name || id} — ${act || st.state}`,
            tap: { kind: "more-info", entity: id } };
+}
+
+/* Degrees, in the units this instance is set to. Written out in two places
+ * with two different answers before: for the same thermostat the pop-up
+ * said 76°F and the tile said 76°. */
+function tempUnit(hass) {
+  return (hass && hass.config && hass.config.unit_system
+          && hass.config.unit_system.temperature) || "°";
+}
+
+/* Pool and spa, for the pop-up header.
+ *
+ * The tile has drawn both of these for as long as the chips have existed
+ * and the header drew neither - the two renderers are meant to be the same
+ * row, and this was the last place they disagreed about whether a chip
+ * exists at all. Every reading below is the one the template makes, in the
+ * same order, so the two stay the same thing: the pump decides whether the
+ * chip is there, the heater decides its colour and its number, and a
+ * heater that is off leaves the body resting however warm the water
+ * happens to be. */
+const WATER_SAYS = { resting: "resting", heating: "warming up",
+                     warm: "up to temperature" };
+
+function waterChip(r, hass, kind) {
+  const pool = kind === "pool";
+  const sw = pool ? r.pool_switch : r.spa_switch;
+  /* No pump, no chip - the template tests this before `show` does
+   * anything, so an "always" on a body this room has not got still draws
+   * nothing rather than an empty grey disc. */
+  if (!sw) return null;
+  const st = hass.states[sw];
+  const on = !!st && st.state === "on";
+  if (!on && chipLook(kind, r).show !== "always") return null;
+
+  const ht = pool ? r.pool_heater : r.spa_heater;
+  const h = ht ? hass.states[ht] : null;
+  const a = (h && h.attributes) || {};
+  const cur = a.current_temperature, set = a.temperature;
+  let mood = "resting";
+  if (h && h.state !== "off" && h.state !== "unavailable") {
+    if (a.hvac_action === "heating") mood = "heating";
+    else if (a.hvac_action === "idle" || a.hvac_action === "off") mood = "warm";
+    else if (cur != null && set != null) mood = (cur + 0.5 < set) ? "heating" : "warm";
+  }
+  const { col, icon } = chipLook(kind, r, mood);
+  const name = (pool ? r.pool_name : r.spa_name) || (pool ? "Pool" : "Spa");
+  const temp = cur != null ? `${Math.round(cur)}${tempUnit(hass)}` : "";
+  return { key: kind, icon, col: on ? col : CHIP_OFF, text: temp,
+           title: `${name} — ${on ? WATER_SAYS[mood] : "off"}`
+                + (temp ? `, ${temp}` : ""),
+           tap: { kind: "more-info", entity: ht || sw } };
 }
 
 function roomChips(r, hass) {
@@ -3313,6 +3363,11 @@ function roomChips(r, hass) {
 
   if (r.climate_entity) {
     const c = climateChip(hass, r.climate_entity, r);
+    if (c) out.push(c);
+  }
+
+  for (const k of ["pool", "spa"]) {
+    const c = waterChip(r, hass, k);
     if (c) out.push(c);
   }
 

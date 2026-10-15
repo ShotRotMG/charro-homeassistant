@@ -883,7 +883,7 @@
               "show_icon": true,
               "show_name": true,
               "icon": "[[[ return variables.chips.climate.icon ]]]",
-              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}°` : '';\n]]]\n",
+              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  const u = hass?.config?.unit_system?.temperature || '°';\n  return t != null ? `${Math.round(t)}${u}` : '';\n]]]\n",
               "tap_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.climate_entity ]]]"
@@ -1215,7 +1215,7 @@
               "show_icon": true,
               "show_name": true,
               "icon": "[[[ return variables.chips.pool.icon ]]]",
-              "name": "[[[\n  const h = states[variables.pool_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
+              "name": "[[[\n  const h = states[variables.pool_heater];\n  const t = h?.attributes?.current_temperature;\n  const u = hass?.config?.unit_system?.temperature || '°';\n  return t != null ? `${Math.round(t)}${u}` : '';\n]]]",
               "tap_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.pool_heater || variables.pool_switch ]]]"
@@ -1297,7 +1297,7 @@
               "show_icon": true,
               "show_name": true,
               "icon": "[[[ return variables.chips.spa.icon ]]]",
-              "name": "[[[\n  const h = states[variables.spa_heater];\n  const t = h?.attributes?.current_temperature;\n  return t != null ? `${Math.round(t)}\\u00b0` : '';\n]]]",
+              "name": "[[[\n  const h = states[variables.spa_heater];\n  const t = h?.attributes?.current_temperature;\n  const u = hass?.config?.unit_system?.temperature || '°';\n  return t != null ? `${Math.round(t)}${u}` : '';\n]]]",
               "tap_action": {
                 "action": "more-info",
                 "entity": "[[[ return variables.spa_heater || variables.spa_switch ]]]"
