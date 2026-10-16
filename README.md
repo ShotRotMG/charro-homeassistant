@@ -984,6 +984,45 @@ entities:
 | `confirm` | `false` to fire without asking |
 | `confirm_text` | Custom confirmation wording |
 
+## `charro-irrigation-card`
+
+A Hunter Hydrawise controller as a tile and a pop-up. Add the card and pick
+nothing: the controller and every zone are found through the entity registry,
+from the Hydrawise integration's own entities. A zone added in the Hydrawise
+app turns up on its own.
+
+The **tile** shows what is running and how long it has left, or else the next
+scheduled run, with chips for zones running, zones suspended and today's
+watering time. It goes red when the controller drops off the cloud.
+
+Tap it for the **pop-up**: a summary, then every zone as a coloured tile with
+its number, what it is doing and when it next waters. Tap a zone for its own
+screen:
+
+| | |
+| --- | --- |
+| **Start** | at the zone's default time, as set in Hydrawise |
+| **5 - 60 min**, or type a number | run for that long (up to 1440) |
+| **Stop** | while it is running |
+| **1 day - 1 month**, or a date | suspend automatic watering until then |
+| **Resume** | while it is suspended |
+
+The editor sets a title, an icon, which controller (only asked when there is
+more than one), the pop-up's address (`#irrigation` by default), and for each
+zone whether it shows, what it is called and what colour it is. Colours
+default to a soft set close to the app's, by zone number.
+
+What it cannot show, because Home Assistant does not get it from Hydrawise:
+**programs** (watering days, start times, each zone's minutes) and any
+schedule beyond each zone's next run.
+
+The Hydrawise integration polls the cloud every five minutes and does not
+refresh after a command. So a command shows on the zone at once ("Starting...")
+and the card asks Home Assistant for one refresh four seconds later - one
+extra cloud poll per press, coalesced if you press several in a row. A
+command Hydrawise refuses says so on the zone, and the zone stops claiming
+to have started.
+
 ## `charro-lights-card`
 
 One room per card. Every row is the same height whether the light is on, off,

@@ -123,7 +123,14 @@ class El {
   _match(sel) {
     for (const part of String(sel).split(",").map((x) => x.trim())) {
       if (!part) continue;
-      if (part[0] === ".") { if (this._classes().has(part.slice(1))) return true; continue; }
+      /* every class in a compound one - ".banner.off" is both, not a class
+       * called "banner.off", which is what this used to look for, so a test
+       * asserting there was NO such element passed whatever the page held */
+      if (part[0] === ".") {
+        const want = part.slice(1).split(".").filter(Boolean);
+        if (want.every((c) => this._classes().has(c))) return true;
+        continue;
+      }
       if (part[0] === "[") {
         const m = /^\[([^\]=]+)(?:=["']?([^\]"']*)["']?)?\]$/.exec(part);
         if (m && (m[2] === undefined ? this.hasAttribute(m[1])
@@ -200,5 +207,5 @@ eval(src.replace(/import\.meta\.url/g, JSON.stringify("https://x/charro-cards.js
   "\n;globalThis.__T = { roomChips, chipLook, chipCol, tileChips, roomBody, VIDEO_CSS," +
   "\n  CHIP_PAL, CHIP_SPECS, CHIP_OFF, CHIP_GROUPS, TILE_CHIPS," +
   "\n  areaBuckets, areaApply, areaChoices, entityArea, entityLabel," +
-  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine,\n  PANEL_USED, PANEL_ADD, PANEL_OPEN, PREV_MODES, lightIds,\n  fetchAll, loadAll, loadChips, invalidateRooms,\n  loadHouse, pagePath, HOUSE_PAGE_BASE,\n  heaterFeatures, heaterCard, pumpCard, waterPart,\n  LIGHT_GROUPS, RE_LIGHT_LISTS, lightCard, materializeLayout, autoBody,\n  ROOM_LISTS, ROOM_SINGLES, ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS,\n  ROOM_SECTIONS, FIELD_WHERE, sectionOrder };");
+  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine,\n  PANEL_USED, PANEL_ADD, PANEL_OPEN, PREV_MODES, lightIds,\n  fetchAll, loadAll, loadChips, invalidateRooms,\n  loadHouse, pagePath, HOUSE_PAGE_BASE,\n  heaterFeatures, heaterCard, pumpCard, waterPart,\n  LIGHT_GROUPS, RE_LIGHT_LISTS, lightCard, materializeLayout, autoBody,\n  ROOM_LISTS, ROOM_SINGLES, ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS,\n  ROOM_SECTIONS, FIELD_WHERE, sectionOrder,\n  hwKind, hwDiscover, hwPick, hwColor, hwSeconds, hwState, hwSummary, hwSig,\n  hwDur, hwWhen, hwLine, hwUntil, hwAct, hwRefreshSoon, hwTileDom, hwGridDom,\n  hwZoneDom, HW_COLORS, HW_PENDING_MS, _hwPend };");
 module.exports = Object.assign(globalThis.__T, { El, el });

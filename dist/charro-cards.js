@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.98.0";
+const VERSION = "5.99.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5731,6 +5731,870 @@ makeEditor("charro-all-off-card-editor", [
 }, {
   entities: "The border goes green when any of these is on, red when all are off.",
 });
+
+/* ======================================================= IRRIGATION CARD == */
+/*
+ * charro-irrigation-card - a Hydrawise controller as a tile and a pop-up.
+ *
+ * Everything comes from the Hydrawise integration's own entities, found
+ * through the entity registry rather than listed by hand: a zone is six
+ * entities, twenty-four zones is a hundred and forty-five, and a config
+ * that named them all would be wrong the day a zone was added. What the
+ * integration does not expose - programs, and any schedule beyond each
+ * zone's next run - the card does not pretend to show.
+ *
+ * The integration polls the cloud every five minutes and does not refresh
+ * after a command, so a zone started from here would read idle for up to
+ * five minutes. The card marks it pending at once and asks Home Assistant
+ * for one refresh a few seconds later: one extra cloud poll per press, not
+ * per tick.
+ */
+
+const HW_PLATFORM = "hydrawise";
+const HW_HASH = "#irrigation";
+const HW_ICON = "mdi:sprinkler-variant";
+/* Soft colours close to the app's own set. A zone keeps its colour by number,
+ * so the same zone is the same colour on every screen and every device. */
+const HW_COLORS = ["#a9d9a8", "#a9cff0", "#b4afe0", "#98cdbd", "#a8bde6",
+                   "#eeb2a2", "#efd197", "#cfb5e4", "#a3d8de", "#e6b7c5"];
+/* How long after a command to ask for a refresh. Long enough for the cloud
+ * to have taken the command in; short enough to feel like an answer. */
+const HW_REFRESH_MS = 4000;
+/* A pending mark that never resolves - the cloud refused, or took longer
+ * than this - stops claiming anything after this long. */
+const HW_PENDING_MS = 90000;
+
+/* What one Hydrawise entity is. The registry's translation_key says it
+ * outright; device_class and the id are the fallback, for a registry entry
+ * that does not carry the key. */
+function hwKind(id, reg, st) {
+  const dom = String(id).split(".")[0];
+  const tk = (reg && reg.translation_key) || "";
+  const a = (st && st.attributes) || {};
+  const dc = a.device_class || "";
+  if (dom === "valve") return "valve";
+  if (dom === "binary_sensor") {
+    if (tk === "watering" || dc === "running") return "watering";
+    if (tk === "rain_sensor" || dc === "moisture") return "rain";
+    if (dc === "connectivity") return "online";
+    return "";
+  }
+  if (dom === "switch") {
+    if (tk === "auto_watering" || /auto/i.test(id)) return "auto";
+    if (tk === "manual_watering" || /manual/i.test(id)) return "manual";
+    return "";
+  }
+  if (dom === "sensor") {
+    if (tk === "next_cycle" || dc === "timestamp") return "next";
+    if (tk === "watering_time" || /remaining/i.test(id)) return "remaining";
+    if (tk === "daily_total_water_use") return "use_total";
+    if (tk === "daily_inactive_water_use") return "use_inactive";
+    if (tk === "daily_active_water_use") return "use";
+    if (tk === "daily_active_water_time" || dc === "duration") return "today";
+    if (dc === "water" || dc === "volume")
+      return /inactive/i.test(id) ? "use_inactive" : /total/i.test(id) ? "use_total" : "use";
+  }
+  return "";
+}
+
+/* Every Hydrawise controller and zone Home Assistant knows about. hass hands
+ * over a new `entities` and `devices` only when the registry changes, so the
+ * answer is kept against those two objects and every other tick is free. */
+let _hwFound = null;
+function hwDiscover(hass) {
+  const ents = (hass && hass.entities) || {};
+  const devs = (hass && hass.devices) || {};
+  if (_hwFound && _hwFound.e === ents && _hwFound.d === devs) return _hwFound.v;
+  const states = (hass && hass.states) || {};
+  const byDev = new Map();
+  for (const id of Object.keys(ents)) {
+    const reg = ents[id];
+    if (!reg || reg.platform !== HW_PLATFORM) continue;
+    const kind = hwKind(id, reg, states[id]);
+    if (!kind) continue;
+    const key = reg.device_id || `_${id}`;
+    if (!byDev.has(key)) byDev.set(key, {});
+    const slot = byDev.get(key);
+    if (!slot[kind]) slot[kind] = id;
+  }
+  const controllers = new Map();
+  const zones = [];
+  for (const [dev, slot] of byDev) {
+    if (slot.watering || slot.valve) zones.push({ device: dev, ...slot });
+    else controllers.set(dev, { device: dev, ...slot });
+  }
+  const nameOf = (d, fallback) =>
+    String((d && (d.name_by_user || d.name)) || fallback || "").trim();
+  for (const z of zones) {
+    const d = devs[z.device];
+    z.controller = (d && d.via_device_id) || "";
+    // (?:zone_) rather than zone_( - check.py reads "name(" as a call
+    const hit = [z.valve, z.watering].map((e) => /(?:zone_)(\d+)/.exec(e || "")).find(Boolean);
+    z.num = hit ? Number(hit[1]) : 0;
+    const vs = states[z.valve] || states[z.watering];
+    const fn = vs && vs.attributes && vs.attributes.friendly_name;
+    z.name = nameOf(d, z.valve ? fn : String(fn || "").replace(/\s*watering$/i, ""))
+          || `Zone ${z.num || "?"}`;
+    if (z.controller && !controllers.has(z.controller))
+      controllers.set(z.controller, { device: z.controller });
+  }
+  zones.sort((a, b) => (a.num || 999) - (b.num || 999) || a.name.localeCompare(b.name));
+  zones.forEach((z, i) => { if (!z.num) z.num = i + 1; });
+  for (const c of controllers.values()) c.name = nameOf(devs[c.device], "Controller");
+  const v = { controllers: [...controllers.values()], zones };
+  _hwFound = { e: ents, d: devs, v };
+  return v;
+}
+
+/* The controller and zones one card shows, with the card's own overrides -
+ * a name, a colour, hidden - laid over what was discovered. */
+function hwPick(hass, cfg) {
+  const all = hwDiscover(hass);
+  const c = cfg || {};
+  const ctrl = all.controllers.find((x) => x.device === c.controller)
+            || all.controllers[0] || null;
+  const over = c.zones || {};
+  const mine = all.zones.filter((z) =>
+    !ctrl || !z.controller || all.controllers.length < 2 || z.controller === ctrl.device);
+  const zones = mine.map((z) => {
+    const o = over[z.device] || {};
+    return { ...z, name: o.name || z.name, color: o.color || hwColor(z.num), hidden: !!o.hide };
+  });
+  return { ctrl, zones: zones.filter((z) => !z.hidden), allZones: zones,
+           controllers: all.controllers };
+}
+
+function hwColor(num) {
+  const n = Math.max(1, Number(num) || 1);
+  return HW_COLORS[(n - 1) % HW_COLORS.length];
+}
+
+/* A duration sensor, in seconds, whatever unit it reports in. */
+function hwSeconds(st) {
+  if (!st) return null;
+  const v = Number(st.state);
+  if (!isFinite(v)) return null;
+  const u = String((st.attributes && st.attributes.unit_of_measurement) || "s");
+  return u === "min" ? v * 60 : u === "h" ? v * 3600 : u === "d" ? v * 86400
+       : u === "ms" ? v / 1000 : v;
+}
+
+/* Pending marks, shared by every card on the page: the tile and its pop-up
+ * agree that a zone is starting because they read the same map. Keyed on
+ * the zone's watering sensor, which is what the services target. */
+const _hwPend = new Map();
+
+function hwState(z, hass, now) {
+  const S = (hass && hass.states) || {};
+  const w = S[z.watering], v = S[z.valve], au = S[z.auto];
+  const bad = (st) => !st || st.state === "unavailable" || st.state === "unknown";
+  const unavailable = bad(w) && bad(v);
+  const running = !unavailable && ((!!w && w.state === "on")
+    || (!!v && (v.state === "open" || v.state === "opening")));
+  const rs = S[z.remaining];
+  const remaining = rs && isFinite(Number(rs.state)) ? Number(rs.state) : null;
+  const ns = S[z.next];
+  const nt = ns ? Date.parse(ns.state) : NaN;
+  const next = isFinite(nt) ? new Date(nt) : null;
+  const suspended = !!au && au.state === "off";
+  const today = hwSeconds(S[z.today]);
+  /* A pending mark ends when the state it was waiting for arrives, or when
+   * it has waited long enough that it is no longer telling the truth. */
+  let pending = "";
+  const p = z.watering && _hwPend.get(z.watering);
+  if (p) {
+    const t = now instanceof Date ? now.getTime() : Date.now();
+    const done = p.kind === "start" ? running
+               : p.kind === "stop" ? !running
+               : p.kind === "suspend" ? suspended
+               : p.kind === "resume" ? !suspended : true;
+    if (done || t - p.at > HW_PENDING_MS) _hwPend.delete(z.watering);
+    else pending = p.kind;
+  }
+  return { unavailable, running, remaining, next, suspended, today, pending };
+}
+
+function hwSummary(zones, ctrl, hass, now) {
+  const S = (hass && hass.states) || {};
+  const st = zones.map((z) => ({ z, s: hwState(z, hass, now) }));
+  const running = st.filter((x) => x.s.running || x.s.pending === "start");
+  let next = null;
+  for (const { z, s } of st) {
+    if (!s.next || s.suspended || s.unavailable || s.next < now) continue;
+    if (!next || s.next < next.at) next = { zone: z, at: s.next };
+  }
+  const on = ctrl && ctrl.online ? S[ctrl.online] : null;
+  /* With no connectivity sensor, "every zone unavailable" is the next best
+   * reading of a controller that has dropped off the cloud. */
+  const online = on ? on.state === "on" : !(st.length && st.every((x) => x.s.unavailable));
+  const total = ctrl && ctrl.today && S[ctrl.today] ? hwSeconds(S[ctrl.today])
+              : st.reduce((n, x) => n + (x.s.today || 0), 0);
+  const rain = !!(ctrl && ctrl.rain && S[ctrl.rain] && S[ctrl.rain].state === "on");
+  return { online, running, next, suspended: st.filter((x) => x.s.suspended).length,
+           today: total, rain, states: st };
+}
+
+/* Everything a render reads, as one string. A tick that changes none of it
+ * redraws nothing, which on a house with a few hundred entities is nearly
+ * every tick. */
+function hwSig(zones, ctrl, hass) {
+  const S = (hass && hass.states) || {};
+  const at = (id) => (id && S[id] ? S[id].state : "");
+  let s = `${_hwPend.size}|`;
+  for (const z of zones)
+    s += `${at(z.watering)},${at(z.valve)},${at(z.auto)},${at(z.remaining)},${at(z.next)},${at(z.today)},${(_hwPend.get(z.watering) || {}).kind || ""};`;
+  if (ctrl) s += `${at(ctrl.online)},${at(ctrl.today)},${at(ctrl.rain)}`;
+  return s;
+}
+
+function hwDur(sec) {
+  if (sec == null || !isFinite(sec)) return "";
+  const m = Math.round(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
+function hwLang(hass) {
+  return (hass && hass.locale && hass.locale.language) || (hass && hass.language) || undefined;
+}
+
+/* "Today 5:00 AM", "Tomorrow 5:00 AM", "Sat 5:00 AM", then a date. Days are
+ * counted on the calendar, not in 24-hour blocks, so 11pm tonight to 5am is
+ * tomorrow - and rounding the difference keeps a DST change from making it
+ * tomorrow twice. */
+function hwWhen(d, now, lang) {
+  const time = d.toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit" });
+  const a = new Date(now); a.setHours(0, 0, 0, 0);
+  const b = new Date(d); b.setHours(0, 0, 0, 0);
+  const days = Math.round((b - a) / 86400000);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Tomorrow ${time}`;
+  if (days > 1 && days < 7)
+    return `${d.toLocaleDateString(lang, { weekday: "short" })} ${time}`;
+  return `${d.toLocaleDateString(lang, { month: "short", day: "numeric" })} ${time}`;
+}
+
+const HW_PEND_SAYS = { start: "Starting…", stop: "Stopping…",
+                       suspend: "Suspending…", resume: "Resuming…" };
+
+/* The one line under a zone's name. */
+function hwLine(s, now, lang) {
+  if (s.unavailable) return "Unavailable";
+  if (s.pending) return HW_PEND_SAYS[s.pending] || "";
+  if (s.running)
+    return s.remaining != null ? `${Math.max(0, Math.round(s.remaining))} min left` : "Running";
+  if (s.suspended) return "Suspended";
+  if (s.next) return `Next ${hwWhen(s.next, now, lang)}`;
+  if (s.today) return `Today ${hwDur(s.today)}`;
+  return "Nothing scheduled";
+}
+
+/* "YYYY-MM-DD HH:MM:SS" in local time, which is what hydrawise.suspend
+ * takes. `days` from now, or a date the person picked (taken as the start
+ * of that day, so "until the 30th" means it waters again on the 30th). */
+function hwUntil(days, now, picked) {
+  let d;
+  if (picked) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(picked);
+    if (!m) return "";
+    d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0);
+  } else {
+    d = new Date(now instanceof Date ? now.getTime() : Date.now());
+    d.setDate(d.getDate() + Number(days || 0));
+  }
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} `
+       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/* One refresh for a burst of presses: a second command inside the window
+ * pushes the refresh back rather than adding another cloud poll. */
+let _hwRefreshT = null;
+function hwRefreshSoon(hass, entity, ms) {
+  if (!hass || !entity) return;
+  if (_hwRefreshT) clearTimeout(_hwRefreshT);
+  _hwRefreshT = setTimeout(() => {
+    _hwRefreshT = null;
+    Promise.resolve(hass.callService("homeassistant", "update_entity",
+      { entity_id: entity })).catch(() => {});
+  }, ms == null ? HW_REFRESH_MS : ms);
+}
+
+/* Run one command against one zone. The pending mark goes on first, so the
+ * screen answers before the cloud does, and comes off again if the call is
+ * refused - a zone that says "Starting..." and never starts is worse than
+ * one that says nothing. */
+async function hwAct(hass, z, kind, arg, refreshMs) {
+  if (!hass || !z) return;
+  const target = { entity_id: z.watering };
+  if (z.watering) _hwPend.set(z.watering, { kind, at: Date.now() });
+  try {
+    if (kind === "start") {
+      if (z.watering) {
+        const mins = Number(arg) || 0;
+        await hass.callService("hydrawise", "start_watering",
+          mins > 0 ? { duration: Math.min(1440, Math.round(mins)) } : {}, target);
+      } else if (z.valve) {
+        await hass.callService("valve", "open_valve", {}, { entity_id: z.valve });
+      }
+    } else if (kind === "stop") {
+      if (z.valve) await hass.callService("valve", "close_valve", {}, { entity_id: z.valve });
+      else if (z.manual) await hass.callService("switch", "turn_off", {}, { entity_id: z.manual });
+    } else if (kind === "suspend") {
+      await hass.callService("hydrawise", "suspend", { until: arg }, target);
+    } else if (kind === "resume") {
+      await hass.callService("hydrawise", "resume", {}, target);
+    }
+  } catch (err) {
+    if (z.watering) _hwPend.delete(z.watering);
+    throw err;
+  }
+  hwRefreshSoon(hass, z.watering || z.valve, refreshMs);
+}
+
+/* ---- building the screens. Plain functions over plain data, so a test can
+ * build one, press its buttons and read what was sent. ---- */
+
+function hwEl(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function hwIcon(icon) {
+  const i = document.createElement("ha-icon");
+  i.icon = icon;
+  i.setAttribute("icon", icon);
+  return i;
+}
+
+/* The tile: what is running, else what is next, and today's total. */
+function hwTileDom(sum, cfg, now, lang) {
+  const c = cfg || {};
+  const card = hwEl("ha-card", "hw-tile");
+  card.setAttribute("role", "button");
+  card.tabIndex = 0;
+  const ic = hwEl("div", "ic " + (!sum.online ? "off" : sum.running.length ? "run" : "idle"));
+  ic.appendChild(hwIcon(c.icon || HW_ICON));
+  const txt = hwEl("div", "txt");
+  txt.appendChild(hwEl("div", "tt", c.title || "Irrigation"));
+  let sub;
+  if (!sum.online) sub = "Controller offline";
+  else if (sum.running.length) {
+    const r = sum.running[0];
+    sub = `${r.z.name} · ${hwLine(r.s, now, lang)}`
+        + (sum.running.length > 1 ? ` +${sum.running.length - 1} more` : "");
+  } else if (sum.next) sub = `Next ${hwWhen(sum.next.at, now, lang)} · ${sum.next.zone.name}`;
+  else sub = "Nothing scheduled";
+  txt.appendChild(hwEl("div", "sub", sub));
+  const chips = hwEl("div", "chips");
+  const chip = (icon, text, col, title) => {
+    const ch = hwEl("span", "chip");
+    ch.style.background = col[0];
+    ch.style.color = col[1];
+    if (title) ch.title = title;
+    ch.append(hwIcon(icon), hwEl("span", "", text));
+    chips.appendChild(ch);
+  };
+  if (sum.running.length)
+    chip("mdi:water", `${sum.running.length} running`, pal("blue"));
+  if (sum.suspended)
+    chip("mdi:pause-circle-outline", `${sum.suspended} suspended`, pal("orange"),
+      "Zones whose automatic watering is suspended");
+  if (sum.rain) chip("mdi:weather-rainy", "Rain", pal("sky"));
+  if (sum.today) chip("mdi:timer-outline", `Today ${hwDur(sum.today)}`, CHIP_OFF,
+    "Watering time so far today");
+  if (chips.childElementCount || (chips.children && chips.children.length)) txt.appendChild(chips);
+  card.append(ic, txt);
+  return card;
+}
+
+/* The badge a zone wears on its colour block, when it has something to say. */
+function hwBadge(s) {
+  if (s.unavailable) return null;
+  if (s.pending) return ["pend", HW_PEND_SAYS[s.pending]];
+  if (s.running) return ["run", "Running"];
+  if (s.suspended) return ["sus", "Suspended"];
+  return null;
+}
+
+/* The pop-up's main screen: a banner if something is wrong, the summary,
+ * and every zone. */
+function hwGridDom(model, h) {
+  const { sum, zones, now, lang } = model;
+  const root = hwEl("div", "hw");
+  if (!sum.online) {
+    const b = hwEl("div", "banner off");
+    b.append(hwIcon("mdi:cloud-off-outline"),
+      hwEl("span", "", "The controller is offline. What you see is the last thing it reported."));
+    root.appendChild(b);
+  }
+  if (sum.rain) {
+    const b = hwEl("div", "banner rain");
+    b.append(hwIcon("mdi:weather-rainy"),
+      hwEl("span", "", "The rain sensor is wet, so automatic watering is held."));
+    root.appendChild(b);
+  }
+  const s = hwEl("div", "sum");
+  const si = hwEl("div", "ic " + (!sum.online ? "off" : sum.running.length ? "run" : "idle"));
+  si.appendChild(hwIcon(sum.running.length ? "mdi:water" : "mdi:calendar-clock"));
+  const st = hwEl("div", "txt");
+  if (sum.running.length) {
+    st.appendChild(hwEl("div", "big", sum.running.map((x) => x.z.name).join(", ")));
+    st.appendChild(hwEl("div", "small", hwLine(sum.running[0].s, now, lang)));
+  } else if (sum.next) {
+    st.appendChild(hwEl("div", "big", `Next: ${hwWhen(sum.next.at, now, lang)}`));
+    st.appendChild(hwEl("div", "small", sum.next.zone.name));
+  } else {
+    st.appendChild(hwEl("div", "big", "Nothing scheduled"));
+  }
+  const bits = [];
+  if (sum.today) bits.push(`${hwDur(sum.today)} today`);
+  if (sum.suspended) bits.push(`${sum.suspended} suspended`);
+  if (bits.length) st.appendChild(hwEl("div", "small", bits.join(" · ")));
+  s.append(si, st);
+  root.appendChild(s);
+
+  const hd = hwEl("div", "h");
+  hd.append(hwEl("b", "", "Zones"), hwEl("span", "", `${zones.length} zones`));
+  root.appendChild(hd);
+  const grid = hwEl("div", "grid");
+  for (const { z, s: zs } of zones) {
+    const b = hwEl("button", "z" + (zs.running ? " run" : "") + (zs.unavailable ? " unav" : ""));
+    b.type = "button";
+    b.setAttribute("data-zone", z.device);
+    b.setAttribute("aria-label", `${z.name}, zone ${z.num}: ${hwLine(zs, now, lang)}`);
+    const blk = hwEl("div", "blk");
+    blk.style.setProperty ? blk.style.setProperty("--c", z.color) : (blk.style["--c"] = z.color);
+    blk.style.background = z.color;
+    blk.append(hwIcon("mdi:leaf"), hwEl("span", "n", String(z.num)));
+    const badge = hwBadge(zs);
+    if (badge) blk.appendChild(hwEl("span", "st " + badge[0], badge[1]));
+    b.append(blk, hwEl("div", "nm", z.name), hwEl("div", "ln", hwLine(zs, now, lang)));
+    b.addEventListener("click", () => h.open(z));
+    grid.appendChild(b);
+  }
+  root.appendChild(grid);
+  if (!zones.length)
+    root.appendChild(hwEl("div", "note", "No Hydrawise zones found. Is the Hydrawise "
+      + "integration set up, and are any zones hidden in this card's settings?"));
+  return root;
+}
+
+/* One zone: what it is doing, and every command the integration can send it. */
+const HW_RUN_MINS = [5, 10, 15, 30, 60];
+const HW_SUSPEND = [[1, "1 day"], [3, "3 days"], [7, "1 week"], [30, "1 month"]];
+
+function hwZoneDom(z, s, model, h) {
+  const { now, lang, draft = {}, err = "", busy = false } = model;
+  const root = hwEl("div", "hw");
+  const back = hwEl("button", "back", "‹ Zones");
+  back.type = "button";
+  back.addEventListener("click", () => h.back());
+  root.appendChild(back);
+
+  const hero = hwEl("div", "hero");
+  hero.style.background = z.color;
+  const lab = hwEl("div", "lab");
+  lab.append(hwEl("b", "", z.name), hwEl("span", "", `Zone ${z.num}`));
+  hero.append(hwIcon("mdi:leaf"), lab);
+  root.appendChild(hero);
+
+  const rows = hwEl("div", "rows");
+  const row = (k, v) => {
+    const r = hwEl("div", "row");
+    r.append(hwEl("span", "", k), hwEl("b", "", v));
+    rows.appendChild(r);
+  };
+  row("Status", hwLine(s, now, lang));
+  if (s.running && s.remaining != null)
+    row("Remaining", `${Math.max(0, Math.round(s.remaining))} min`);
+  row("Next watering", s.suspended ? "Suspended"
+    : s.next ? hwWhen(s.next, now, lang) : "None scheduled");
+  row("Watered today", s.today ? hwDur(s.today) : "Not yet");
+  root.appendChild(rows);
+
+  const dis = busy || s.unavailable;
+  const btn = (label, cls, fn, title) => {
+    const b = hwEl("button", "b" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    if (title) b.title = title;
+    if (dis) b.disabled = true;
+    b.addEventListener("click", () => { if (!dis) fn(); });
+    return b;
+  };
+
+  root.appendChild(hwEl("div", "cap", "Water now"));
+  const run = hwEl("div", "btns");
+  if (s.running || s.pending === "start") {
+    run.appendChild(btn("Stop", "stop", () => h.act("stop")));
+  } else {
+    run.appendChild(btn("Start", "pri", () => h.act("start", 0),
+      "Run for the default time set for this zone in Hydrawise"));
+    for (const m of HW_RUN_MINS)
+      run.appendChild(btn(`${m} min`, "", () => h.act("start", m), `Run for ${m} minutes`));
+    const num = hwEl("input", "num");
+    num.type = "number"; num.min = "1"; num.max = "1440"; num.step = "1";
+    num.placeholder = "min";
+    num.value = draft.mins || "";
+    num.setAttribute("aria-label", "Minutes");
+    num.addEventListener("input", () => h.draft("mins", num.value));
+    if (dis) num.disabled = true;
+    run.append(num, btn("Run", "", () => {
+      const m = Number(num.value);
+      if (m > 0) h.act("start", m);
+    }, "Run for the minutes typed"));
+  }
+  root.appendChild(run);
+
+  root.appendChild(hwEl("div", "cap", "Automatic watering"));
+  const sus = hwEl("div", "btns");
+  if (s.suspended || s.pending === "suspend") {
+    sus.appendChild(btn("Resume", "pri", () => h.act("resume")));
+  } else {
+    for (const [d, label] of HW_SUSPEND)
+      sus.appendChild(btn(label, "", () => h.act("suspend", hwUntil(d, now)),
+        `Suspend automatic watering for ${label}`));
+    const day = hwEl("input", "date");
+    day.type = "date";
+    day.value = draft.until || "";
+    day.setAttribute("aria-label", "Suspend until");
+    day.addEventListener("input", () => h.draft("until", day.value));
+    if (dis) day.disabled = true;
+    sus.append(day, btn("Suspend until", "", () => {
+      const u = hwUntil(0, now, day.value);
+      if (u) h.act("suspend", u);
+    }, "Suspend until the start of the day picked"));
+  }
+  root.appendChild(sus);
+  if (err) root.appendChild(hwEl("div", "err", err));
+  root.appendChild(hwEl("div", "note", "Hydrawise reports back every five minutes. "
+    + "A command shows here at once and is confirmed a few seconds later."));
+  return root;
+}
+
+const HW_CSS = `
+:host{ display:block; }
+.hw-tile{ display:flex; gap:12px; align-items:center; padding:12px 14px; cursor:pointer; }
+.hw-tile:focus-visible{ outline:2px solid var(--primary-color); outline-offset:2px; }
+.ic{ flex:none; width:42px; height:42px; border-radius:50%; display:grid; place-items:center; }
+.ic ha-icon{ --mdc-icon-size:24px; }
+.ic.run{ background:rgba(33,150,243,.18); color:#42a5f5; }
+.ic.idle{ background:rgba(127,127,127,.14); color:var(--secondary-text-color); }
+.ic.off{ background:rgba(244,67,54,.16); color:#ef5350; }
+.txt{ min-width:0; flex:1; }
+.tt{ font-weight:700; font-size:15px; }
+.sub{ font-size:13px; color:var(--secondary-text-color);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.chip{ display:inline-flex; align-items:center; gap:4px; border-radius:999px;
+  padding:2px 8px; font-size:12.5px; font-weight:700; }
+.chip ha-icon{ --mdc-icon-size:15px; }
+.hw{ display:flex; flex-direction:column; gap:14px; }
+.banner{ display:flex; gap:8px; align-items:center; border-radius:12px;
+  padding:10px 12px; font-size:13.5px; }
+.banner.off{ background:rgba(244,67,54,.14); color:#ef5350; }
+.banner.rain{ background:rgba(33,150,243,.14); color:#42a5f5; }
+.sum{ display:flex; gap:12px; align-items:center; border-radius:16px; padding:12px 14px;
+  background:var(--secondary-background-color, rgba(127,127,127,.08)); }
+.big{ font-size:15px; font-weight:700; }
+.small{ font-size:13px; color:var(--secondary-text-color); }
+.h{ display:flex; align-items:baseline; justify-content:space-between; margin-top:2px; }
+.h b{ font-size:17px; }
+.h span{ font-size:13px; color:var(--secondary-text-color); }
+.grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:12px; }
+.z{ background:none; border:0; padding:0; margin:0; text-align:left; color:inherit;
+  font:inherit; cursor:pointer; min-width:0; }
+.z:focus-visible .blk{ outline:2px solid var(--primary-color); outline-offset:2px; }
+.blk{ position:relative; aspect-ratio:3 / 2; border-radius:12px; display:grid;
+  place-items:center; overflow:hidden; }
+.blk ha-icon{ --mdc-icon-size:44px; color:rgba(255,255,255,.95); }
+.n{ position:absolute; top:7px; right:7px; min-width:24px; height:24px; padding:0 6px;
+  box-sizing:border-box; border-radius:12px; background:#fff; color:#222;
+  font-size:12.5px; font-weight:700; display:grid; place-items:center; }
+.st{ position:absolute; left:7px; bottom:7px; border-radius:999px; padding:2px 8px;
+  font-size:11.5px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); }
+.st.run{ background:#1e88e5; }
+.st.sus{ background:#ef8f00; }
+.z.run .blk::after{ content:""; position:absolute; inset:0; border-radius:12px;
+  border:3px solid #1e88e5; animation:hwp 1.6s ease-in-out infinite; }
+@keyframes hwp{ 50%{ opacity:.3; } }
+@media (prefers-reduced-motion: reduce){ .z.run .blk::after{ animation:none; } }
+.z.unav .blk{ filter:grayscale(.9); opacity:.55; }
+.nm{ font-weight:700; font-size:14.5px; margin:6px 2px 0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ln{ font-size:12.5px; color:var(--secondary-text-color); margin:1px 2px 0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.back{ align-self:flex-start; background:none; border:0; padding:0; cursor:pointer;
+  color:var(--primary-color); font:inherit; font-size:14px; }
+.hero{ position:relative; min-height:128px; border-radius:16px; display:grid; place-items:center; }
+.hero ha-icon{ --mdc-icon-size:58px; color:rgba(255,255,255,.95); }
+.lab{ position:absolute; left:12px; bottom:12px; border-radius:10px; padding:6px 12px;
+  background:rgba(55,65,58,.72); color:#fff; }
+.lab b{ display:block; font-size:16px; }
+.lab span{ font-size:13px; opacity:.9; }
+.rows{ border-radius:14px; background:var(--secondary-background-color, rgba(127,127,127,.08)); }
+.row{ display:flex; justify-content:space-between; gap:12px; padding:10px 14px; font-size:14px;
+  border-top:1px solid var(--divider-color, rgba(127,127,127,.2)); }
+.row:first-child{ border-top:0; }
+.row span{ color:var(--secondary-text-color); }
+.cap{ font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--secondary-text-color); margin:2px 2px -6px; }
+.btns{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+button.b{ border-radius:999px; border:1px solid var(--divider-color, rgba(127,127,127,.35));
+  background:transparent; color:var(--primary-text-color); padding:8px 14px;
+  font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+button.b.pri{ background:var(--primary-color); border-color:var(--primary-color);
+  color:var(--text-primary-color, #fff); }
+button.b.stop{ background:#e53935; border-color:#e53935; color:#fff; }
+button.b[disabled]{ opacity:.45; cursor:default; }
+input.num, input.date{ border-radius:10px; border:1px solid var(--divider-color, rgba(127,127,127,.35));
+  background:var(--card-background-color, transparent); color:var(--primary-text-color);
+  font:inherit; font-size:14px; padding:7px 10px; }
+input.num{ width:76px; }
+.err{ color:var(--error-color, #ef5350); font-size:13px; }
+.note{ font-size:12.5px; color:var(--secondary-text-color); }
+`;
+
+/* The pop-up's body, and a card in its own right: the room pop-up frame
+ * renders it like any other card, so the irrigation pop-up gets the same
+ * frost, back button and Escape as every room for nothing. */
+class CharroIrrigationPanel extends HTMLElement {
+  setConfig(config) { this._config = config || {}; this._sig = null; this._render(); }
+  set hass(h) { this._hass = h; this._render(); }
+  getCardSize() { return 10; }
+  connectedCallback() {
+    /* "in 3 min" and "Today" drift on their own, so once a minute the
+     * signature is dropped and the next render is a real one. */
+    if (!this._tick) this._tick = setInterval(() => { this._sig = null; this._render(); }, 60000);
+  }
+  disconnectedCallback() { clearInterval(this._tick); this._tick = null; }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const { ctrl, zones } = hwPick(this._hass, this._config);
+    const sig = `${hwSig(zones, ctrl, this._hass)}|${this._zone || ""}|${this._busy ? 1 : 0}|${this._err || ""}`;
+    if (sig === this._sig) return;
+    this._sig = sig;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = HW_CSS;
+      this._box = document.createElement("div");
+      this.shadowRoot.append(style, this._box);
+    }
+    const now = new Date();
+    const lang = hwLang(this._hass);
+    const sum = hwSummary(zones, ctrl, this._hass, now);
+    this._box.innerHTML = "";
+    const open = this._zone && sum.states.find((x) => x.z.device === this._zone);
+    if (open) {
+      this._draft = this._draft || {};
+      this._box.appendChild(hwZoneDom(open.z, open.s,
+        { now, lang, draft: this._draft, err: this._err, busy: this._busy }, {
+          back: () => { this._zone = null; this._err = ""; this._render(); },
+          draft: (k, v) => { this._draft[k] = v; },
+          act: (kind, arg) => this._act(open.z, kind, arg),
+        }));
+    } else {
+      this._zone = null;
+      this._box.appendChild(hwGridDom({ sum, zones: sum.states, now, lang }, {
+        open: (z) => { this._zone = z.device; this._err = ""; this._draft = {}; this._render(); },
+      }));
+    }
+  }
+
+  async _act(z, kind, arg) {
+    this._busy = true; this._err = ""; this._render();
+    try {
+      await hwAct(this._hass, z, kind, arg);
+    } catch (err) {
+      this._err = `Hydrawise refused that: ${(err && (err.message || err.code)) || err}`;
+    }
+    this._busy = false;
+    this._sig = null;
+    this._render();
+  }
+}
+def("charro-irrigation-panel", CharroIrrigationPanel);
+
+/* The tile. Tapping it sets the pop-up's hash, the same way a room tile
+ * does, so the back button closes it and the URL can be shared. */
+class CharroIrrigationCard extends HTMLElement {
+  static getConfigElement() { return document.createElement("charro-irrigation-card-editor"); }
+  static getStubConfig() { return { type: "custom:charro-irrigation-card" }; }
+  setConfig(config) { this._config = { ...(config || {}) }; this._sig = null; this._render(); }
+  set hass(h) {
+    this._hass = h;
+    if (this._popup) this._popup.hass = h;
+    this._claim();
+    this._render();
+  }
+  getCardSize() { return 2; }
+  getGridOptions() { return { columns: 6, rows: "auto", min_columns: 3 }; }
+  connectedCallback() {
+    if (!this._tick) this._tick = setInterval(() => { this._sig = null; this._render(); }, 60000);
+    this._claim();
+  }
+  disconnectedCallback() {
+    clearInterval(this._tick); this._tick = null;
+    if (this._claimed) unclaimHash(this._claimed, this);
+    this._claimed = null;
+    this._closePopup();
+  }
+
+  _hash() {
+    let h = String(this._config.popup_hash || HW_HASH).trim() || HW_HASH;
+    if (!h.startsWith("#")) h = `#${h}`;
+    return h;
+  }
+  _claim() {
+    if (!this._hass || !this._config) return;
+    const h = this._hash();
+    if (this._claimed === h) return;
+    if (this._claimed) unclaimHash(this._claimed, this);
+    claimHash(h, this);
+    this._claimed = h;
+    wireRoomHash();
+    _syncHash();
+  }
+  async _openPopup(hash) {
+    if (!this._hass) return;
+    if (this._popup && this._popup.hash === hash) return;
+    this._closePopup();
+    const c = this._config;
+    const title = c.title || "Irrigation";
+    this._popup = new RoomPopup(hash, { room_name: title, room_icon: c.icon || HW_ICON },
+      this._hass, () => [{ ...c, type: "custom:charro-irrigation-panel" }], title);
+    await this._popup.open();
+  }
+  _closePopup(hash) {
+    if (!this._popup) return;
+    if (hash && this._popup.hash !== hash) return;
+    this._popup.close();
+    this._popup = null;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const { ctrl, zones } = hwPick(this._hass, this._config);
+    const sig = hwSig(zones, ctrl, this._hass);
+    if (sig === this._sig) return;
+    this._sig = sig;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = HW_CSS;
+      this._box = document.createElement("div");
+      this.shadowRoot.append(style, this._box);
+    }
+    const now = new Date();
+    const sum = hwSummary(zones, ctrl, this._hass, now);
+    const card = hwTileDom(sum, this._config, now, hwLang(this._hass));
+    const go = () => history.pushState(null, "", location.pathname + location.search + this._hash());
+    card.addEventListener("click", go);
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
+    });
+    this._box.innerHTML = "";
+    this._box.appendChild(card);
+  }
+}
+def("charro-irrigation-card", CharroIrrigationCard);
+
+/* The editor. Everything is found, so there is nothing to type: a title, an
+ * icon, which controller if there is more than one, and per zone whether to
+ * show it, what to call it and what colour it is. */
+class CharroIrrigationCardEditor extends HTMLElement {
+  setConfig(config) { this._config = { ...(config || {}) }; this._render(); }
+  set hass(h) { const first = !this._hass; this._hass = h; if (first) this._render(); }
+
+  _commit() {
+    const c = { ...this._config };
+    for (const k of Object.keys(c))
+      if (k !== "type" && (c[k] === "" || c[k] == null)) delete c[k];
+    if (c.zones) {
+      for (const d of Object.keys(c.zones)) {
+        const o = c.zones[d];
+        for (const k of Object.keys(o)) if (o[k] === "" || o[k] == null || o[k] === false) delete o[k];
+        if (!Object.keys(o).length) delete c.zones[d];
+      }
+      if (!Object.keys(c.zones).length) delete c.zones;
+    }
+    this._config = c;
+    fireEvent(this, "config-changed", { config: c });
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = RE_CSS + `
+        :host{ display:block; }
+        .hwz{ display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:start; }
+        .hwn{ width:26px; height:26px; border-radius:13px; display:grid; place-items:center;
+          font-size:12px; font-weight:700; color:#222; margin-top:16px; }
+      `;
+      this._box = document.createElement("div");
+      this.shadowRoot.append(style, this._box);
+    }
+    const c = this._config;
+    const f = fieldKit(this._hass, () => { this._commit(); this._render(); });
+    const set = (k) => (v) => { if (v === "" || v == null) delete c[k]; else c[k] = v; };
+    const { controllers, allZones } = hwPick(this._hass, c);
+    const box = this._box;
+    box.innerHTML = "";
+
+    box.appendChild(f.text("Title", c.title, set("title"), "Irrigation"));
+    box.appendChild(f.icon("Icon", c.icon, set("icon"), "", HW_ICON));
+    if (controllers.length > 1)
+      box.appendChild(f.sel("Controller", c.controller || controllers[0].device,
+        controllers.map((x) => [x.device, x.name]), set("controller")));
+    box.appendChild(f.text("Pop-up address", c.popup_hash, set("popup_hash"), HW_HASH));
+
+    box.appendChild(f.cap(`Zones (${allZones.length})`));
+    if (!allZones.length) {
+      const n = document.createElement("div");
+      n.className = "vnote";
+      n.textContent = "No Hydrawise zones found. Set up the Hydrawise integration "
+        + "and they appear here on their own.";
+      box.appendChild(n);
+    }
+    const found = hwDiscover(this._hass).zones;
+    /* Read from a copy, write through zset. Rendering must not create the
+     * per-zone objects it is about to display - that is what made the Chips
+     * tab open dirty before 5.85.0, and twenty-four empty objects is the
+     * same mistake at a larger scale. */
+    const zset = (dev, k, v) => {
+      c.zones = c.zones || {};
+      const o = c.zones[dev] || (c.zones[dev] = {});
+      if (v === "" || v == null || v === false) delete o[k]; else o[k] = v;
+    };
+    for (const z of allZones) {
+      const raw = found.find((x) => x.device === z.device) || z;
+      const o = (c.zones && c.zones[z.device]) || {};
+      const row = f.rowBox();
+      const g = document.createElement("div");
+      g.className = "hwz";
+      const n = document.createElement("div");
+      n.className = "hwn";
+      n.textContent = String(z.num);
+      n.style.background = o.color || hwColor(z.num);
+      const col = document.createElement("div");
+      col.append(
+        f.bool("Show on the card", !o.hide, (v) => zset(z.device, "hide", !v)),
+        f.text("Name", o.name, (v) => zset(z.device, "name", v), raw.name),
+        f.color("Colour", o.color, (v) => zset(z.device, "color", v), "", hwColor(z.num)));
+      g.append(n, col);
+      row.appendChild(g);
+      box.appendChild(row);
+    }
+  }
+}
+def("charro-irrigation-card-editor", CharroIrrigationCardEditor);
+
 
 /* ========================================================== LIGHTS CARD == */
 /*
@@ -14132,6 +14996,9 @@ window.customCards.push(
     description: "A lock, green when locked and red when not.", preview: false },
   { type: "charro-all-off-card", name: "Charro All Zones Off",
     description: "Turn every music zone off at once.", preview: false },
+  { type: "charro-irrigation-card", name: "Charro Irrigation",
+    description: "A Hydrawise controller: what is running, what is next, every zone.",
+    preview: false },
   { type: "charro-lights-card", name: "Charro Lights Card",
     description: "One room of lights — equal rows, dim by dragging the row.", preview: false },
   { type: "charro-rooms-editor", name: "Charro Rooms Editor",
