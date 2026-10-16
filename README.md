@@ -993,7 +993,9 @@ app turns up on its own.
 
 The **tile** shows what is running and how long it has left, or else the next
 scheduled run, with chips for zones running, zones suspended and today's
-watering time. It goes red when the controller drops off the cloud.
+watering time. It goes red when Home Assistant can't reach the Hydrawise cloud
+- which is what the integration's connectivity sensor reports. The controller
+itself can be watering perfectly well while it is red.
 
 Tap it for the **pop-up**: a summary, then every zone as a coloured tile with
 its number, what it is doing and when it next waters. Tap a zone for its own
@@ -1007,10 +1009,33 @@ screen:
 | **1 day - 1 month**, or a date | suspend automatic watering until then |
 | **Resume** | while it is suspended |
 
+The **Watering** tab is the week: a bar per day, the total and which seven
+days it covers, and for the day you pick each zone's minutes and the runs Home
+Assistant saw. The two are labelled differently because they are different:
+
+- **Daily totals are exact.** Each zone's "daily active watering time" is
+  Hydrawise's own record since local midnight, and the card takes each day's
+  highest value from history.
+- **Runs are approximate.** They can only come from the watering sensor,
+  which the integration checks every five minutes, so a shorter run can be
+  missing and the times are rounded to a check.
+
+With 14 days of history the week is compared with the one before. The
+recorder keeps 10 days unless told otherwise, and the tab says so rather than
+comparing against a half-purged week. Opening the tab reads two weeks of the
+daily counters (hundreds of rows); a day's runs are read only when that day
+is picked, since the watering sensors are where the bulk of the history is.
+
 The editor sets a title, an icon, which controller (only asked when there is
 more than one), the pop-up's address (`#irrigation` by default), and for each
 zone whether it shows, what it is called and what colour it is. Colours
 default to a soft set close to the app's, by zone number.
+
+If the card reads "Can't reach Hydrawise" for twenty minutes in every thirty,
+check Home Assistant's log for `API key not valid`. The integration signs in
+with a username, a password and an API key; it uses the API key only when
+its main allowance runs out, so a stale key shows up as exactly that rhythm.
+Generate a new key in the Hydrawise web app and give it to the integration.
 
 What it cannot show, because Home Assistant does not get it from Hydrawise:
 **programs** (watering days, start times, each zone's minutes) and any

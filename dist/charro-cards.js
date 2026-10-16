@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.99.0";
+const VERSION = "5.100.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5924,8 +5924,12 @@ function hwSummary(zones, ctrl, hass, now) {
     if (!next || s.next < next.at) next = { zone: z, at: s.next };
   }
   const on = ctrl && ctrl.online ? S[ctrl.online] : null;
-  /* With no connectivity sensor, "every zone unavailable" is the next best
-   * reading of a controller that has dropped off the cloud. */
+  /* The connectivity sensor is the integration's "Cloud API availability":
+   * whether Home Assistant's last poll of Hydrawise worked. It says nothing
+   * about the controller itself, which can be watering perfectly well while
+   * this is off - so the words for it are about reaching Hydrawise, never
+   * about the controller. With no such sensor, every zone unavailable is
+   * the next best reading of the same thing. */
   const online = on ? on.state === "on" : !(st.length && st.every((x) => x.s.unavailable));
   const total = ctrl && ctrl.today && S[ctrl.today] ? hwSeconds(S[ctrl.today])
               : st.reduce((n, x) => n + (x.s.today || 0), 0);
@@ -6080,7 +6084,7 @@ function hwTileDom(sum, cfg, now, lang) {
   const txt = hwEl("div", "txt");
   txt.appendChild(hwEl("div", "tt", c.title || "Irrigation"));
   let sub;
-  if (!sum.online) sub = "Controller offline";
+  if (!sum.online) sub = "Can\u2019t reach Hydrawise";
   else if (sum.running.length) {
     const r = sum.running[0];
     sub = `${r.z.name} · ${hwLine(r.s, now, lang)}`
@@ -6127,7 +6131,9 @@ function hwGridDom(model, h) {
   if (!sum.online) {
     const b = hwEl("div", "banner off");
     b.append(hwIcon("mdi:cloud-off-outline"),
-      hwEl("span", "", "The controller is offline. What you see is the last thing it reported."));
+      hwEl("span", "", "Home Assistant can\u2019t reach Hydrawise right now, so zones read "
+        + "unavailable and commands wait until it can. The controller itself carries "
+        + "on with its own schedule."));
     root.appendChild(b);
   }
   if (sum.rain) {
@@ -6269,6 +6275,9 @@ function hwZoneDom(z, s, model, h) {
   }
   root.appendChild(sus);
   if (err) root.appendChild(hwEl("div", "err", err));
+  if (s.unavailable)
+    root.appendChild(hwEl("div", "note", "Home Assistant can\u2019t reach Hydrawise for "
+      + "this zone right now, so these buttons wait until it can."));
   root.appendChild(hwEl("div", "note", "Hydrawise reports back every five minutes. "
     + "A command shows here at once and is confirmed a few seconds later."));
   return root;
@@ -6357,6 +6366,321 @@ input.num{ width:76px; }
 .note{ font-size:12.5px; color:var(--secondary-text-color); }
 `;
 
+/* ---- the watering log ---------------------------------------------------
+ *
+ * Two sources, of very different quality, and the screen says which is
+ * which. Each zone's "daily active watering time" is Hydrawise's own record
+ * of how long that zone ran since local midnight, re-read hourly: its
+ * history gives exact totals per zone per day. Individual runs can only come
+ * from the watering sensor, which the integration checks every five minutes
+ * - so a four-minute run can fall between two checks and never appear, and
+ * one that does appear has its start and end rounded to a check. */
+
+const HW_LOG_DAYS = 7;
+/* Asked for twice the window, so the week before can be compared - when the
+ * recorder still has it. It keeps ten days unless told otherwise. */
+const HW_LOG_FETCH_DAYS = 14;
+/* How old a fetched log can be before opening the tab fetches it again. */
+const HW_LOG_STALE_MS = 5 * 60000;
+
+function hwDayKey(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function hwMidnight(now, back) {
+  const d = new Date(now instanceof Date ? now.getTime() : now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (back || 0));
+  return d;
+}
+
+/* Two reads, sized very differently. The daily counters change at most
+ * hourly and only while something waters - this house's two weeks of them
+ * were 478 rows - so they are read for the whole fortnight when the tab
+ * opens. The watering sensors change on every poll that lands on a run, and
+ * on every drop off the cloud: the same fortnight was 24,186 rows, almost a
+ * megabyte, while the integration was failing two polls in three. So runs
+ * are read for the one day on screen, when it is picked. */
+function hwCountReq(zones, ctrl, now) {
+  const ids = zones.map((z) => z.today).filter(Boolean);
+  if (ctrl && ctrl.today) ids.push(ctrl.today);
+  return { type: "history/history_during_period",
+           start_time: hwMidnight(now, HW_LOG_FETCH_DAYS - 1).toISOString(),
+           end_time: new Date(now).toISOString(),
+           entity_ids: [...new Set(ids)],
+           include_start_time_state: true, significant_changes_only: false,
+           minimal_response: true, no_attributes: true };
+}
+
+function hwRunsReq(zones, dayKey, now) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey || "");
+  const start = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : hwMidnight(now, 0);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  const n = now instanceof Date ? now : new Date(now);
+  return { type: "history/history_during_period",
+           start_time: start.toISOString(),
+           end_time: (end < n ? end : n).toISOString(),
+           entity_ids: zones.map((z) => z.watering).filter(Boolean),
+           include_start_time_state: true, significant_changes_only: false,
+           minimal_response: true, no_attributes: true };
+}
+
+/* The runs one day's read holds, newest first. A run carried in from before
+ * midnight starts at midnight here - it is the part of it that was this
+ * day's. */
+function hwDayRuns(data, zones, now) {
+  const H = data || {};
+  const out = [];
+  for (const z of zones)
+    for (const r of hwRuns(H[z.watering], now)) out.push({ z, ...r });
+  return out.sort((a, b) => b.start - a.start);
+}
+
+/* The unit a duration sensor reports in, as a multiplier to seconds. Read
+ * off the live state, since a minimal history response has no attributes. */
+function hwUnitFactor(st) {
+  const u = String((st && st.attributes && st.attributes.unit_of_measurement) || "s");
+  return u === "min" ? 60 : u === "h" ? 3600 : u === "d" ? 86400 : u === "ms" ? 0.001 : 1;
+}
+
+/* Day -> seconds, from a counter that climbs through the day and falls back
+ * at midnight. The largest value a day saw is its total: the value that
+ * stands at 23:59 is the last one stamped with that day, and the fall back
+ * to nought is stamped with the next. */
+function hwDaily(series, factor, from) {
+  const out = new Map();
+  for (const row of series || []) {
+    const v = Number(row && row.s);
+    if (!isFinite(v) || row.lu == null) continue;
+    /* include_start_time_state hands back the value that stood when the
+     * window opened, stamped with the window's opening - midnight - so
+     * yesterday's total arrives dated today. Seen on this house's own
+     * counter: 360 at 12:00 AM, then the real reset to 0 at 12:40. On a
+     * day with no watering that row would have made yesterday's total
+     * today's. */
+    if (from != null && row.lu * 1000 <= from) continue;
+    const k = hwDayKey(row.lu * 1000);
+    const secs = v * (factor || 1);
+    if (!out.has(k) || secs > out.get(k)) out.set(k, secs);
+  }
+  return out;
+}
+
+/* Runs, from a watering sensor's on and off. Unavailable ends a run: a zone
+ * that dropped off the cloud mid-run is not still known to be running. */
+function hwRuns(series, now) {
+  const out = [];
+  let start = null;
+  for (const row of series || []) {
+    if (!row || row.lu == null) continue;
+    const t = row.lu * 1000;
+    if (row.s === "on") { if (start == null) start = t; }
+    else if (start != null) { out.push({ start, end: t, open: false }); start = null; }
+  }
+  const n = now instanceof Date ? now.getTime() : Number(now);
+  if (start != null) out.push({ start, end: n, open: true });
+  return out;
+}
+
+/* Everything the Watering tab draws, from one history response. */
+function hwWeek(data, zones, ctrl, hass, now) {
+  const S = (hass && hass.states) || {};
+  const H = data || {};
+  const days = [];
+  for (let i = HW_LOG_DAYS - 1; i >= 0; i--) {
+    const d = hwMidnight(now, i);
+    days.push({ key: hwDayKey(d.getTime()), date: d, total: 0, zones: [] });
+  }
+  const from = hwMidnight(now, HW_LOG_FETCH_DAYS - 1).getTime();
+  const perZone = zones.map((z) => ({ z,
+    daily: hwDaily(H[z.today], hwUnitFactor(S[z.today]), from) }));
+  for (const d of days) {
+    for (const pz of perZone) {
+      const secs = pz.daily.get(d.key) || 0;
+      if (secs > 0) d.zones.push({ z: pz.z, secs });
+    }
+    d.zones.sort((a, b) => b.secs - a.secs);
+  }
+  /* The controller's own figure when there is one - it is what the app
+   * shows - and the zones added up when there is not. */
+  const ctrlDaily = ctrl && ctrl.today && H[ctrl.today]
+    ? hwDaily(H[ctrl.today], hwUnitFactor(S[ctrl.today]), from) : null;
+  for (const d of days)
+    d.total = ctrlDaily ? (ctrlDaily.get(d.key) || 0) : d.zones.reduce((n, x) => n + x.secs, 0);
+  const week = days.reduce((n, d) => n + d.total, 0);
+
+  /* The week before, if the recorder still reaches back that far. The test
+   * is whether anything was recorded within a day of that week's start: a
+   * purged recorder has nothing that old, while a quiet one still answers
+   * with the state that stood when the window opened. */
+  const prevStart = hwMidnight(now, HW_LOG_DAYS * 2 - 1).getTime();
+  let earliest = Infinity;
+  for (const id of Object.keys(H))
+    for (const row of H[id] || []) if (row && row.lu != null) earliest = Math.min(earliest, row.lu * 1000);
+  const prevComplete = earliest <= prevStart + 86400000;
+  let prev = null;
+  if (prevComplete) {
+    prev = 0;
+    for (let i = HW_LOG_DAYS * 2 - 1; i >= HW_LOG_DAYS; i--) {
+      const k = hwDayKey(hwMidnight(now, i).getTime());
+      if (ctrlDaily) prev += ctrlDaily.get(k) || 0;
+      else for (const pz of perZone) prev += pz.daily.get(k) || 0;
+    }
+  }
+  return { days, week, prev, prevComplete };
+}
+
+/* "34% less than the week before", or nothing when there is no week before
+ * to speak of - a percentage of nought is not a comparison. */
+function hwCompare(week, prev) {
+  if (prev == null || !(prev > 0)) return "";
+  const pct = Math.round(((week - prev) / prev) * 100);
+  if (pct === 0) return "the same as the week before";
+  return `${Math.abs(pct)}% ${pct < 0 ? "less" : "more"} than the week before`;
+}
+
+function hwLogDom(wk, model, h) {
+  const { sel, lang, now, loading, err, runs = {} } = model;
+  const root = hwEl("div", "hw");
+  if (err) {
+    root.appendChild(hwEl("div", "err", `Could not read the history: ${err}`));
+  }
+  if (!wk) {
+    root.appendChild(hwEl("div", "note", loading ? "Reading the last two weeks…"
+      : "No history yet."));
+    return root;
+  }
+  const s = hwEl("div", "sum");
+  const si = hwEl("div", "ic idle");
+  si.appendChild(hwIcon("mdi:water-outline"));
+  const st = hwEl("div", "txt");
+  st.appendChild(hwEl("div", "big", `${hwDur(wk.week) || "0m"} over ${HW_LOG_DAYS} days`));
+  /* Which seven. Hydrawise's own "over 7 days" counts a window it does not
+   * say, and on this house it came out half an hour different from every
+   * window tried - so this one names its days rather than invite the
+   * comparison. */
+  const first = wk.days[0].date;
+  st.appendChild(hwEl("div", "small",
+    `${first.toLocaleDateString(lang, { weekday: "short", month: "short", day: "numeric" })} \u2013 today`));
+  const cmp = hwCompare(wk.week, wk.prev);
+  if (cmp) st.appendChild(hwEl("div", "small", cmp));
+  else if (!wk.prevComplete)
+    st.appendChild(hwEl("div", "small",
+      "Comparing with the week before needs 14 days of history; the recorder keeps 10 unless told otherwise."));
+  s.append(si, st);
+  root.appendChild(s);
+
+  const strip = hwEl("div", "days");
+  const top = Math.max(1, ...wk.days.map((d) => d.total));
+  const day = wk.days.find((d) => d.key === sel) || wk.days[wk.days.length - 1];
+  for (const d of wk.days) {
+    const b = hwEl("button", "day" + (d.key === day.key ? " on" : ""));
+    b.type = "button";
+    b.setAttribute("data-day", d.key);
+    b.setAttribute("aria-pressed", String(d.key === day.key));
+    const bar = hwEl("div", "bar");
+    const fill = hwEl("div", "fill");
+    fill.style.height = `${Math.max(d.total ? 6 : 0, Math.round((d.total / top) * 100))}%`;
+    bar.appendChild(fill);
+    b.append(hwEl("div", "dw", d.date.toLocaleDateString(lang, { weekday: "short" })),
+      bar, hwEl("div", "dm", d.total ? hwDur(d.total) : "–"));
+    b.addEventListener("click", () => h.day(d.key));
+    strip.appendChild(b);
+  }
+  root.appendChild(strip);
+
+  const title = d0 => d0.date.toLocaleDateString(lang, { weekday: "long", month: "short", day: "numeric" });
+  const hd = hwEl("div", "h");
+  hd.append(hwEl("b", "", title(day)), hwEl("span", "", day.total ? hwDur(day.total) : "No watering"));
+  root.appendChild(hd);
+
+  if (day.zones.length) {
+    const list = hwEl("div", "rows");
+    const most = day.zones[0].secs;
+    for (const { z, secs } of day.zones) {
+      const r = hwEl("div", "row zr");
+      const dot = hwEl("span", "dot");
+      dot.style.background = z.color;
+      const nm = hwEl("span", "zn", z.name);
+      const bar = hwEl("span", "zb");
+      const f = hwEl("span", "zf");
+      f.style.width = `${Math.max(4, Math.round((secs / most) * 100))}%`;
+      f.style.background = z.color;
+      bar.appendChild(f);
+      r.append(dot, nm, bar, hwEl("b", "", hwDur(secs)));
+      list.appendChild(r);
+    }
+    root.appendChild(list);
+  }
+
+  root.appendChild(hwEl("div", "cap", "Runs Home Assistant saw"));
+  if (runs.err) {
+    root.appendChild(hwEl("div", "err", `Could not read that day's runs: ${runs.err}`));
+  } else if (!runs.list) {
+    root.appendChild(hwEl("div", "note", runs.loading ? "Reading that day\u2026" : ""));
+  } else if (runs.list.length) {
+    const list = hwEl("div", "rows");
+    for (const r of runs.list) {
+      const row = hwEl("div", "row");
+      const left = hwEl("span", "");
+      left.textContent = `${new Date(r.start).toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit" })} · ${r.z.name}`;
+      const mins = Math.max(1, Math.round((r.end - r.start) / 60000));
+      row.append(left, hwEl("b", "", r.open ? "running" : `~${mins}m`));
+      list.appendChild(row);
+    }
+    root.appendChild(list);
+  } else {
+    root.appendChild(hwEl("div", "note", "None seen."));
+  }
+  root.appendChild(hwEl("div", "note", "The totals come from Hydrawise and are exact. "
+    + "The runs are what Home Assistant saw: it checks every five minutes, so a "
+    + "shorter run can be missing here and the times are rounded to a check."));
+  const again = hwEl("button", "back", "Read it again");
+  again.type = "button";
+  again.addEventListener("click", () => h.reload());
+  root.appendChild(again);
+  return root;
+}
+
+function hwTabsDom(tab, h) {
+  const seg = hwEl("div", "tabs");
+  for (const [k, label] of [["zones", "Zones"], ["log", "Watering"]]) {
+    const b = hwEl("button", "tab" + (k === tab ? " on" : ""), label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(k === tab));
+    b.addEventListener("click", () => h.tab(k));
+    seg.appendChild(b);
+  }
+  return seg;
+}
+
+const HW_LOG_CSS = `
+.tabs{ display:flex; gap:4px; padding:3px; border-radius:12px;
+  background:var(--secondary-background-color, rgba(127,127,127,.1)); }
+.tab{ flex:1; border:0; border-radius:9px; background:transparent; color:var(--secondary-text-color);
+  font:inherit; font-size:14px; font-weight:600; padding:7px 0; cursor:pointer; }
+.tab.on{ background:var(--card-background-color, #fff); color:var(--primary-text-color);
+  box-shadow:0 1px 3px rgba(0,0,0,.18); }
+.days{ display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; }
+.day{ border:1px solid transparent; border-radius:12px; background:none; color:inherit;
+  font:inherit; padding:6px 0 4px; cursor:pointer; display:flex; flex-direction:column;
+  align-items:center; gap:4px; min-width:0; }
+.day.on{ border-color:var(--primary-color); }
+.dw{ font-size:12px; color:var(--secondary-text-color); }
+.bar{ width:60%; height:64px; border-radius:6px; display:flex; align-items:flex-end;
+  background:rgba(127,127,127,.12); overflow:hidden; }
+.fill{ width:100%; background:#42a5f5; border-radius:6px 6px 0 0; }
+.dm{ font-size:11.5px; font-weight:700; white-space:nowrap; }
+.zr{ align-items:center; }
+.dot{ flex:none; width:10px; height:10px; border-radius:5px; }
+.zn{ flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  color:var(--primary-text-color) !important; }
+.zb{ flex:0 0 28%; height:6px; border-radius:3px; background:rgba(127,127,127,.15); overflow:hidden; }
+.zf{ display:block; height:100%; border-radius:3px; }
+`;
+
 /* The pop-up's body, and a card in its own right: the room pop-up frame
  * renders it like any other card, so the irrigation pop-up gets the same
  * frost, back button and Escape as every room for nothing. */
@@ -6374,20 +6698,41 @@ class CharroIrrigationPanel extends HTMLElement {
   _render() {
     if (!this._hass || !this._config) return;
     const { ctrl, zones } = hwPick(this._hass, this._config);
-    const sig = `${hwSig(zones, ctrl, this._hass)}|${this._zone || ""}|${this._busy ? 1 : 0}|${this._err || ""}`;
+    const tab = this._tab || "zones";
+    /* the log redraws only when its own data or selection moves - a zone
+     * ticking over does not change a week of history */
+    const live = tab === "log" ? "" : hwSig(zones, ctrl, this._hass);
+    const L = this._log || {};
+    const day = this._day || hwDayKey(Date.now());
+    const R = (this._runs && this._runs.get(day)) || {};
+    const sig = `${live}|${tab}|${this._zone || ""}|${this._busy ? 1 : 0}|${this._err || ""}`
+              + `|${L.at || 0}|${L.loading ? 1 : 0}|${L.err || ""}|${day}`
+              + `|${R.at || 0}|${R.loading ? 1 : 0}|${R.err || ""}`;
     if (sig === this._sig) return;
     this._sig = sig;
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       const style = document.createElement("style");
-      style.textContent = HW_CSS;
+      style.textContent = HW_CSS + HW_LOG_CSS;
       this._box = document.createElement("div");
       this.shadowRoot.append(style, this._box);
     }
     const now = new Date();
     const lang = hwLang(this._hass);
-    const sum = hwSummary(zones, ctrl, this._hass, now);
     this._box.innerHTML = "";
+    if (tab === "log" && !this._zone) {
+      this._box.appendChild(hwTabsDom(tab, { tab: (k) => this._setTab(k) }));
+      const wk = L.data ? hwWeek(L.data, zones, ctrl, this._hass, now) : null;
+      this._box.appendChild(hwLogDom(wk, { sel: day, lang, now,
+        loading: L.loading, err: L.err,
+        runs: { loading: R.loading, err: R.err,
+                list: R.data ? hwDayRuns(R.data, zones, now) : null } }, {
+          day: (k) => { this._day = k; this._render(); this._fetchRuns(k, false); },
+          reload: () => { this._fetchLog(true); this._fetchRuns(day, true); },
+        }));
+      return;
+    }
+    const sum = hwSummary(zones, ctrl, this._hass, now);
     const open = this._zone && sum.states.find((x) => x.z.device === this._zone);
     if (open) {
       this._draft = this._draft || {};
@@ -6399,10 +6744,60 @@ class CharroIrrigationPanel extends HTMLElement {
         }));
     } else {
       this._zone = null;
+      this._box.appendChild(hwTabsDom(tab, { tab: (k) => this._setTab(k) }));
       this._box.appendChild(hwGridDom({ sum, zones: sum.states, now, lang }, {
         open: (z) => { this._zone = z.device; this._err = ""; this._draft = {}; this._render(); },
       }));
     }
+  }
+
+  _setTab(k) {
+    this._tab = k;
+    this._zone = null;
+    this._render();
+    if (k === "log") {
+      this._fetchLog(false);
+      this._fetchRuns(this._day || hwDayKey(Date.now()), false);
+    }
+  }
+
+  /* One call, made when the tab is opened and not on any tick, and not
+   * again for five minutes unless asked. */
+  async _fetchLog(force) {
+    const L = this._log || (this._log = {});
+    if (L.loading) return;
+    if (!force && L.data && Date.now() - L.at < HW_LOG_STALE_MS) return;
+    const { ctrl, zones } = hwPick(this._hass, this._config);
+    L.loading = true; L.err = ""; this._render();
+    try {
+      L.data = await this._hass.callWS(hwCountReq(zones, ctrl, new Date()));
+      L.at = Date.now();
+    } catch (err) {
+      L.err = (err && (err.message || err.code)) || String(err);
+    }
+    L.loading = false;
+    this._render();
+  }
+
+  /* One day's runs, read when that day is picked. A past day cannot change,
+   * so it is read once; today is read again after five minutes. */
+  async _fetchRuns(day, force) {
+    const runs = this._runs || (this._runs = new Map());
+    const R = runs.get(day) || {};
+    if (R.loading) return;
+    const today = day === hwDayKey(Date.now());
+    if (!force && R.data && (!today || Date.now() - R.at < HW_LOG_STALE_MS)) return;
+    runs.set(day, R);
+    const { zones } = hwPick(this._hass, this._config);
+    R.loading = true; R.err = ""; this._render();
+    try {
+      R.data = await this._hass.callWS(hwRunsReq(zones, day, new Date()));
+      R.at = Date.now();
+    } catch (err) {
+      R.err = (err && (err.message || err.code)) || String(err);
+    }
+    R.loading = false;
+    this._render();
   }
 
   async _act(z, kind, arg) {

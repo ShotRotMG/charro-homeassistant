@@ -219,8 +219,10 @@ console.log("-- commands --");
   ok(tile.textContent.includes("1 running"), "with a running chip");
   ok(tile.textContent.includes("Today 1h"), "and today's total");
   tile = T.hwTileDom(T.hwSummary(zones, ctrl, fixture({ offline: true }), now), { title: "Yard" }, now, "en-US");
-  ok(tile.textContent.includes("Yard") && tile.textContent.includes("Controller offline"),
-    "an offline controller says so, under the chosen title");
+  ok(tile.textContent.includes("Yard") && tile.textContent.includes("\u2019t reach Hydrawise"),
+    "losing the cloud says so, under the chosen title");
+  ok(!tile.textContent.includes("offline"),
+    "and does not blame the controller, which the sensor knows nothing about");
 
   let opened = null;
   const grid = T.hwGridDom({ sum: s2, zones: s2.states, now, lang: "en-US" },
