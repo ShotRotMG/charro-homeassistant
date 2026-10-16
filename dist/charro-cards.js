@@ -4,7 +4,7 @@
  *   charro-room-card      a room: chip tile, its pop-up, or its full page
  *   charro-security-card  Elk zone / garage door tile, colours itself client-side
  *   charro-zone-card      RTI AD-8x single-line zone control
- *   charro-all-off-card   all zones off, both amps
+ *   charro-all-off-card   every music zone off at once
  *   charro-lights-card    one room of lights, uniform rows, inline dimming
  *   charro-rooms-editor   edit the room files from inside Home Assistant
  *   charro-unifi-panel    UniFi diagnostics, a tab of the panel below
@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.97.0";
+const VERSION = "5.98.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -573,9 +573,9 @@ function isMassPlayer(hass, id) {
 /* Remote layouts are shared: every Samsung TV is the same card with different
  * entity ids. A room names the template and fills the blanks:
  *
- *   "remotes": [{ "use": "samsung_tv", "title": "Javon TV",
- *                 "media_player": "media_player.javon_samsung_70",
- *                 "remote": "remote.javon_samsung_70" }]
+ *   "remotes": [{ "use": "samsung_tv", "title": "Bedroom TV",
+ *                 "media_player": "media_player.bedroom_tv",
+ *                 "remote": "remote.bedroom_tv" }]
  *
  * Templates live beside the rooms, in _remotes.json, and arrive with them in
  * the same websocket message - see loadRemotes up top. {{key}} inside a
@@ -861,7 +861,7 @@ function remoteCards(r, templates) {
  *
  *   "AppleTV": { "input": "AppleTV", "use": "apple_tv",
  *                "do": [ { "action": "media_player.turn_on",
- *                          "target": { "entity_id": ["media_player.vsx_lx305"] } } ] }
+ *                          "target": { "entity_id": ["media_player.receiver"] } } ] }
  *
  * This is what replaces a per-room input_select and one automation per
  * source. Anything an automation can do, a source can do - a Harmony
@@ -5692,7 +5692,11 @@ class CharroAllOffCard extends CharroBase {
       service: c.service || "script.all_zones_off",
     };
     if (c.confirm !== false) {
-      tap.confirmation = { text: c.confirm_text || "Turn **off all zones** on both amps?" };
+      /* "on both amps" was this house's two RTI amplifiers. The number of
+       * zones says the same thing in any house, and is more use anyway. */
+      const n = uniq(c.entities || []).length;
+      tap.confirmation = { text: c.confirm_text
+        || (n > 1 ? `Turn **off all ${n} zones**?` : "Turn **off all zones**?") };
     }
     return { tap_action: tap };
   }
@@ -5721,7 +5725,7 @@ makeEditor("charro-all-off-card-editor", [
 ], {
   label: "Label",
   entities: "Zone power switches to count",
-  service: "Service to call (default script.all_zones_off)",
+  service: "Script or service to call (blank = script.all_zones_off)",
   confirm: "Ask before firing",
   confirm_text: "Confirmation text",
 }, {
@@ -9507,7 +9511,7 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(sel);
 
       const set = (k) => (v) => { if (v) spec[k] = v; else delete spec[k]; };
-      row.appendChild(f.text("Title", spec.title, set("title"), "Javon TV"));
+      row.appendChild(f.text("Title", spec.title, set("title"), "Bedroom TV"));
       row.appendChild(f.ent("Media player", spec.media_player, ["media_player"],
         set("media_player")));
       row.appendChild(f.ent("Remote entity", spec.remote, ["remote"], set("remote")));
@@ -9516,7 +9520,7 @@ class CharroRoomsEditor extends HTMLElement {
         ["media_player", "switch", "remote", "binary_sensor"], set("when")));
       row.appendChild(f.ent("Waking it runs", spec.wake, ["script", "scene", "button"],
         set("wake")));
-      row.appendChild(f.text("Off tile name", spec.off_name, set("off_name"), "Javon TV"));
+      row.appendChild(f.text("Off tile name", spec.off_name, set("off_name"), "Bedroom TV"));
       row.appendChild(f.icon("Off tile icon", spec.off_icon, set("off_icon")));
       row.appendChild(f.del("Remove remote", () => {
         this._room.remotes.splice(i, 1);
@@ -10149,7 +10153,7 @@ class CharroRoomsEditor extends HTMLElement {
     const sfField = ent("Current source comes from", v.source_from,
       ["media_player", "select", "input_select"],
       (s) => { if (s) v.source_from = s; else delete v.source_from; },
-      "media_player.vsx_lx305");
+      "media_player.receiver");
     sfField.title = "The receiver \u2014 or the matrix\u2019s own select \u2014 that " +
       "actually knows which source is live. Set it and the card reads the " +
       "live source from there and draws its own buttons, so the room needs " +
@@ -10226,14 +10230,14 @@ class CharroRoomsEditor extends HTMLElement {
         (s) => { if (s) d.icon = s; else delete d.icon; }));
       const scr = ent("Screen", d.screen, ["media_player", "switch", "remote"],
         (s) => { if (s) d.screen = s; else delete d.screen; },
-        "media_player.kitchen_samsung_55_2");
+        "media_player.living_room_tv");
       scr.title = "The television itself \u2014 what the remote drives, where the " +
         "volume goes, and what the room\u2019s TV chip follows.";
       row.appendChild(scr);
       const tvf = ent("Screen power, if something else switches it", d.power,
         ["switch", "media_player", "remote"],
         (s) => { if (s) d.power = s; else delete d.power; },
-        "switch.rti_vhd_8x_video_kitchen_power");
+        "switch.living_room_tv_power");
       tvf.title = "Leave this blank when the screen turns itself on. Fill it in " +
         "when something else does \u2014 the RTI matrix switching it over " +
         "HDMI-CEC, say. Then this is what the on/off button presses and what " +
@@ -10241,7 +10245,7 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(tvf);
       const srcf = ent("Its source select", d.source, ["input_select", "select"],
         (s) => { if (s) d.source = s; else delete d.source; },
-        "select.rti_vhd_8x_video_kitchen_source");
+        "select.living_room_tv_source");
       srcf.title = "The select that says what is feeding this screen, and that " +
         "gets set when you pick a source. For the matrix that is the output\u2019s " +
         "own source select. Leave it blank in a room where one receiver " +
@@ -10626,7 +10630,7 @@ class CharroRoomsEditor extends HTMLElement {
       const rem = ent("Remote entity", harmonyEntity(spec), ["remote"], (s) => {
         if (s) spec.remote = s; else delete spec.remote;
         delete spec.hub;
-      }, "remote.charro_superbox");
+      }, "remote.living_room");
       rem.title = "What the buttons command. A Harmony hub drives everything " +
         "paired to it \u2014 pick the hub here and the device below says " +
         "which of them \u2014 and anything else, a SuperBox or an Apple TV, " +
@@ -10634,7 +10638,7 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(rem);
       row.appendChild(ent("Media player", spec.media_player, ["media_player"], (s) => {
         if (s) spec.media_player = s; else delete spec.media_player; },
-        "media_player.charro_superbox"));
+        "media_player.living_room"));
       const svol = ent("Volume goes to", spec.volume, ["media_player"], (s) => {
         if (s) spec.volume = s; else delete spec.volume; },
         "the screen\u2019s own Volume");
@@ -11702,7 +11706,7 @@ class CharroHouseEditor extends HTMLElement {
     const sample = (this._rooms || [])[0];
     eg.textContent = sample
       ? `${sample} → ${pagePath(this._cfg.page_base, sample)}`
-      : `saloon → ${pagePath(this._cfg.page_base, "saloon")}`;
+      : `living_room → ${pagePath(this._cfg.page_base, "living_room")}`;
     box.appendChild(eg);
     root.appendChild(box);
 
@@ -12232,10 +12236,10 @@ class CharroNotifyEditor extends HTMLElement {
         p.key = String(p.name).toLowerCase().replace(/[^a-z0-9_]+/g, "_")
           .replace(/^_+|_+$/g, "");
       const row = f.rowBox();
-      row.appendChild(f.text("Name", p.name, set("name"), "Javon"));
+      row.appendChild(f.text("Name", p.name, set("name"), "Alex"));
       row.appendChild(f.text("Key", p.key, (v) =>
         { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
-        "javon"));
+        "alex"));
       row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
       /* iOS and Android want different payloads for the same notification,
        * and the iOS spelling on an Android phone is not an error - it just
@@ -12340,7 +12344,7 @@ class CharroNotifyEditor extends HTMLElement {
       + "how \u201cClosed in\u201d with nothing after it reaches a phone; "
       + "{in} and {by} carry their own word and take it with them. "
       + "For a sentence rather than a label, {name} {action} {by}. reads "
-      + "\u201cWest Gate opened by Javon.\u201d, and \u201cWest Gate opened.\u201d "
+      + "\u201cWest Gate opened by Alex.\u201d, and \u201cWest Gate opened.\u201d "
       + "when nobody is known. "
       + "Replace the last one means a second event for the same thing, the "
       + "same way, takes the place of the first on the lock screen instead "
@@ -14127,7 +14131,7 @@ window.customCards.push(
   { type: "charro-lock-card", name: "Charro Lock Card",
     description: "A lock, green when locked and red when not.", preview: false },
   { type: "charro-all-off-card", name: "Charro All Zones Off",
-    description: "Turn every RTI zone off on both amps.", preview: false },
+    description: "Turn every music zone off at once.", preview: false },
   { type: "charro-lights-card", name: "Charro Lights Card",
     description: "One room of lights — equal rows, dim by dragging the row.", preview: false },
   { type: "charro-rooms-editor", name: "Charro Rooms Editor",
