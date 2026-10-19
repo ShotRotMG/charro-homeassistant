@@ -449,6 +449,23 @@ input no source claims, or isn't reporting. A receiver that is off means
 nothing is playing. Both fields are in the editor, the second as a list of the
 receiver's own inputs.
 
+**Blank fields borrow from above.** A field left empty uses what a field
+above it already says about the same device, and the editor prints what each
+blank is using ("Blank uses VSX-LX305, the Receiver above."). Set a value and
+it wins; a value set further down - a source's own volume - beats a borrowed
+one. Nothing is written to the room file.
+
+| blank field | borrows |
+| --- | --- |
+| a screen's **Screen**, in a room with one screen | the room's TV, else its projector |
+| a screen's **Volume** | the screen, if it has a volume; then the room's receiver |
+| **Read what's on from** | the room's receiver, when sources are picked through an `input_select` helper. Never for a matrix `select`, which is the truth about its own output |
+| a source's **reports it as** | the receiver input with the source's own name, if there is one |
+
+A borrowed receiver only says "nothing is playing" when it is off once a source
+has been mapped to one of its inputs on purpose, so a room whose TV plays
+through its own speakers is never blanked by a receiver it happens to have.
+
 A screen that is off shows **On** where Off would be, and nothing else; a
 screen that is on but showing no known source shows its sources and Off. A
 receiver the screens already drive - their volume, or where their source is

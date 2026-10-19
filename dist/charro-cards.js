@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.102.0";
+const VERSION = "5.103.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -909,6 +909,67 @@ function sourceSelect(v, d) {
   return (d && d.source_from) || (v && v.source_from) || (d && d.source) || "";
 }
 
+/* ---- blanks that borrow from above -------------------------------------
+ *
+ * A field left blank uses what a field above it already says about the
+ * same device, so a room is told about its receiver once rather than in
+ * four places. Two rules keep this from surprising anyone: a blank only
+ * borrows from a field above it that means the same thing, and a value set
+ * further down still wins - a source's own volume beats the screen's
+ * borrowed one. The editor prints what each blank is using, from this same
+ * function, so nothing is borrowed where you can't see it.
+ *
+ * Returns a copy; the room file is never written to by any of this. */
+function avFill(r) {
+  if (!r || !r.video || r._avFilled) return r;
+  const v = r.video;
+  const out = { ...v };
+  const why = {};
+  const ds = v.displays || [];
+  const one = ds.length === 1;
+  const rx = r.receiver_entity && String(r.receiver_entity).startsWith("media_player.")
+    ? r.receiver_entity : "";
+  out.displays = ds.map((d, i) => {
+    if (!d || typeof d !== "object") return d;
+    const n = { ...d };
+    /* One screen and the room names one TV or projector: that is the
+     * screen. With several, nothing says which is which, so nothing is
+     * guessed. */
+    if (one && !n.screen && !n.power && !n.media_player) {
+      if (r.tv_entity) { n.screen = r.tv_entity; why[`screen${i}`] = "TV"; }
+      else if (r.projector_entity) { n.screen = r.projector_entity; why[`screen${i}`] = "Projector"; }
+    }
+    /* Volume borrows the receiver only once the screen itself has nothing
+     * to give - a projector's switch has no volume, a television does - so
+     * a room whose TV plays through its own speakers is left alone. Read
+     * by volumeFor at the very end of its list. */
+    if (!n.volume && rx) n._volume_room = rx;
+    return n;
+  });
+  /* Where "what's on" is read from, for a room that picks through a helper.
+   * Only an input_select: a matrix publishes select.*, and there the select
+   * IS the truth about its own output - the receiver must not overrule it. */
+  if (!out.live_from && !out.source_from && rx) {
+    const picks = out.displays.map((d) => d && (d.source_from || d.source)).filter(Boolean);
+    if (picks.length && picks.every((p) => p.startsWith("input_select.") && p !== rx)) {
+      out.live_from = rx;
+      out._live_inherited = true;
+      why.live_from = "Receiver";
+    }
+  }
+  return { ...r, video: out, _avWhy: why, _avFilled: true };
+}
+
+/* Which input a source is on a live entity, by its own setting first and
+ * then by name - a source called "Dish" on a receiver that reports "Dish"
+ * needs no telling. */
+function liveInputFor(key, spec, list) {
+  const s = spec || {};
+  if (s.live_input) return s.live_input;
+  const names = [s.input, key, s.title].filter(Boolean).map((x) => String(x).toLowerCase());
+  return (list || []).find((o) => names.includes(String(o).toLowerCase())) || "";
+}
+
 function videoIsBasic(v) {
   if (!v) return true;
   if (v.simple) return true;
@@ -1549,7 +1610,8 @@ function displayMedia(d, spec) {
  * and failing both the screen itself, which is what a one-television room
  * has always meant by volume. */
 function volumeFor(d, spec) {
-  return (d && d.volume) || (spec && spec.volume) || displayMedia(d, spec);
+  return (d && d.volume) || (spec && spec.volume) || displayMedia(d, spec)
+      || (d && d._volume_room) || "";
 }
 
 /* Mute and step size belong to the audio zone, so they live on the screen.
@@ -4304,7 +4366,7 @@ class CharroRoomCard extends CharroBase {
     if (!m.room_icon) m.room_icon = room.room_icon || "mdi:home";
     if (!m.page_path && this._config.room)
       m.page_path = pagePath(house.page_base, this._config.room);
-    this._merged = m;
+    this._merged = avFill(m);
     return m;
   }
 
@@ -5104,12 +5166,19 @@ class CharroVideoCard extends HTMLElement {
     if (!lf) return null;
     const st = this._hass.states[lf];
     if (!st || st.state === "unavailable" || st.state === "unknown") return null;
-    if (OFFISH.includes(st.state)) return this._v.off_option || "Off";
-    const val = lf.startsWith("media_player.")
-      ? ((st.attributes || {}).source || "") : st.state;
+    const srcs = Object.entries(this._v.sources || {});
+    /* "Off" from the receiver is only believed once a source has been
+     * mapped to it on purpose. Otherwise a receiver borrowed from above,
+     * in a room whose television plays through its own speakers, would
+     * blank the source row every time the receiver was off. */
+    if (OFFISH.includes(st.state))
+      return srcs.some(([, sp]) => sp && sp.live_input) ? (this._v.off_option || "Off") : null;
+    const a = st.attributes || {};
+    const val = lf.startsWith("media_player.") ? (a.source || "") : st.state;
     if (!val) return null;
-    for (const [key, spec] of Object.entries(this._v.sources || {}))
-      if (spec && spec.live_input && spec.live_input === val) return key;
+    const list = a.source_list || a.options || [];
+    for (const [key, spec] of srcs)
+      if (spec && liveInputFor(key, spec, list.length ? list : [val]) === val) return key;
     return null;
   }
 
@@ -7612,6 +7681,9 @@ const LB_CSS = `
 .vdet[open] > summary::before{ content:"\u25BE "; }
 .vdet ha-selector{ display:block; margin:4px 0 6px; }
 .vhelp{ font-size:11px; line-height:1.35; color:var(--secondary-text-color); margin:1px 0 2px; }
+/* what a blank field is borrowing - the same size as help, in the accent, so
+ * it reads as a value in use rather than advice */
+.vborrow{ color:var(--primary-color); }
 .vfield input, .vfield select{
   padding:5px 7px; font-size:12.5px; border-radius:7px;
   border:1px solid var(--divider-color); background:var(--card-background-color);
@@ -11460,6 +11532,21 @@ class CharroRoomsEditor extends HTMLElement {
     ]) box.appendChild(help(ent(ROOM_LABELS[k], r[k], domains, set(k)), k));
   }
 
+  /* "Blank uses VSX-LX305, the Receiver above." Under any field that is
+   * blank and borrowing, so a value the card uses is never one you can't
+   * see. Put before the state line, which reports on what was typed. */
+  _borrowNote(el, id, from) {
+    if (!el || !id) return el;
+    const st = this._hass && this._hass.states[id];
+    const nm = (st && st.attributes && st.attributes.friendly_name) || id;
+    const n = document.createElement("div");
+    n.className = "vhelp vborrow";
+    n.textContent = `Blank uses ${nm}${from ? `, the ${from} above` : ""}.`;
+    const line = el.querySelector && el.querySelector(".vstate");
+    if (line && line.parentNode === el) el.insertBefore(n, line); else el.appendChild(n);
+    return el;
+  }
+
   _renderVideo() {
     const box = this._videoBox;
     if (!box) return;
@@ -11513,6 +11600,9 @@ class CharroRoomsEditor extends HTMLElement {
       ["media_player", "select", "input_select"],
       (s) => { if (s) v.live_from = s; else delete v.live_from; },
       "media_player.receiver");
+    const filled = avFill(this._room);
+    const fv = (filled && filled.video) || {};
+    if (!v.live_from && fv.live_from) this._borrowNote(lfField, fv.live_from, "Receiver");
     lfField.title = "For a room whose sources are picked through a helper and "
       + "automations. The helper only knows what was last picked through it; "
       + "name the receiver here and the card shows what it reports instead - "
@@ -11593,6 +11683,9 @@ class CharroRoomsEditor extends HTMLElement {
         "media_player.living_room_tv");
       scr.title = "The television itself \u2014 what the remote drives, where the " +
         "volume goes, and what the room\u2019s TV chip follows.";
+      const fd = ((avFill(this._room).video || {}).displays || [])[i] || {};
+      const fwhy = (avFill(this._room)._avWhy || {})[`screen${i}`];
+      if (!d.screen && fd.screen && fwhy) this._borrowNote(scr, fd.screen, fwhy);
       row.appendChild(scr);
       const tvf = ent("Screen power, if something else switches it", d.power,
         ["switch", "media_player", "remote"],
@@ -11621,7 +11714,13 @@ class CharroRoomsEditor extends HTMLElement {
         "charro.volume_step; and either half of a \u2026_volume_up / " +
         "\u2026_volume_down button pair, as the matrix publishes for CEC, " +
         "names them both. Leave it blank and they fall back to the " +
-        "source\u2019s own Volume, and failing that to the screen above.";
+        "source\u2019s own Volume, then the screen above if it has a volume, " +
+        "then the room\u2019s receiver.";
+      if (!d.volume) {
+        const fv0 = displayMedia(fd, null);
+        if (fv0) this._borrowNote(volf, fv0, "screen");
+        else if (fd._volume_room) this._borrowNote(volf, fd._volume_room, "Receiver");
+      }
       row.appendChild(volf);
       const mutef = ent("\u2026 and its mute", d.volume_mute,
         ["switch", "input_boolean"],
@@ -11984,17 +12083,20 @@ class CharroRoomsEditor extends HTMLElement {
       /* What the live entity reports while this source is on. Offered as
        * the entity's own list, for the same reason the name above is: one
        * wrong letter and the source never shows as on. */
-      if (v.live_from) {
-        const lst = this._hass.states[v.live_from];
+      const lfx = v.live_from || ((avFill(this._room).video || {}).live_from);
+      if (lfx) {
+        const lst = this._hass.states[lfx];
         const la = (lst && lst.attributes) || {};
         const opts = la.source_list || la.options || [];
+        const byName = spec.live_input ? "" : liveInputFor(key, { ...spec, live_input: "" }, opts);
         const lw = document.createElement("label");
         lw.className = "vfield";
         const lt = document.createElement("span");
-        lt.textContent = `${la.friendly_name || v.live_from} reports it as`;
+        lt.textContent = `${la.friendly_name || lfx} reports it as`;
         const ld = document.createElement("select");
         const none = document.createElement("option");
-        none.value = ""; none.textContent = "\u2014 not set \u2014";
+        none.value = "";
+        none.textContent = byName ? `\u2014 ${byName}, by its name \u2014` : "\u2014 not set \u2014";
         ld.appendChild(none);
         for (const o of opts) {
           const op = document.createElement("option");
@@ -12392,7 +12494,7 @@ class CharroRoomsEditor extends HTMLElement {
         t.textContent = this._room.room_name || "";
         hd.appendChild(t);
         box.appendChild(hd);
-        this._prev = await renderBody(roomBody(this._room, this._hass), this._hass, box);
+        this._prev = await renderBody(roomBody(avFill(this._room), this._hass), this._hass, box);
         this._prevWrap.appendChild(box);
         return;
       }
