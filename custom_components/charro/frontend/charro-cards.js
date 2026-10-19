@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.100.0";
+const VERSION = "5.101.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2046,11 +2046,20 @@ function blockCards(name, r, hass) {
    * then the loose remotes. */
   if (name === "media") {
     const screens = new Set();              // what the video half already draws
+    /* ...and what it drives without drawing: a screen's volume device, and
+     * whatever its source is read from. On the Theatre that is the
+     * receiver - its volume is the remote's volume, its input is the
+     * source row - so a plain Receiver tile under the screens was the same
+     * device a third time. The header chip still shows it while the
+     * projector is off, which is when it is news. */
+    const driven = new Set();
     if (r.video) {
       for (const d of r.video.displays || []) {
         if (screenPower(d)) screens.add(screenPower(d));
         if (screenTv(d)) screens.add(screenTv(d));
+        for (const e of [d.volume, d.source_from, d.live_from]) if (e) driven.add(e);
       }
+      for (const e of [r.video.source_from, r.video.live_from]) if (e) driven.add(e);
       if (videoIsBasic(r.video)) for (const c of videoSimpleCards(r, hass)) push(c);
       else push({ type: "custom:charro-video-card", video: r.video,
                   templates: r._remotes || {},
@@ -2063,7 +2072,7 @@ function blockCards(name, r, hass) {
     // A device a remote already watches doesn't want a plain tile too: the
     // remote pair covers both states, so the tile would only ever be a
     // duplicate of whichever half is showing.
-    const covered = new Set(screens);
+    const covered = new Set([...screens, ...driven]);
     for (const spec of r.remotes || []) {
       const w = remoteWatch(spec);
       if (w) covered.add(w);
@@ -4944,6 +4953,9 @@ const VIDEO_CSS = `
 .vchip.sel{ outline:2px solid var(--primary-color); outline-offset:1px;
   color:var(--primary-text-color); }
 .vchip.off{ margin-left:auto; color:#ef5350; border-color:rgba(244,67,54,.4); }
+.vchip.on{ color:#4CAF50; border-color:rgba(76,175,80,.55); }
+.vchip.on:hover{ background:rgba(76,175,80,.14); }
+.vchip.on.busy{ opacity:.55; }
 .vchip.off:hover{ background:rgba(244,67,54,.16); }
 .vnote{ font-size:13px; color:var(--secondary-text-color); padding:2px 2px 0; }
 /* A flex item defaults to min-width:auto, which is a refusal to shrink
@@ -5129,6 +5141,34 @@ class CharroVideoCard extends HTMLElement {
     b.addEventListener("click", () => {
       const domain = p.split(".")[0];
       this._hass.callService(domain, "toggle", {}, { entity_id: p });
+    });
+    return b;
+  }
+
+  /* On, for a screen that is off. Turns on the entity that says whether the
+   * screen is on - for the Theatre that is the projector's switch - and
+   * waits for the state to come back rather than redrawing optimistically:
+   * a projector takes a moment, and a button that flips to "on" before the
+   * lamp does is a button that lies. */
+  _onChip(d) {
+    const p = screenPower(d);
+    const b = document.createElement("button");
+    b.className = "vchip on";
+    b.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+    const sp = document.createElement("span");
+    sp.textContent = this._single() ? "On" : `Turn on ${d.name || "this screen"}`;
+    b.appendChild(sp);
+    b.title = `${d.name || "This screen"} is off \u2014 turn it on (${p})`;
+    b.addEventListener("click", () => {
+      b.disabled = true;
+      b.classList.add("busy");
+      const domain = p.split(".")[0];
+      Promise.resolve(this._hass.callService(domain, "turn_on", {}, { entity_id: p }))
+        .catch((err) => {
+          console.error("charro-video-card: on", err);
+          b.disabled = false;
+          b.classList.remove("busy");
+        });
     });
     return b;
   }
@@ -5520,12 +5560,20 @@ class CharroVideoCard extends HTMLElement {
      * the remote, below. */
     const dark = !this._isLive(d);
     if (dark && (sepPower || screenPower(d))) {
-      if (offChip && !offChip.parentNode) {
+      /* An Off button on a screen that is already off is a button for the
+       * one thing you cannot want - it was red, it said Off, and the
+       * Theatre had no other way on that anybody could see. So a dark
+       * screen gets On in the same place instead. On powers the screen and
+       * nothing else; picking what to watch is the next press, the same two
+       * presses the comment above already accepted. A room with its own
+       * power chip above has its On there already. */
+      if (!sepPower) {
         const orow = document.createElement("div");
         orow.className = "vrow";
-        orow.appendChild(offChip);
+        orow.appendChild(this._onChip(d));
         this._out.appendChild(orow);
       }
+      if (offChip && offChip.parentNode) offChip.remove();
       return;
     }
 
@@ -5596,7 +5644,13 @@ class CharroVideoCard extends HTMLElement {
     if (!src || src === off) {
       pane("power");
       const p = screenPower(d);
-      if (p && !sepPower) {
+      /* We only get here with the screen ON - dark screens returned above.
+       * The tile this used to draw was a toggle wearing a television-off
+       * icon, so on the Theatre a running projector was drawn as off and
+       * pressing it turned the projector off. With an Off chip on the row
+       * above there is nothing it adds; the sources are what to press. It
+       * stays only where it is the room's sole power control. */
+      if (p && !sepPower && !offChip) {
         /* wakeAction falls through to a plain toggle, so a screen with
          * nothing configured behaves exactly as it did. */
         const act = wakeAction(d);

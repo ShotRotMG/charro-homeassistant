@@ -102,6 +102,7 @@ class El {
   getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }
   removeAttribute(k) { delete this.attributes[k]; }
   hasAttribute(k) { return k in this.attributes; }
+  toggleAttribute(k, on) { if (on === undefined ? !this.hasAttribute(k) : on) this.attributes[k] = ""; else delete this.attributes[k]; return this.hasAttribute(k); }
   addEventListener(t, f) { (this[EV][t] = this[EV][t] || []).push(f); }
   removeEventListener(t, f) {
     const a = this[EV][t] || []; const i = a.indexOf(f);
@@ -207,5 +208,5 @@ eval(src.replace(/import\.meta\.url/g, JSON.stringify("https://x/charro-cards.js
   "\n;globalThis.__T = { roomChips, chipLook, chipCol, tileChips, roomBody, VIDEO_CSS," +
   "\n  CHIP_PAL, CHIP_SPECS, CHIP_OFF, CHIP_GROUPS, TILE_CHIPS," +
   "\n  areaBuckets, areaApply, areaChoices, entityArea, entityLabel," +
-  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine,\n  PANEL_USED, PANEL_ADD, PANEL_OPEN, PREV_MODES, lightIds,\n  fetchAll, loadAll, loadChips, invalidateRooms,\n  loadHouse, pagePath, HOUSE_PAGE_BASE,\n  heaterFeatures, heaterCard, pumpCard, waterPart,\n  LIGHT_GROUPS, RE_LIGHT_LISTS, lightCard, materializeLayout, autoBody,\n  ROOM_LISTS, ROOM_SINGLES, ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS,\n  ROOM_SECTIONS, FIELD_WHERE, sectionOrder,\n  hwKind, hwDiscover, hwPick, hwColor, hwSeconds, hwState, hwSummary, hwSig,\n  hwDur, hwWhen, hwLine, hwUntil, hwAct, hwRefreshSoon, hwTileDom, hwGridDom,\n  hwZoneDom, HW_COLORS, HW_PENDING_MS, _hwPend,\n  hwDayKey, hwMidnight, hwCountReq, hwRunsReq, hwDayRuns, hwDaily, hwRuns, hwWeek, hwCompare, hwLogDom,\n  hwTabsDom, HW_LOG_DAYS, HW_LOG_FETCH_DAYS };");
+  "\n  entityRefs, AREA_TARGETS, AREA_WORDS, fieldKit, entStateLine,\n  PANEL_USED, PANEL_ADD, PANEL_OPEN, PREV_MODES, lightIds,\n  fetchAll, loadAll, loadChips, invalidateRooms,\n  loadHouse, pagePath, HOUSE_PAGE_BASE,\n  heaterFeatures, heaterCard, pumpCard, waterPart,\n  LIGHT_GROUPS, RE_LIGHT_LISTS, lightCard, materializeLayout, autoBody,\n  ROOM_LISTS, ROOM_SINGLES, ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS,\n  ROOM_SECTIONS, FIELD_WHERE, sectionOrder,\n  hwKind, hwDiscover, hwPick, hwColor, hwSeconds, hwState, hwSummary, hwSig,\n  hwDur, hwWhen, hwLine, hwUntil, hwAct, hwRefreshSoon, hwTileDom, hwGridDom,\n  hwZoneDom, HW_COLORS, HW_PENDING_MS, _hwPend,\n  hwDayKey, hwMidnight, hwCountReq, hwRunsReq, hwDayRuns, hwDaily, hwRuns, hwWeek, hwCompare, hwLogDom,\n  hwTabsDom, HW_LOG_DAYS, HW_LOG_FETCH_DAYS,\n  blockCards, videoIsBasic, sourceSelect, screenPower, CharroVideoCard };");
 module.exports = Object.assign(globalThis.__T, { El, el });
