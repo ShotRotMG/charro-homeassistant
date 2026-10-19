@@ -88,6 +88,25 @@ async function render(room, h) {
   eq(await render(mapped, hassWith("off", "")), [],
     "and once mapped, a receiver that is off means nothing is playing");
 
+  console.log("-- the music chip --");
+  let m = T.avFill({ room: "bar", media_player: "media_player.bar_ma" });
+  eq(m.music_player, "media_player.bar_ma", "holding the chip opens the room's media player when nothing else is set");
+  eq(m._avWhy.music_player, "room\u2019s media player", "and says so");
+  m = T.avFill({ room: "bar", media_player: "media_player.bar_ma", music_player: "media_player.other" });
+  eq(m.music_player, "media_player.other", "one set on purpose is used as set");
+  m = T.avFill({ room: "bar" });
+  ok(!m.music_player, "and with neither there is nothing to open");
+  m = T.avFill({ ...theatre(), media_player: "media_player.t_ma" });
+  ok(m.music_player === "media_player.t_ma" && m.video.live_from === RX,
+    "a room with screens borrows for both at once");
+
+  const Card = customElements.get("charro-room-card");
+  const card = Object.create(Card.prototype);
+  card._config = { room: "bar" }; card._hass = { states: {} };
+  card._merged = T.avFill({ room: "bar", media_player: "media_player.bar_ma" });
+  eq(card.variables().music_player, "media_player.bar_ma",
+    "and the tile's hold action gets it - the template reads variables.music_player");
+
   console.log("-- it only ever reads --");
   const r0 = theatre({}, { volume: undefined });
   const before = JSON.stringify(r0);

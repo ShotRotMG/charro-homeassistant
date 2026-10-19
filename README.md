@@ -461,6 +461,7 @@ one. Nothing is written to the room file.
 | a screen's **Volume** | the screen, if it has a volume; then the room's receiver |
 | **Read what's on from** | the room's receiver, when sources are picked through an `input_select` helper. Never for a matrix `select`, which is the truth about its own output |
 | a source's **reports it as** | the receiver input with the source's own name, if there is one |
+| **Media player (hold the chip)**, under Music | the room's media player, set just above it |
 
 A borrowed receiver only says "nothing is playing" when it is off once a source
 has been mapped to one of its inputs on purpose, so a room whose TV plays
@@ -957,7 +958,7 @@ alert_sensors: [sensor.elkm1_master_bedroom]
 | `fountain_entity` | Fountain chip, taps to toggle |
 | `climate_entity` | Always shown — grey off, red heat, blue cool, purple heat/cool |
 | `music_powers` | Music chip showing how many zones are on. Hidden when all off |
-| `music_player` | Opened by holding the music chip |
+| `music_player` | Opened by holding the music chip. Blank uses `media_player` |
 | `alert_sensors` | Sensors/covers that light the red indicator |
 | `confirm_sensor` | Only alert when this is also open |
 

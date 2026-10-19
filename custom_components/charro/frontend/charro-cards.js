@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.103.0";
+const VERSION = "5.104.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -921,7 +921,17 @@ function sourceSelect(v, d) {
  *
  * Returns a copy; the room file is never written to by any of this. */
 function avFill(r) {
-  if (!r || !r.video || r._avFilled) return r;
+  if (!r || r._avFilled) return r;
+  const top = {};
+  const topWhy = {};
+  /* Holding the music chip opens music_player. Blank, it opened nothing at
+   * all, while the room's own media player - the one the Now playing chip
+   * and the player card already follow - was right there. */
+  if (!r.music_player && r.media_player) {
+    top.music_player = r.media_player;
+    topWhy.music_player = "room\u2019s media player";
+  }
+  if (!r.video) return { ...r, ...top, _avWhy: topWhy, _avFilled: true };
   const v = r.video;
   const out = { ...v };
   const why = {};
@@ -957,7 +967,7 @@ function avFill(r) {
       why.live_from = "Receiver";
     }
   }
-  return { ...r, video: out, _avWhy: why, _avFilled: true };
+  return { ...r, ...top, video: out, _avWhy: { ...topWhy, ...why }, _avFilled: true };
 }
 
 /* Which input a source is on a live entity, by its own setting first and
@@ -9031,8 +9041,11 @@ const PREV_MODES = [
  * is usually four of them. */
 const PANEL_USED = {
   video: (r) => !!(r.video || (r.remotes || []).length || r.tv_entity
-                || r.projector_entity || r.receiver_entity || r.media_player),
-  music: (r) => !!(r.music_player || (r.music_powers || []).length
+                || r.projector_entity || r.receiver_entity),
+  /* the room's media player is edited in Music, so it is what makes Music
+   * worth showing - it used to count for Media & remotes, a panel with no
+   * field for it */
+  music: (r) => !!(r.music_player || r.media_player || (r.music_powers || []).length
                 || r.music_sources || r.zone_players),
   water: (r) => !!(lightIds(r.fountain_entities).length
                 || (r.water_actions || []).length || r.pool_switch
@@ -10980,8 +10993,22 @@ class CharroRoomsEditor extends HTMLElement {
       "input joins the list on top of this, only while it is on.";
     box.appendChild(srcs);
 
-    box.appendChild(f.ent("Media player (hold the chip)", r.music_player,
-      ["media_player"], (v) => { if (v) r.music_player = v; else delete r.music_player; }));
+    /* The room's own player: the Now playing chip lights while it plays and
+     * the player card follows it. It had no field anywhere in this editor -
+     * only the raw JSON could set it - which is how the hold-chip field
+     * below came to have nothing above it to fall back on. */
+    const mp = f.ent("Room\u2019s media player", r.media_player, ["media_player"],
+      (v) => { if (v) r.media_player = v; else delete r.media_player; });
+    mp.title = "What plays in this room. The Now playing chip lights while it "
+      + "plays, and the player card follows it.";
+    box.appendChild(mp);
+    const hold = f.ent("Media player (hold the chip)", r.music_player,
+      ["media_player"], (v) => { if (v) r.music_player = v; else delete r.music_player; });
+    hold.title = "What holding the music chip opens. Blank uses the room\u2019s "
+      + "media player above.";
+    if (!r.music_player && r.media_player)
+      this._borrowNote(hold, r.media_player, "room\u2019s media player");
+    box.appendChild(hold);
 
     box.appendChild(f.cap("What each amplifier input is carrying"));
     const map = r.zone_players || {};
