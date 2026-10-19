@@ -71,6 +71,65 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
   c = await render(h);
   ok(named(c, "Dish").className.includes("sel"), "Dish is shown as on now");
 
+  console.log("-- reading what's on from the receiver --");
+  const LIVE = { ...VIDEO, live_from: "media_player.vsx_lx305", sources: {
+    Dish: { input: "Dish", title: "Dish", live_input: "SAT" },
+    AppleTV: { title: "Theatre AppleTV", live_input: "DVD" },
+    SuperBox: { title: "Theatre SuperBox", live_input: "STRM" },
+    XBOX: { title: "Xbox", live_input: "GAME" } } };
+  async function renderLive(h) {
+    built.length = 0;
+    const c = Object.create(T.CharroVideoCard.prototype);
+    c._config = { video: LIVE }; c._v = LIVE; c._templates = {}; c._zones = []; c._tabs = false;
+    c._wrap = T.el("div"); c._hass = h;
+    await c._render();
+    return c;
+  }
+  const selOf = (c) => chips(c).filter((b) => b.className.includes("sel")).map((b) => b.textContent.trim());
+
+  h = hassWith("on", "Off");                               // receiver on SAT
+  c = await renderLive(h);
+  eq(selOf(c), ["Dish"], "the helper says Off, the receiver says SAT: Dish shows as on");
+
+  h = hassWith("on", "Dish");
+  h.states["media_player.vsx_lx305"].attributes.source = "DVD";
+  c = await renderLive(h);
+  eq(selOf(c), ["Theatre AppleTV"], "an input changed by remote is followed, whatever the helper remembers");
+
+  h = hassWith("on", "Dish");
+  h.states["media_player.vsx_lx305"].attributes.source = "TV";
+  c = await renderLive(h);
+  eq(selOf(c), ["Dish"], "an input no source claims hands the question back to the helper");
+
+  h = hassWith("on", "Dish", "unavailable");
+  c = await renderLive(h);
+  eq(selOf(c), ["Dish"], "so does a receiver that isn't reporting");
+
+  h = hassWith("on", "Dish", "off");
+  c = await renderLive(h);
+  eq(selOf(c), [], "a receiver that is off means nothing is playing");
+  ok(!!c._wrap.querySelector(".vchip.off"), "while the projector, still on, keeps its Off");
+
+  h = hassWith("on", "Off");
+  c = await renderLive(h);
+  named(c, "Xbox").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls[0], ["input_select", "select_option", { option: "XBOX" },
+    { entity_id: "input_select.theater_media_select" }],
+    "picking still goes through the helper, so the automations still do the work");
+  ok(!h.calls.some((x) => x[0] === "media_player" && x[1] === "select_source"),
+    "and the card does not reach past them to the receiver");
+
+  h = hassWith("on", "Off");
+  c = await render(h);
+  eq(selOf(c), [], "a room without live_from behaves exactly as before");
+
+  const lc = Object.create(T.CharroVideoCard.prototype);
+  lc._v = LIVE; lc._hass = hassWith("on", "Off");
+  const s1 = lc._sig();
+  lc._hass.states["media_player.vsx_lx305"].attributes.source = "GAME";
+  ok(lc._sig() !== s1, "the card redraws when the receiver changes input");
+
   console.log("-- the media block --");
   const room = { room: "theatre", projector_entity: "switch.theatre_projector",
     receiver_entity: "media_player.vsx_lx305", video: VIDEO };

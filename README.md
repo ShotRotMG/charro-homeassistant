@@ -427,6 +427,33 @@ With `source_from` set the card draws its own source buttons in place of the
 dropdown, highlighting whichever one the receiver says is live. Nothing is
 stored anywhere for it to drift out of step with.
 
+**A room that picks through a helper** - an `input_select` with an automation
+per option, which is how the Theatre turns on the projector, the receiver and
+the right box - keeps doing that, and can still show what is really on. The
+helper only knows what was last picked through it, so the evening the gear is
+turned on by a remote it says Off while the receiver reports SAT. Name the
+receiver as **Read what's on from** and say, on each source, what the receiver
+reports for it:
+
+```json
+"live_from": "media_player.vsx_lx305",
+"sources": {
+  "Dish":    { "live_input": "SAT" },
+  "AppleTV": { "live_input": "DVD" }
+}
+```
+
+Picking still writes to the helper, so the automations still run. Reading asks
+the receiver first and falls back to the helper when the receiver is on an
+input no source claims, or isn't reporting. A receiver that is off means
+nothing is playing. Both fields are in the editor, the second as a list of the
+receiver's own inputs.
+
+A screen that is off shows **On** where Off would be, and nothing else; a
+screen that is on but showing no known source shows its sources and Off. A
+receiver the screens already drive - their volume, or where their source is
+read from - doesn't get a plain tile of its own as well.
+
 All of it is editable in the rooms editor under **Media & remotes**: screens
 and sources are lists of objects, which `ha-form` has no good shape for, so
 they get their own rows — add, fill in, remove. The remote template is a

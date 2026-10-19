@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.101.0";
+const VERSION = "5.102.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5016,8 +5016,8 @@ class CharroVideoCard extends HTMLElement {
     const h = this._hass;
     if (!h || !h.states) return "";
     const v = this._v;
-    const ids = uniq([v.focus, v.source_from].concat(
-      (v.displays || []).flatMap((d) => [sourceSelect(v, d), screenPower(d)])));
+    const ids = uniq([v.focus, v.source_from, v.live_from].concat(
+      (v.displays || []).flatMap((d) => [sourceSelect(v, d), screenPower(d), d.live_from])));
     // the receiver's input lives in an attribute, so the state alone would
     // miss a source change entirely
     return ids.map((e) => {
@@ -5085,6 +5085,34 @@ class CharroVideoCard extends HTMLElement {
       : st.state;
   }
 
+  /* Where "what is really on" is read from, when it is not where sources are
+   * picked. The Theatre picks through input_select.theater_media_select,
+   * and an automation per option does the work - which is right, and stays.
+   * But the helper only knows what was last picked through it: the evening
+   * the projector and receiver were turned on another way, it said Off for
+   * hours while the receiver reported SAT the whole time. live_from names
+   * the thing that knows; live_input on each source says what it reports
+   * while that source is on. */
+  _liveFrom(d) { return (d && d.live_from) || this._v.live_from || ""; }
+
+  /* What live_from says is on, as a source key - or null when it has nothing
+   * useful to say: not set, not reporting, or on an input no source claims.
+   * Null hands the question back to the select, so a half-configured room
+   * behaves exactly as it did. */
+  _reported(d) {
+    const lf = this._liveFrom(d);
+    if (!lf) return null;
+    const st = this._hass.states[lf];
+    if (!st || st.state === "unavailable" || st.state === "unknown") return null;
+    if (OFFISH.includes(st.state)) return this._v.off_option || "Off";
+    const val = lf.startsWith("media_player.")
+      ? ((st.attributes || {}).source || "") : st.state;
+    if (!val) return null;
+    for (const [key, spec] of Object.entries(this._v.sources || {}))
+      if (spec && spec.live_input && spec.live_input === val) return key;
+    return null;
+  }
+
   /* A view-only source - the television's own apps, say - isn't something
    * the matrix can report, because the matrix is still routed somewhere
    * whatever the TV is actually showing. So picking one sets a view
@@ -5095,16 +5123,20 @@ class CharroVideoCard extends HTMLElement {
    * switch and the override gives way. */
   _sourceOf(d) {
     const cur = this._liveInput(d);
+    const told = this._reported(d);
     if (cur !== null) {
       const ov = this._view;
       if (ov) {
         if (ov.base === cur) return ov.key;
         this._view = null;            // the matrix moved; it wins
       }
+      // the thing that knows beats the thing that remembers
+      if (told !== null) return told;
       for (const [key, spec] of Object.entries(this._v.sources || {}))
         if (((spec && spec.input) || key) === cur) return key;
       return cur;             // on an input no source in the room names
     }
+    if (told !== null) return told;
     if (!d || !d.source) return "";
     const st = this._hass.states[d.source];
     return st ? st.state : "";
@@ -11473,6 +11505,21 @@ class CharroRoomsEditor extends HTMLElement {
       "no input_select helper and no automation per source.";
     box.appendChild(sfField);
 
+    /* Only for a room that picks through a helper. Set "Current source
+     * comes from" instead and the receiver is read AND set, which is the
+     * simpler room; this is for the one whose automations must keep
+     * running when a source is picked. */
+    const lfField = ent("Read what\u2019s on from (optional)", v.live_from,
+      ["media_player", "select", "input_select"],
+      (s) => { if (s) v.live_from = s; else delete v.live_from; },
+      "media_player.receiver");
+    lfField.title = "For a room whose sources are picked through a helper and "
+      + "automations. The helper only knows what was last picked through it; "
+      + "name the receiver here and the card shows what it reports instead - "
+      + "even when the gear was turned on by a remote. Then say, on each "
+      + "source below, which of its inputs that source is.";
+    box.appendChild(lfField);
+
     /* Somewhere to park the whole switcher without throwing it away: a room
      * whose other sources aren't wired up yet wants a TV button and a
      * remote, not a source picker with one option. */
@@ -11933,6 +11980,44 @@ class CharroRoomsEditor extends HTMLElement {
       });
       sel.append(st, dd);
       row.appendChild(sel);
+
+      /* What the live entity reports while this source is on. Offered as
+       * the entity's own list, for the same reason the name above is: one
+       * wrong letter and the source never shows as on. */
+      if (v.live_from) {
+        const lst = this._hass.states[v.live_from];
+        const la = (lst && lst.attributes) || {};
+        const opts = la.source_list || la.options || [];
+        const lw = document.createElement("label");
+        lw.className = "vfield";
+        const lt = document.createElement("span");
+        lt.textContent = `${la.friendly_name || v.live_from} reports it as`;
+        const ld = document.createElement("select");
+        const none = document.createElement("option");
+        none.value = ""; none.textContent = "\u2014 not set \u2014";
+        ld.appendChild(none);
+        for (const o of opts) {
+          const op = document.createElement("option");
+          op.value = o; op.textContent = o;
+          ld.appendChild(op);
+        }
+        if (spec.live_input && !opts.includes(spec.live_input)) {
+          const op = document.createElement("option");
+          op.value = spec.live_input;
+          op.textContent = `${spec.live_input} (not offered right now)`;
+          ld.appendChild(op);
+        }
+        ld.value = spec.live_input || "";
+        lw.title = "The input the receiver says it is on while this source is "
+          + "playing. Two sources on the same input can't be told apart; the "
+          + "first one wins.";
+        ld.addEventListener("change", () => {
+          if (ld.value) spec.live_input = ld.value; else delete spec.live_input;
+          changed();
+        });
+        lw.append(lt, ld);
+        row.appendChild(lw);
+      }
 
       row.appendChild(field("Title", spec.title, (s) => {
         if (s) spec.title = s; else delete spec.title; }, key));
