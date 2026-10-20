@@ -51,7 +51,7 @@ HOUSE_FILE = "_house.json"
 # substituted for {room} if the path names it somewhere other than the end:
 # "/lovelace/room-{room}" works as well as "/d-charro".
 HOUSE_PAGE_BASE = "/d-charro"
-HOUSE_DEFAULTS = {"page_base": HOUSE_PAGE_BASE}
+HOUSE_DEFAULTS = {"page_base": HOUSE_PAGE_BASE, "tooltips": True, "tooltip_delay": 400}
 
 # iOS has no notification channels, so the urgency is decided here and
 # carried in push.interruption-level. These are the five settings a cell in

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.104.0";
+const VERSION = "5.105.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -104,6 +104,7 @@ class CharroBase extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    tipBoot(hass);
     if (this._card) this._card.hass = hass;
     else this._build();
   }
@@ -145,6 +146,8 @@ class CharroBase extends HTMLElement {
       /* Shallow, not a deep clone: only top-level keys are touched below, and
        * button-card copies the config it is handed. Deep-cloning the room
        * template once per tile was ~54 KB of structured clone per card. */
+      // kept so a hover tip can read what each chip's tap and hold do
+      this._tpl = tpl;
       const cfg = { ...tpl };
       cfg.type = "custom:button-card";
       cfg.variables = { ...(tpl.variables || {}), ...this.variables() };
@@ -3564,6 +3567,450 @@ function ensurePopupCss(root) {
   root.appendChild(s);
 }
 
+/* ========================================================= HOVER TIPS === */
+/*
+ * A tooltip on everything in a room - the tile, its chips, the pop-up and
+ * what is inside it - saying the thing the card has no room to: whose
+ * state it is, since when, what a tap and a hold will do, and where a
+ * value was borrowed from.
+ *
+ * Mouse only. A phone has no hover, and press-and-hold is already the
+ * chip's hold action, so touch is left exactly as it was.
+ *
+ * Cost: one capturing listener on the document, installed once for the
+ * whole page. A pointerover walks the event path (a few dozen elements)
+ * and does nothing else. The words are built only once the pointer has
+ * rested for the delay, from the state Home Assistant has already sent -
+ * no subscriptions, no history reads. While a tip is showing it rereads
+ * itself once a second, so "changed 2 min ago" and a light that went off
+ * under the pointer stay true; with no tip there is no timer at all.
+ *
+ * Off in Charro Config → Settings puts every native title back as it was.
+ */
+const TIP_DELAY = 400;
+/* Where tips apply: inside these, and inside a room pop-up. The config
+ * panel's editors keep their own plain titles. */
+const TIP_SCOPE = new Set(["charro-room-card", "charro-video-card",
+  "charro-lights-card", "charro-irrigation-card", "charro-irrigation-panel",
+  "charro-zone-card", "charro-zone-source", "charro-security-card",
+  "charro-lock-card", "charro-all-off-card"]);
+
+/* The Settings tab's choices. Blank is the built-in. */
+const TIP_DELAYS = [["", "Normal (0.4 s)"], ["150", "Quick (0.15 s)"],
+  ["800", "Slow (0.8 s)"], ["1500", "Very slow (1.5 s)"]];
+
+function tipSettings(house) {
+  const h = house || {};
+  const n = Number(h.tooltip_delay);
+  return { on: h.tooltips !== false,
+           delay: isFinite(n) && h.tooltip_delay !== "" && h.tooltip_delay != null
+             ? Math.max(0, Math.min(3000, Math.round(n))) : TIP_DELAY };
+}
+
+const _isTpl = (v) => typeof v === "string" && v.includes("[[[");
+const _plainStr = (v) => (typeof v === "string" && v && !_isTpl(v) ? v : "");
+
+function tipAgo(iso, now) {
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return "";
+  const s = Math.max(0, ((now instanceof Date ? now.getTime() : Date.now()) - t) / 1000);
+  if (s < 45) return "just now";
+  if (s < 90) return "1 min ago";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 36 * 3600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+/* One entity, one line: the id, its state as entStateLine reads it, and
+ * how long it has been that way. */
+function tipEntLine(hass, id, now) {
+  const st = ((hass && hass.states) || {})[id];
+  if (!st) return { t: `${id} — not in Home Assistant`, c: "warn" };
+  const bits = entStateBits(st, id);
+  const ago = tipAgo(st.last_changed, now);
+  if (ago) bits.push(`changed ${ago}`);
+  const bad = st.state === "unavailable" || st.state === "unknown";
+  return { t: bits.join(" · "), c: bad ? "warn" : "ent" };
+}
+
+const _svcWords = (svc) => String(svc).split(".").pop().replace(/_/g, " ");
+
+/* What an action config will do, in words. Anything still a [[[ template ]]]
+ * is described by its kind, not guessed at. */
+function tipAction(act, st) {
+  if (!act || typeof act !== "object") return "";
+  switch (act.action) {
+    case "toggle":
+      return st ? `turn it ${OFFISH.includes(st.state) ? "on" : "off"}` : "turn it on or off";
+    case "more-info": return "details";
+    case "navigate": {
+      const p = _plainStr(act.navigation_path);
+      if (!p) return "open";
+      return p.startsWith("#") ? "open the pop-up" : `open ${p}`;
+    }
+    case "call-service":
+    case "perform-action": {
+      const svc = _plainStr(act.perform_action || act.service);
+      if (!svc) return "run an action";
+      const tgt = (act.target && act.target.entity_id)
+        || (act.service_data && act.service_data.entity_id)
+        || (act.data && act.data.entity_id);
+      const words = _svcWords(svc);
+      if (Array.isArray(tgt) && tgt.length > 1) return `${words} · ${tgt.length} entities`;
+      const one = _plainStr(Array.isArray(tgt) ? tgt[0] : tgt);
+      return one ? `${words} · ${one}` : words;
+    }
+    case "url": return "open a link";
+    case "assist": return "talk to Assist";
+    default: return "";
+  }
+}
+
+function _actLine(tap, hold, dbl) {
+  const out = [];
+  if (tap) out.push(`Tap: ${tap}`);
+  if (hold) out.push(`Hold: ${hold}`);
+  if (dbl) out.push(`Double-tap: ${dbl}`);
+  return out.length ? { t: out.join(" · "), c: "act" } : null;
+}
+
+/* A sentence that ends "Tap to turn them off." is two facts; the tip puts
+ * the second on the action line with everything else a tap does. */
+function _splitTap(title) {
+  const s = String(title || "");
+  const m = /\s*Tap to (.+?)\.?\s*$/.exec(s);
+  return m ? { head: s.slice(0, m.index).trim(), tap: m[1] } : { head: s, tap: "" };
+}
+
+/* Any Lovelace card or row whose config names an entity or an action - a
+ * tile, a remote button, a mushroom chip. */
+function tipCfg(cfg, el, hass, now) {
+  if (!cfg || typeof cfg !== "object") return null;
+  const id = _plainStr(cfg.entity);
+  const st = id && hass && hass.states ? hass.states[id] : null;
+  const local = String((el && el.localName) || "");
+  /* a tile with no tap_action opens more-info; a button-card with none toggles */
+  const tapCfg = cfg.tap_action
+    || (local === "hui-tile-card" || /-row$/.test(local) ? { action: "more-info" } : null);
+  const tap = tipAction(tapCfg, st);
+  const hold = tipAction(cfg.hold_action, st);
+  const dbl = tipAction(cfg.double_tap_action, st);
+  const name = _plainStr(cfg.name)
+    || (st && st.attributes && st.attributes.friendly_name)
+    || (el && el.getAttribute && el.getAttribute("aria-label")) || "";
+  if (!id && !tap && !hold && !dbl) return null;
+  const lines = [];
+  if (name) lines.push({ t: name, c: "head" });
+  if (id) lines.push(tipEntLine(hass, id, now));
+  const a = _actLine(tap, hold, dbl);
+  if (a) lines.push(a);
+  return lines.length ? lines : null;
+}
+
+/* The tile's chips are button-cards inside a button-card, and their state
+ * sentence is the one roomChips() writes for the pop-up header - which
+ * test-chip-agree already holds equal to what the tile draws. The tap and
+ * hold come from the template itself, so a chip that changes what it does
+ * changes what it says. */
+function _tplChip(tpl, field) {
+  try {
+    if (field === "lock") return tpl.custom_fields.lock.card;
+    return tpl.custom_fields.chips.card.custom_fields[field].card;
+  } catch (err) { return null; }
+}
+
+function tipTileChip(field, r, hass, tpl, now) {
+  if (!r || !hass || !hass.states) return null;
+  if (field === "alert") {
+    const open = (r.alert_sensors || []).filter((e) => {
+      const id = typeof e === "string" ? e : (e && e.entity);
+      const st = id && hass.states[id];
+      return st && OPENISH.includes(String(st.state).toLowerCase());
+    });
+    if (!open.length) return null;
+    const names = open.map((e) => ({ name: typeof e === "object" && e.label
+      ? e.label : entLabel(typeof e === "string" ? e : e.entity, hass) }));
+    const lines = [{ t: `${listNames(names)} open.`, c: "head" }];
+    if (open.length === 1)
+      lines.push(tipEntLine(hass, typeof open[0] === "string" ? open[0] : open[0].entity, now));
+    lines.push({ t: "Tap: open the pop-up", c: "act" });
+    return lines;
+  }
+  const key = field === "lock" ? "locks" : TILE_CHIPS[field];
+  if (!key) return null;
+  const chip = roomChips(r, hass).find((c) => c.key === key);
+  const spec = CHIP_SPECS[key] || {};
+  const { head, tap: said } = _splitTap(chip ? chip.title : `${spec.label || field} — off`);
+  const card = _tplChip(tpl, field) || {};
+  const t = chip && chip.tap;
+  const id = t && (t.entity || ((t.entities || []).length === 1 ? t.entities[0] : ""));
+  const st = id ? hass.states[id] : null;
+  let tap = said;
+  if (!tap) {
+    tap = tipAction(card.tap_action, st);
+    /* the chip's own action is a template; roomChips knows what it does */
+    if ((!tap || tap === "run an action" || tap === "open") && t)
+      tap = t.kind === "more-info" ? "details"
+          : t.kind === "toggle" ? tipAction({ action: "toggle" }, st)
+          : t.kind === "on" ? "turn them on" : t.kind === "off" ? "turn them off" : tap;
+    if (tap === "open") tap = "open its pop-up";
+  }
+  const lines = [{ t: head, c: "head" }];
+  if (id) lines.push(tipEntLine(hass, id, now));
+  /* a borrowed music player says so, the way the editor does */
+  if (key === "music" && r._avWhy && r._avWhy.music_player && r.music_player)
+    lines.push({ t: `Hold opens ${r.music_player} — borrowed from the ${r._avWhy.music_player}`, c: "why" });
+  const a = _actLine(tap, tipAction(card.hold_action, st), tipAction(card.double_tap_action, st));
+  if (a) lines.push(a);
+  return lines;
+}
+
+function tipRoom(r) {
+  if (!r) return null;
+  const lines = [{ t: r.room_name || r.room || "Room", c: "head" }];
+  lines.push({ t: "Tap: open the pop-up", c: "act" });
+  return lines;
+}
+
+/* An element's own words: data-tip, else the title it was given. Extra
+ * lines come from data attributes the cards set where they know more -
+ * data-tip-ent (comma list), data-tip-do, data-tip-why, data-tip-busy. */
+function tipPlain(el, hass, now) {
+  const ds = (el && el.dataset) || {};
+  const text = ds.tip || (el.getAttribute && el.getAttribute("title")) || "";
+  const ents = String(ds.tipEnt || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!text && !ents.length) return null;
+  const lines = [];
+  const parts = String(text).split("\n").filter((s) => s.trim());
+  let tap = "";
+  if (parts.length) {
+    const sp = _splitTap(parts[0]);
+    tap = sp.tap;
+    lines.push({ t: sp.head || parts[0], c: "head" });
+    for (const p of parts.slice(1)) lines.push({ t: p, c: "" });
+  }
+  if (ds.tipBusy) lines.push({ t: ds.tipBusy, c: "warn" });
+  for (const id of ents.slice(0, 3)) lines.push(tipEntLine(hass, id, now));
+  if (ents.length > 3) lines.push({ t: `+${ents.length - 3} more`, c: "ent" });
+  if (ds.tipWhy) lines.push({ t: ds.tipWhy, c: "why" });
+  const doing = ds.tipDo || (tap ? `Tap: ${tap}` : "");
+  if (doing) lines.push({ t: doing, c: "act" });
+  return lines;
+}
+
+/* The room tile in the path, when there is one: its card, and the
+ * button-card it drew, so a chip can be told from the tile around it. */
+function _tipTile(path) {
+  for (const n of path) {
+    if (n && n.localName === "charro-room-card" && n._card && path.includes(n._card))
+      return { card: n, tile: n._card, room: n._merged || n._config, tpl: n._tpl };
+  }
+  return null;
+}
+
+function _hostOf(n) {
+  try {
+    const r = n.getRootNode && n.getRootNode();
+    return (r && r.host) || null;
+  } catch (err) { return null; }
+}
+
+const _CFG_TAGS = /^(hui-|button-card$|mushroom-)/;
+
+/* What kind of thing this element is to a tip, without working out the
+ * words - this runs on every pointerover, so it must stay cheap. */
+function tipKind(n, ctx) {
+  if (!n || n.nodeType !== 1) return "";
+  if (ctx.tile) {
+    const id = n.id;
+    if (id && (TILE_CHIPS[id] || id === "alert" || id === "lock")) return "chip";
+    if ((id === "name" || id === "icon") && _hostOf(n) === ctx.tile.tile) return "room";
+  }
+  const ds = n.dataset || {};
+  if (ds.tip || ds.tipEnt || (n.getAttribute && n.getAttribute("title"))) return "plain";
+  const c = n._config;
+  if (!ctx.tile && c && typeof c === "object" && _CFG_TAGS.test(String(n.localName || ""))
+      && (c.entity || c.tap_action || c.hold_action || n.localName === "hui-tile-card"))
+    return "cfg";
+  return "";
+}
+
+/* The innermost element worth a tip, inside a room and nowhere else. */
+function tipAnchor(path) {
+  let scope = -1;
+  for (let i = 0; i < path.length; i++) {
+    const n = path[i];
+    if (!n || n.nodeType !== 1) continue;
+    if (TIP_SCOPE.has(n.localName)
+        || (n.classList && n.classList.contains("charro-pop"))) { scope = i; break; }
+  }
+  if (scope < 0) return null;
+  const ctx = { tile: _tipTile(path.slice(0, scope + 1)) };
+  for (let i = 0; i <= scope; i++) {
+    const kind = tipKind(path[i], ctx);
+    if (kind) return { el: path[i], kind, ctx };
+  }
+  return null;
+}
+
+function tipLines(at, hass, now) {
+  if (!at) return null;
+  const { el, kind, ctx } = at;
+  if (kind === "plain") return tipPlain(el, hass, now);
+  if (kind === "cfg") return tipCfg(el._config, el, hass, now);
+  if (kind === "chip" && ctx.tile) return tipTileChip(el.id, ctx.tile.room, hass, ctx.tile.tpl, now);
+  if (kind === "room" && ctx.tile) return tipRoom(ctx.tile.room);
+  return null;
+}
+
+/* Under the element, centred on it, kept 8px inside the window; above it
+ * when there is no room below. */
+function tipPlace(rect, w, h, vw, vh) {
+  const g = 8;
+  let left = rect.left + rect.width / 2 - w / 2;
+  left = Math.max(g, Math.min(left, vw - w - g));
+  let top = rect.bottom + g;
+  let above = false;
+  if (top + h > vh - g && rect.top - g - h >= g) { top = rect.top - g - h; above = true; }
+  return { left: Math.round(left), top: Math.round(Math.max(g, top)), above };
+}
+
+const TIP_CSS = `
+.charro-tip{ position:fixed; z-index:1000; pointer-events:none; max-width:300px;
+  box-sizing:border-box; padding:7px 10px; border-radius:8px;
+  background:var(--charro-tip-bg, rgba(28,28,30,.96)); color:var(--charro-tip-fg, #fff);
+  font:12.5px/1.4 var(--paper-font-body1_-_font-family, system-ui, sans-serif);
+  box-shadow:0 4px 16px rgba(0,0,0,.35); opacity:0; transition:opacity .12s; }
+.charro-tip.in{ opacity:1; }
+.charro-tip div{ overflow-wrap:anywhere; }
+.charro-tip .head{ font-weight:700; }
+.charro-tip .ent{ opacity:.75; font-size:11.5px; }
+.charro-tip .act{ margin-top:3px; opacity:.9; }
+.charro-tip .why{ color:#9ecbff; font-size:11.5px; }
+.charro-tip .warn{ color:#ffb38a; }
+`;
+
+const _tip = { boot: null, on: false, delay: TIP_DELAY, hass: null,
+  node: null, at: null, timer: 0, tick: 0, dead: null, sig: "" };
+
+/* Called from every room card's hass setter: one assignment and one test
+ * once booted. */
+function tipBoot(hass) {
+  if (hass) _tip.hass = hass;
+  if (_tip.boot || !hass || typeof document === "undefined"
+      || typeof document.addEventListener !== "function") return;
+  _tip.boot = loadHouse(hass).then((house) => {
+    const s = tipSettings(house);
+    _tip.on = s.on; _tip.delay = s.delay;
+    if (!s.on) return;
+    document.addEventListener("pointerover", tipOver, true);
+    document.addEventListener("pointerout", tipOut, true);
+    document.addEventListener("pointerdown", tipDown, true);
+    document.addEventListener("wheel", tipHide, { capture: true, passive: true });
+    document.addEventListener("scroll", tipHide, { capture: true, passive: true });
+    document.addEventListener("keydown", tipHide, true);
+    window.addEventListener("blur", tipHide);
+  }).catch(() => {});
+}
+
+/* The browser's own tooltip would sit on top of ours a second later, so
+ * the title moves to data-tip the moment the pointer arrives. aria-label
+ * keeps the accessible name when the title was all it had. */
+function tipSteal(el) {
+  const t = el && el.getAttribute && el.getAttribute("title");
+  if (!t) return;
+  if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", t.split("\n")[0]);
+  el.dataset.tip = t;
+  el.removeAttribute("title");
+}
+
+function tipOver(ev) {
+  if (!_tip.on || ev.pointerType !== "mouse") return;
+  const path = ev.composedPath ? ev.composedPath() : [];
+  const at = tipAnchor(path);
+  if (!at) { tipHide(); _tip.dead = null; return; }
+  if (_tip.at && at.el === _tip.at.el) return;
+  if (at.el === _tip.dead) return;
+  tipHide();
+  _tip.dead = null;
+  if (at.kind === "plain") tipSteal(at.el);
+  _tip.at = at;
+  _tip.timer = setTimeout(tipShow, _tip.delay);
+}
+
+function tipOut(ev) {
+  // leaving the window altogether
+  if (ev.pointerType === "mouse" && !ev.relatedTarget) { tipHide(); _tip.dead = null; }
+}
+
+/* Pressing is what the tip was about; it gets out of the way and stays
+ * away until the pointer moves to something else. */
+function tipDown() {
+  if (_tip.at) _tip.dead = _tip.at.el;
+  tipHide();
+}
+
+function tipHide() {
+  clearTimeout(_tip.timer); _tip.timer = 0;
+  clearInterval(_tip.tick); _tip.tick = 0;
+  _tip.at = null; _tip.sig = "";
+  if (_tip.node) { _tip.node.classList.remove("in"); _tip.node.style.display = "none"; }
+}
+
+function _tipNode() {
+  const host = popupHost();
+  // a child of a shadow root has the root as its parentNode
+  if (_tip.node && _tip.node.parentNode === host && _tip.node.isConnected) return _tip.node;
+  if (!host.__charroTipCss) {
+    const s = document.createElement("style");
+    s.id = "charro-tip-css"; s.textContent = TIP_CSS;
+    host.appendChild(s);
+    host.__charroTipCss = true;
+  }
+  const n = document.createElement("div");
+  n.className = "charro-tip";
+  n.setAttribute("role", "tooltip");
+  n.style.display = "none";
+  host.appendChild(n);
+  _tip.node = n;
+  return n;
+}
+
+function tipRender() {
+  const at = _tip.at;
+  if (!at || !at.el.isConnected) { tipHide(); return; }
+  const hass = _tip.hass;
+  let lines = null;
+  try { lines = tipLines(at, hass, new Date()); }
+  catch (err) { console.error("charro tip:", err); }
+  if (!lines || !lines.length) { if (_tip.node) _tip.node.style.display = "none"; return; }
+  const sig = lines.map((l) => l.c + ":" + l.t).join("|");
+  const n = _tipNode();
+  if (sig !== _tip.sig) {
+    _tip.sig = sig;
+    n.textContent = "";
+    for (const l of lines) {
+      const d = document.createElement("div");
+      if (l.c) d.className = l.c;
+      d.textContent = l.t;
+      n.appendChild(d);
+    }
+  }
+  n.style.display = "block";
+  const r = at.el.getBoundingClientRect();
+  const p = tipPlace(r, n.offsetWidth || 0, n.offsetHeight || 0,
+                     window.innerWidth || 0, window.innerHeight || 0);
+  n.style.left = p.left + "px";
+  n.style.top = p.top + "px";
+  n.classList.add("in");
+}
+
+function tipShow() {
+  _tip.timer = 0;
+  tipRender();
+  if (_tip.at && !_tip.tick) _tip.tick = setInterval(tipRender, 1000);
+}
+
 class RoomPopup {
   constructor(hash, room, hass, bodyFn, title) {
     this.hash = hash; this.room = room; this._hass = hass;
@@ -4098,6 +4545,10 @@ class RoomPopup {
       b.style.color = c.col[1];
       b.title = c.title;
       b.setAttribute("aria-label", c.title);
+      /* the one entity behind it, for the hover tip's state line */
+      const t = c.tap || {};
+      const one = t.entity || ((t.entities || []).length === 1 ? t.entities[0] : "");
+      if (one) b.dataset.tipEnt = one;
       const i = document.createElement("ha-icon");
       i.icon = c.icon;
       b.appendChild(i);
@@ -4311,6 +4762,7 @@ class CharroRoomCard extends CharroBase {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    tipBoot(hass);
     if (this._popup) this._popup.hass = hass;
     /* These three are one decision, and they used to be two.
      *
@@ -5066,6 +5518,7 @@ class CharroVideoCard extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
+    tipBoot(h);
     for (const c of this._live || []) c.hass = h;
     const sig = this._sig();
     if (sig === this._lastSig) return;
@@ -5221,6 +5674,29 @@ class CharroVideoCard extends HTMLElement {
     return st ? st.state : "";
   }
 
+  /* Why a source chip is lit, or why it can't be: the hover tip's line.
+   * The receiver's word wins when it gave one, so that is what is said;
+   * a source the receiver can never be matched to says that too - the
+   * reason a source stays dark while it is plainly on. */
+  _tipWhy(d, key, spec, live) {
+    const lf = this._liveFrom(d);
+    const borrowed = lf && !d.live_from && this._v._live_inherited
+      ? " (borrowed from the room\u2019s receiver)" : "";
+    const st = lf && this._hass && this._hass.states[lf];
+    const a = (st && st.attributes) || {};
+    const list = a.source_list || a.options || [];
+    const input = lf ? liveInputFor(key, spec, list) : "";
+    if (live) {
+      if (lf && this._reported(d) === key)
+        return `${lf} reports ${input || key}${borrowed}`;
+      const sf = this._sourceFrom(d) || d.source;
+      return sf ? `${sf} says ${key}` : "";
+    }
+    if (lf && !input && list.length)
+      return `No live input set \u2014 ${lf} can\u2019t say when ${spec.title || key} is on`;
+    return "";
+  }
+
   _sourceSpec(key) {
     const d = this._display(this._focusName());
     return ((d && d.sources) || {})[key] || (this._v.sources || {})[key] || null;
@@ -5249,6 +5725,7 @@ class CharroVideoCard extends HTMLElement {
     b.appendChild(sp);
     b.title = `${d.name || "This screen"} is ${on ? "on" : "off"} \u2014 tap to turn it `
             + `${on ? "off" : "on"} (${p})`;
+    b.dataset.tipEnt = p;
     b.addEventListener("click", () => {
       const domain = p.split(".")[0];
       this._hass.callService(domain, "toggle", {}, { entity_id: p });
@@ -5270,15 +5747,19 @@ class CharroVideoCard extends HTMLElement {
     sp.textContent = this._single() ? "On" : `Turn on ${d.name || "this screen"}`;
     b.appendChild(sp);
     b.title = `${d.name || "This screen"} is off \u2014 turn it on (${p})`;
+    b.dataset.tipEnt = p;
     b.addEventListener("click", () => {
       b.disabled = true;
       b.classList.add("busy");
+      /* the reason a grey button gives when you hover it */
+      b.dataset.tipBusy = `Sent \u2014 waiting for ${p} to report on`;
       const domain = p.split(".")[0];
       Promise.resolve(this._hass.callService(domain, "turn_on", {}, { entity_id: p }))
         .catch((err) => {
           console.error("charro-video-card: on", err);
           b.disabled = false;
           b.classList.remove("busy");
+          b.dataset.tipBusy = `${p} refused: ${(err && err.message) || err}`;
         });
     });
     return b;
@@ -5563,6 +6044,7 @@ class CharroVideoCard extends HTMLElement {
       b.appendChild(s);
       const src = this._sourceOf(d);
       b.title = live && src && src !== off ? `${d.name} — ${src}` : `${d.name} — off`;
+      if (screenPower(d)) b.dataset.tipEnt = screenPower(d);
       b.addEventListener("click", () => this._pick(d.name));
       row.appendChild(b);
     }
@@ -5712,6 +6194,8 @@ class CharroVideoCard extends HTMLElement {
         sp.textContent = spec.title || key;
         b.appendChild(sp);
         b.title = key === live ? `${spec.title || key} \u2014 on now` : `Switch to ${spec.title || key}`;
+        const why = this._tipWhy(d, key, spec, key === live);
+        if (why) b.dataset.tipWhy = why;
         b.addEventListener("click", () => this._pickSource(key));
         srow.appendChild(b);
       }
@@ -6257,6 +6741,12 @@ function hwTileDom(sum, cfg, now, lang) {
   } else if (sum.next) sub = `Next ${hwWhen(sum.next.at, now, lang)} · ${sum.next.zone.name}`;
   else sub = "Nothing scheduled";
   txt.appendChild(hwEl("div", "sub", sub));
+  /* The tip says what the tile can't fit: that "can't reach" is about
+   * Home Assistant's poll, not the controller. */
+  card.dataset.tip = [c.title || "Irrigation", sub,
+    !sum.online ? "Home Assistant\u2019s last poll of Hydrawise failed. The controller "
+      + "keeps watering on its own schedule." : ""].filter(Boolean).join("\n");
+  card.dataset.tipDo = "Tap: open the zones and the watering log";
   const chips = hwEl("div", "chips");
   const chip = (icon, text, col, title) => {
     const ch = hwEl("span", "chip");
@@ -6336,6 +6826,13 @@ function hwGridDom(model, h) {
     b.type = "button";
     b.setAttribute("data-zone", z.device);
     b.setAttribute("aria-label", `${z.name}, zone ${z.num}: ${hwLine(zs, now, lang)}`);
+    b.dataset.tip = [`${z.name} \u00b7 zone ${z.num}`, hwLine(zs, now, lang),
+      zs.today ? `Watered today ${hwDur(zs.today)}` : "",
+      zs.suspended ? "Automatic watering is suspended" : "",
+      zs.unavailable ? "No state from Hydrawise \u2014 usually Home Assistant can\u2019t reach it" : "",
+    ].filter(Boolean).join("\n");
+    if (z.watering) b.dataset.tipEnt = z.watering;
+    b.dataset.tipDo = "Tap: open the zone";
     const blk = hwEl("div", "blk");
     blk.style.setProperty ? blk.style.setProperty("--c", z.color) : (blk.style["--c"] = z.color);
     blk.style.background = z.color;
@@ -6987,6 +7484,7 @@ class CharroIrrigationCard extends HTMLElement {
   setConfig(config) { this._config = { ...(config || {}) }; this._sig = null; this._render(); }
   set hass(h) {
     this._hass = h;
+    tipBoot(h);
     if (this._popup) this._popup.hass = h;
     this._claim();
     this._render();
@@ -7252,6 +7750,7 @@ class CharroLightsCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    tipBoot(hass);
     if (!this._rows) this._build();
     this._update();
   }
@@ -7456,6 +7955,12 @@ class CharroLightsCard extends HTMLElement {
       const name = item.name || st.attributes.friendly_name || item.entity;
       if (nm.textContent !== name) nm.textContent = name;
       row.setAttribute("aria-label", name);
+      /* the hover tip: whose light, and what the row does with a press */
+      row.dataset.tip = name;
+      row.dataset.tipEnt = item.entity;
+      row.dataset.tipDo = this._dims(item, st) && !unav
+        ? "Tap: on or off \u00b7 Drag sideways: dim \u00b7 Hold: details"
+        : "Tap: on or off \u00b7 Hold: details";
 
       const icon = item.icon || st.attributes.icon ||
         (fountain ? "mdi:fountain" : lit ? "mdi:lightbulb" : "mdi:lightbulb-outline");
@@ -9162,15 +9667,21 @@ function entStateLine(hass, id) {
     d.textContent = id + " \u2014 not in Home Assistant";
     return d;
   }
+  if (st.state === "unavailable" || st.state === "unknown") d.className = "vstate bad";
+  d.textContent = entStateBits(st, id).join(" \u00b7 ");
+  return d;
+}
+
+/* The id and what it is doing, in the few words a line has room for -
+ * shared by the editor's state line and the hover tips. */
+function entStateBits(st, id) {
   const a = st.attributes || {};
   const bits = [id, st.state];
   if (a.brightness != null) bits.push(Math.round((a.brightness / 255) * 100) + "%");
   if (a.current_position != null) bits.push(a.current_position + "% open");
   if (a.current_temperature != null) bits.push(a.current_temperature + "\u00b0");
   if (a.percentage != null) bits.push(a.percentage + "%");
-  if (st.state === "unavailable" || st.state === "unknown") d.className = "vstate bad";
-  d.textContent = bits.join(" \u00b7 ");
-  return d;
+  return bits;
 }
 
 function fieldKit(hass, redraw) {
@@ -13236,6 +13747,34 @@ class CharroHouseEditor extends HTMLElement {
       : `living_room → ${pagePath(this._cfg.page_base, "living_room")}`;
     box.appendChild(eg);
     root.appendChild(box);
+
+    /* Hover tips. Stored only when they differ from the built-in, the same
+     * as every other setting here: no file means on, after 0.4 s. */
+    const cap2 = document.createElement("div");
+    cap2.className = "vcap"; cap2.textContent = "Tooltips";
+    root.appendChild(cap2);
+    const tb = document.createElement("div"); tb.className = "vrowbox";
+    const tipOn = this._cfg.tooltips !== false;
+    tb.appendChild(f.bool("Hover tooltips on rooms", tipOn, (v) => {
+      if (v) delete this._cfg.tooltips; else this._cfg.tooltips = false;
+    }));
+    if (tipOn) {
+      const d = this._cfg.tooltip_delay;
+      tb.appendChild(f.sel("Delay before one shows", d == null ? "" : String(d),
+        TIP_DELAYS, (v) => {
+          if (v === "") delete this._cfg.tooltip_delay;
+          else this._cfg.tooltip_delay = Number(v);
+        }));
+    }
+    const th = document.createElement("div");
+    th.className = "vhelp";
+    th.textContent = "Rest the mouse on anything in a room \u2014 a chip on the "
+      + "tile, a button in the pop-up, a light, a zone \u2014 to see whose state it "
+      + "is, since when, what a tap and a hold do, and where a value was borrowed "
+      + "from. Mouse only: phones and tablets are unchanged. Off puts the "
+      + "browser\u2019s plain tooltips back.";
+    tb.appendChild(th);
+    root.appendChild(tb);
 
     this._saveLabel();
   }

@@ -962,6 +962,36 @@ alert_sensors: [sensor.elkm1_master_bedroom]
 | `alert_sensors` | Sensors/covers that light the red indicator |
 | `confirm_sensor` | Only alert when this is also open |
 
+### Hover tooltips
+
+Rest the mouse on anything in a room for a moment and it says what the card
+has no room for:
+
+| Hover over | The tip says |
+|---|---|
+| A chip on the tile or in the pop-up header | The chip's sentence (which lights are on, what is unlocked), the entity behind it with its state and how long it has been that way, and what a tap and a hold do |
+| A borrowed value | Where it came from — holding the music chip opens `media_player.theatre`, borrowed from the room's media player |
+| A source chip on the screens | Why it is lit (`media_player.vsx_lx305 reports SAT`, and whether the receiver was borrowed), or why it can never light (`No live input set`) |
+| On, once pressed | What it is waiting for: `Sent — waiting for switch.theatre_projector to report on` |
+| A light row | Its entity and level, and Tap / Drag sideways / Hold |
+| A zone or the irrigation tile | Next run, today's total, suspended, and that "Can't reach Hydrawise" is about Home Assistant's poll, not the controller |
+| Any tile, button or remote button inside a pop-up | Its entity and state, and the service a tap sends (`volume up · media_player.vsx_lx305`) |
+
+Mouse only. A phone has no hover and press-and-hold is already each chip's
+hold action, so touch works exactly as before.
+
+**Cost.** One listener for the whole page. Moving the mouse walks the element
+it is over and nothing else; the words are built only after the pointer has
+rested, from the state Home Assistant has already sent — no subscriptions, no
+history reads. A tip that is showing rereads itself once a second, so
+"changed 2 min ago" stays true; with no tip showing there is no timer.
+
+**Settings.** Charro Config → Settings → Tooltips: on or off, and the delay
+(0.15 s, 0.4 s by default, 0.8 s or 1.5 s). Off gives you the browser's plain
+tooltips back. Saved as `tooltips: false` and `tooltip_delay` in the house
+settings file; like every house setting, other open pages pick it up on their
+next load.
+
 ## `charro-security-card`
 
 Red when the zone is Violated (or a cover isn't closed), green when a vehicle is
