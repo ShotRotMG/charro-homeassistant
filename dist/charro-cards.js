@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.105.0";
+const VERSION = "5.106.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3275,14 +3275,37 @@ function entLabel(e, hass, key) {
   return (st && st.attributes && st.attributes.friendly_name) || id;
 }
 
+/* A room's own thermometer, when it has one: its reading as a number, or
+ * null when it is not set, not there or not reporting one. A room that
+ * shares a thermostat with two others has that thermostat's temperature,
+ * which is the hallway's - this is what says the room's. */
+function roomTemp(r, hass) {
+  const id = r && r.temp_sensor;
+  const st = id && hass && hass.states && hass.states[id];
+  if (!st || st.state === "" || st.state == null) return null;
+  const n = Number(st.state);
+  return isFinite(n) ? n : null;
+}
+
 /* what the thermostat is doing beats what it is set to */
 function climateChip(hass, id, r) {
-  const st = hass.states[id];
+  const st = id ? hass.states[id] : null;
+  const unit = tempUnit(hass);
+  const room = roomTemp(r, hass);
+  const tsName = room != null ? entLabel(r.temp_sensor, hass) : "";
   if (!st || st.state === "off" || st.state === "unavailable") {
     /* Hidden when off is the default and the one you asked for, but the
      * registry gets to say otherwise - and then it draws grey like
      * everything else rather than being the one chip that still can't. */
     const look = chipLook("climate", r);
+    /* A room thermometer is worth reading with the heating off: the chip
+     * stays, grey, with the room's temperature on it. */
+    if (room != null && look.show !== "never")
+      return { key: "climate", icon: look.icon, col: CHIP_OFF,
+               text: `${Math.round(room)}${unit}`,
+               title: `${tsName} \u2014 ${room}${unit}`
+                 + (st ? `. ${st.attributes.friendly_name || id} is ${st.state}.` : ""),
+               tap: { kind: "more-info", entity: id || r.temp_sensor } };
     if (!st || look.show !== "always") return null;
     return { key: "climate", icon: look.icon, col: CHIP_OFF, text: "",
              title: `${st.attributes.friendly_name || id} — ${st.state}`,
@@ -3296,7 +3319,9 @@ function climateChip(hass, id, r) {
    * it is set to, and one reporting no hvac_action is read from how far
    * it still has to go. Only the mood is decided here - the colours come
    * from the registry, so heating stays red unless somebody deliberately
-   * changes it, and changing it changes both renderers at once. */
+   * changes it, and changing it changes both renderers at once. The room's
+   * own thermometer changes the number, never the mood: the thermostat is
+   * the one deciding whether to heat. */
   let mood = "idle";
   if (act === "cooling") mood = "cooling";
   else if (act === "heating") mood = "heating";
@@ -3305,10 +3330,11 @@ function climateChip(hass, id, r) {
   else if (st.state === "heat") mood = (known && cur >= set) ? "idle" : "heating";
   else if (st.state === "heat_cool") mood = "mixed";
   const { col, icon } = chipLook("climate", r, mood);
-  const unit = tempUnit(hass);
+  const shown = room != null ? room : cur;
   return { key: "climate", icon, col,
-           text: cur != null ? `${Math.round(cur)}${unit}` : "",
-           title: `${st.attributes.friendly_name || id} — ${act || st.state}`,
+           text: shown != null ? `${Math.round(shown)}${unit}` : "",
+           title: `${st.attributes.friendly_name || id} — ${act || st.state}`
+             + (room != null ? `. ${tsName} reads ${room}${unit}.` : ""),
            tap: { kind: "more-info", entity: id } };
 }
 
@@ -3464,7 +3490,7 @@ function roomChips(r, hass) {
                tap: { kind: "more-info", entity: id } });
   }
 
-  if (r.climate_entity) {
+  if (r.climate_entity || r.temp_sensor) {
     const c = climateChip(hass, r.climate_entity, r);
     if (c) out.push(c);
   }
@@ -4098,7 +4124,8 @@ class RoomPopup {
       lightIds(r.fountain_entities), r.alert_sensors || [],
       (r.locks || []).map(lockEntity),
       (r.music_powers || []).map((p) => typeof p === "string" ? p : (p && (p.entity || p.power))),
-      [r.media_player, roomTv(r), r.projector_entity, r.receiver_entity, r.climate_entity],
+      [r.media_player, roomTv(r), r.projector_entity, r.receiver_entity, r.climate_entity,
+       r.temp_sensor],
     ).filter(Boolean);
     let s = "";
     for (const e of ids) {
@@ -4730,7 +4757,7 @@ const ROOM_LISTS = [
   "bath_fan_entities", "music_powers", "alert_sensors", "fountain_entities",
   "locks", "shade_entities",
 ];
-const ROOM_SINGLES = ["climate_entity", "confirm_sensor",
+const ROOM_SINGLES = ["climate_entity", "temp_sensor", "confirm_sensor",
                       "tv_entity", "projector_entity", "receiver_entity",
                       "pool_switch", "pool_heater", "spa_switch", "spa_heater"];
 
@@ -4952,6 +4979,8 @@ class CharroRoomCard extends CharroBase {
       spa_switch: c.spa_switch || "",
       spa_heater: c.spa_heater || "",
       climate_entity: c.climate_entity || "",
+      // the room's own thermometer, when it has one - the chip's number
+      temp_sensor: c.temp_sensor || "",
       music_player: c.music_player || "",
       confirm_sensor: c.confirm_sensor || "",
       // the tile's garage chip counts these on its own
@@ -5028,6 +5057,8 @@ const ROOM_SCHEMA = [
   ]},
   { type: "expandable", name: "", title: "Climate", icon: "mdi:thermostat", schema: [
     { name: "climate_entity", selector: ent(["climate"]) },
+    { name: "temp_sensor", selector: { entity: { filter: [
+      { domain: "sensor", device_class: "temperature" }] } } },
   ]},
   { type: "expandable", name: "", title: "Media", icon: "mdi:television", schema: [
     { name: "tv_entity", selector: ent(["media_player"]) },
@@ -5050,6 +5081,7 @@ const ROOM_LABELS = {
   fan_entities: "Ceiling fans",
   bath_fan_entities: "Other fans",
   climate_entity: "Thermostat",
+  temp_sensor: "Room temperature (optional)",
   tv_entity: "TV",
   projector_entity: "Projector",
   receiver_entity: "AV receiver",
@@ -5071,6 +5103,10 @@ const ROOM_HELPERS = {
              "otherwise the chip follows that screen's TV on its own. " +
              "Either way it appears only while the TV is on.",
   receiver_entity: "Chip shows the current source while the receiver is on.",
+  temp_sensor: "A thermometer in this room. Its reading is the number on the climate chip "
+    + "instead of the thermostat's \u2014 for a room that shares a thermostat with "
+    + "others. Heating and cooling colours still follow the thermostat, and with it "
+    + "off the chip stays, grey, showing this reading.",
 };
 makeEditor("charro-room-card-editor", ROOM_SCHEMA, ROOM_LABELS, ROOM_HELPERS);
 
@@ -9339,6 +9375,7 @@ function itemWhere(it) {
  * fields the form has no row for. */
 const FIELD_WHERE = {
   climate_entity: "Climate", climate_card: "Climate", climate_modes: "Climate",
+  temp_sensor: "Climate",
   tv_entity: "Media & remotes", projector_entity: "Media & remotes",
   receiver_entity: "Media & remotes",
   media_player: "Music", media_card: "Advanced", music_player: "Music",
@@ -9461,6 +9498,7 @@ const AREA_TARGETS = {
   cameras:            { label: "cameras", many: true, wrap: (id) => ({ entity: id }) },
   locks:              { label: "locks", many: true, wrap: (id) => ({ entity: id }) },
   climate_entity:     { label: "thermostat", many: false },
+  temp_sensor:        { label: "room thermometer", many: false },
   tv_entity:          { label: "TV", many: false },
   receiver_entity:    { label: "receiver", many: false },
 };
@@ -9507,6 +9545,10 @@ function areaBuckets(hass, areaId, taken) {
     if (dom === "camera") { put("cameras", id); continue; }
     if (dom === "lock") { put("locks", id); continue; }
     if (dom === "climate") { put("climate_entity", id); continue; }
+    if (dom === "sensor") {
+      if (cls === "temperature") put("temp_sensor", id);
+      continue;
+    }
     if (dom === "cover") { put("shade_entities", id); continue; }
     if (dom === "binary_sensor") {
       if (AREA_ALERT.has(cls)) put("alert_sensors", id);

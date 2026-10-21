@@ -307,13 +307,13 @@
             ],
             "climate": [
               {
-                "display": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!!variables.climate_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable'].includes(states[variables.climate_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
+                "display": "[[[\n  const c = variables.chips.climate || {};\n  const ts = states[variables.temp_sensor];\n  const tsOk = !!ts && ts.state !== '' && ts.state != null && isFinite(Number(ts.state));\n  if (!variables.climate_entity && !tsOk) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  /* a room thermometer keeps the chip up, grey, with the heating off */\n  return ((!!variables.climate_entity && !['off','unavailable'].includes(states[variables.climate_entity]?.state)) || tsOk) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[\n  const c = variables.chips.climate || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable'].includes(states[variables.climate_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
+                "order": "[[[\n  const c = variables.chips.climate || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!!variables.climate_entity && !['off','unavailable'].includes(states[variables.climate_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "music": [
@@ -879,14 +879,14 @@
           "climate": {
             "card": {
               "type": "custom:button-card",
-              "entity": "[[[ return variables.climate_entity ]]]",
+              "entity": "[[[ return variables.climate_entity || variables.temp_sensor ]]]",
               "show_icon": true,
               "show_name": true,
               "icon": "[[[ return variables.chips.climate.icon ]]]",
-              "name": "[[[\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  const u = hass?.config?.unit_system?.temperature || '°';\n  return t != null ? `${Math.round(t)}${u}` : '';\n]]]\n",
+              "name": "[[[\n  const u = hass?.config?.unit_system?.temperature || '°';\n  const ts = states[variables.temp_sensor];\n  const tsOk = !!ts && ts.state !== '' && ts.state != null && isFinite(Number(ts.state));\n  /* the room's own thermometer is the number, when it has one */\n  if (tsOk) return `${Math.round(Number(ts.state))}${u}`;\n  const st = states[variables.climate_entity];\n  if (!st) return '';\n  const a = st.attributes || {};\n  const t = (st.state === 'off') ? (a.current_temperature ?? a.temperature)\n                                 : (a.temperature ?? a.current_temperature);\n  return t != null ? `${Math.round(t)}${u}` : '';\n]]]\n",
               "tap_action": {
                 "action": "more-info",
-                "entity": "[[[ return variables.climate_entity ]]]"
+                "entity": "[[[ return variables.climate_entity || variables.temp_sensor ]]]"
               },
               "styles": {
                 "card": [
@@ -903,7 +903,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.bg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.climate || {};\n  if (!variables.climate_entity || !(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.bg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).bg;\n]]]\n"
                   }
                 ],
                 "grid": [
@@ -928,7 +928,7 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!variables.climate_entity || !(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ],
                 "name": [
@@ -942,7 +942,7 @@
                     "white-space": "nowrap"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.climate || {};\n  if (!variables.climate_entity || !(!['off','unavailable'].includes(states[variables.climate_entity]?.state))) return variables.chips.off.fg;\n  const st = states[variables.climate_entity];\n  const a = st?.attributes || {}; const act = a.hvac_action;\n  const cur = a.current_temperature, set = a.temperature;\n  const known = cur != null && set != null;\n  let mood = 'idle';\n  if (act === 'cooling') mood = 'cooling';\n  else if (act === 'heating') mood = 'heating';\n  else if (act === 'idle' || act === 'fan') mood = 'idle';\n  else if (st?.state === 'cool') mood = (known && cur <= set) ? 'idle' : 'cooling';\n  else if (st?.state === 'heat') mood = (known && cur >= set) ? 'idle' : 'heating';\n  else if (st?.state === 'heat_cool') mood = 'mixed';\n  return (c[mood] || c).fg;\n]]]\n"
                   }
                 ]
               },

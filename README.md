@@ -173,6 +173,18 @@ what the room actually reads on the left, the setpoint inline on the right.
 | `climate_name` | overrides the name on the tile |
 | `climate_modes` | list of hvac modes (`["heat_cool","heat","cool","off"]`) — adds a row of mode buttons and moves the setpoint below the name |
 | `climate_card` | a full card config, used verbatim instead |
+| `temp_sensor` | **Room temperature** in the Climate group. A thermometer in this room whose reading is the number on the climate chip, on the tile and the pop-up, instead of the thermostat's |
+
+Rooms that share a thermostat (Javon, Janell and Jordan all run off
+`climate.gym_and_bedrooms`) used to show the same number on every climate
+chip, and it was the hallway's. With `temp_sensor` set:
+
+- the chip shows the room's own reading; heating, cooling and at-temperature
+  colours still follow the thermostat, since it decides whether to heat
+- with the thermostat off, or a room with no thermostat at all, the chip
+  stays, in the off grey, with the room's temperature on it
+- a thermometer that is unavailable falls back to exactly what it did before
+- Fill from area picks up a `sensor` with `device_class: temperature`
 
 ### Taking over the layout
 
