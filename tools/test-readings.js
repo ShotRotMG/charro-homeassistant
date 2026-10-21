@@ -141,5 +141,36 @@ eq(ed._room.readings.length, 1, "Remove takes it away");
 ok(T.PANEL_USED.readings({ readings: [SRV] }) && !T.PANEL_USED.readings({}),
   "the Simple view shows the panel only for a room that has readings");
 
+console.log("-- show, said for a reading --");
+const rowFor = (key) => {
+  const f = T.fieldKit({ states: {} }, () => {});
+  return T.chipRow(f, key, T.CHIP_SPECS[key], {}, T.chipInherit(key, {}));
+};
+const optsOf = (row) => row.querySelector("select").children.map((o) => o.textContent);
+eq(optsOf(rowFor("readings")), ["\u2014 inherit (Always) \u2014", "Only when out of range", "Always", "Never"],
+  "the Chips panel words Readings' choices for a reading");
+eq(optsOf(rowFor("light_entities")).slice(1), ["Only when it is on", "Always, grey when off", "Never"],
+  "every other chip keeps its own words");
+
+console.log("-- one reading can differ --");
+c = hdr(room([{ entity: SRV, show: "never" }, HUM]), h);
+eq(c.map((x) => x.entity), [HUM], "a reading set to Never draws nothing");
+c = hdr(room([{ entity: SRV, show: "always" }, HUM], { chips: { readings: { show: "active" } } }), hassWith(72, 50));
+eq(c.map((x) => x.entity), [SRV], "Always on one beats only-out-of-range on the room");
+c = hdr(room([{ entity: SRV, show: "active" }]), hassWith(72));
+eq(c.length, 0, "and only-out-of-range on one hides it while it is fine");
+c = hdr(room([{ entity: SRV, show: "active" }]), hassWith("unavailable"));
+eq(c.length, 0, "an unavailable reading set to out-of-range stays hidden");
+const v2 = vars(room([{ entity: SRV, show: "never" }, HUM]));
+eq(T.charroReadingChips(v2, h).map((x) => x.entity), [HUM], "the tile honours it too");
+ed._room = { readings: [{ entity: SRV }] };
+ed._renderReadings();
+const showSel = ed._readBox.querySelectorAll("select").find((s) =>
+  s.children.some((o) => o.value === "never"));
+ok(!!showSel && /as the room\u2019s Readings chip \(Always\)/.test(showSel.children[0].textContent),
+  "the editor row offers Show, defaulting to the room's setting");
+showSel.value = "never"; showSel.fire("change");
+eq(ed._room.readings[0].show, "never", "and Never is saved on that reading");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

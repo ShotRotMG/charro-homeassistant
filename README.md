@@ -207,8 +207,11 @@ publishes one. The SONOFF screen thermometers do
 set. The editor shows the borrowed number as the placeholder and says where it
 came from.
 
-Readings shows always by default. Set it to "Only when it is on" in Chips to
-show only the readings that are out of range. An unavailable sensor shows a
+Readings shows always by default. In Chips, its "When to show" offers
+**Only when out of range**, **Always** and **Never** for the whole room. Each
+reading also has its own **Show** that beats the room's, so the server closet
+can show always, a humidity only when it's out of range, and a battery never.
+Never keeps the reading in the room without drawing a chip. An unavailable sensor shows a
 dash rather than vanishing, so a dead battery gets noticed. Hovering a reading
 shows its exact value and the limit it crossed.
 

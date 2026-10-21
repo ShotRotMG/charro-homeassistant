@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.107.0";
+const VERSION = "5.108.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3165,7 +3165,11 @@ const CHIP_SPECS = {
   /* Readings: one chip per sensor, its value on it. In range is a quiet
    * grey; "active" shows only the ones out of range. */
   readings:           { label: "Readings",      icon: "mdi:gauge",             pal: "neutral",   order: 180, show: "always",
-    moods: [["normal", "In range", "neutral"], ["high", "Too high", "red"], ["low", "Too low", "blue"]] },
+    moods: [["normal", "In range", "neutral"], ["high", "Too high", "red"], ["low", "Too low", "blue"]],
+    /* "on" and "off" mean nothing to a thermometer; the same three
+     * settings, said the way they apply to one */
+    showOpts: [["active", "Only when out of range"], ["always", "Always"], ["never", "Never"]],
+    showHelp: "Out of range is red above or blue below its limits." },
   "garage-on":        { label: "Garage moving", icon: "mdi:garage-open",       pal: "door_move", order: 120 },
   "garage-open":      { label: "Garage open",   icon: "mdi:garage-open",       pal: "door_open", order: 130 },
   "garage-shut":      { label: "Garage, car in", icon: "mdi:garage-variant",   pal: "door_car",  order: 140 },
@@ -3386,7 +3390,7 @@ function readingChipsFrom(list, hass, look, iconOver) {
     const v = st ? _num(st.state) : null;
     if (v == null) {
       const lk = look("normal");
-      if (lk.show !== "always") continue;
+      if ((o.show || lk.show) !== "always") continue;
       out.push({ key: "readings", icon, col: lk.col, text: "–", entity: id, mood: "normal",
                  title: `${name} — ${st ? st.state : "not in Home Assistant"}`,
                  tap: { kind: "more-info", entity: id } });
@@ -3396,7 +3400,9 @@ function readingChipsFrom(list, hass, look, iconOver) {
     const mood = lim.high != null && v > lim.high ? "high"
                : lim.low != null && v < lim.low ? "low" : "normal";
     const lk = look(mood);
-    if (lk.show === "never" || (lk.show === "active" && mood === "normal")) continue;
+    // a reading's own setting beats the room's Readings chip
+    const show = o.show || lk.show;
+    if (show === "never" || (show === "active" && mood === "normal")) continue;
     const u = _readingUnit(a.unit_of_measurement);
     const raw = Math.round(v * 10) / 10;
     const own = " (the sensor’s own comfort limit)";
@@ -10393,6 +10399,8 @@ const CHIP_SHOW_OPTS = [
   ["never", "Never"],
 ];
 const CHIP_SHOW_LABEL = Object.fromEntries(CHIP_SHOW_OPTS);
+/* A chip whose "on" is something else words the same three its own way. */
+const chipShowOpts = (spec) => (spec && spec.showOpts) || CHIP_SHOW_OPTS;
 
 /* What a blank row would give you: the shipped defaults on their own for
  * the house tab, or those plus the house file when a room is asking. */
@@ -10445,10 +10453,12 @@ function chipRow(f, key, spec, cur, inherit) {
     }
   }
 
+  const opts = chipShowOpts(spec);
+  const said = Object.fromEntries(opts);
   row.appendChild(f.sel("When to show", cur.show || "",
-    [["", `\u2014 inherit (${CHIP_SHOW_LABEL[inherit.show] || inherit.show}) \u2014`]]
-      .concat(CHIP_SHOW_OPTS), set("show"),
-    "Always draws the chip in the off grey when there is nothing to report."));
+    [["", `\u2014 inherit (${said[inherit.show] || inherit.show}) \u2014`]]
+      .concat(opts), set("show"),
+    spec.showHelp || "Always draws the chip in the off grey when there is nothing to report."));
 
   row.appendChild(f.text("Order", cur.order == null ? "" : String(cur.order), (v) => {
     const n = Number(v);
@@ -12059,6 +12069,14 @@ class CharroRoomsEditor extends HTMLElement {
       if (e.above == null && lim.highFrom) this._borrowNote(hi, lim.highFrom, "sensor\u2019s comfort max");
       if (e.below == null && lim.lowFrom) this._borrowNote(lo, lim.lowFrom, "sensor\u2019s comfort min");
       row.append(hi, lo);
+      /* One reading can differ from the rest: the server closet always,
+       * a humidity only when it's out of range, a battery not at all. */
+      const opts = chipShowOpts(CHIP_SPECS.readings);
+      const room = chipLook("readings", { ...r, _chips: this._chipsAll || r._chips }).show;
+      row.appendChild(f.sel("Show", e.show || "",
+        [["", `\u2014 as the room\u2019s Readings chip (${Object.fromEntries(opts)[room] || room}) \u2014`]]
+          .concat(opts), set("show"),
+        "Never keeps the reading in the room without drawing a chip for it."));
       const x = document.createElement("button");
       x.className = "vdel";
       x.textContent = "Remove reading";
