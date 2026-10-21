@@ -403,6 +403,20 @@
               {
                 "order": "[[[\n  const c = variables.chips.shades || {};\n  /* lit chips first, then the configured order inside each group */\n  return (((variables.shade_entities || []).some(e => states[e]?.state === 'on')) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
+            ],
+            "readings": [
+              {
+                "display": "[[[\n  const c = variables.chips.readings || {};\n  if (c.show === 'never') return 'none';\n  /* one chip per reading, built by the same function as the pop-up's */\n  return (window.charroReadingChips ? window.charroReadingChips(variables, hass) : []).length ? 'flex' : 'none';\n]]]\n"
+              },
+              {
+                "align-items": "center"
+              },
+              {
+                "gap": "4px"
+              },
+              {
+                "order": "[[[\n  const c = variables.chips.readings || {};\n  return c.order || 0;\n]]]\n"
+              }
             ]
           }
         },
@@ -1421,7 +1435,8 @@
                 "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
               }
             }
-          }
+          },
+          "readings": "[[[ return window.charroReadings ? window.charroReadings(variables, states, hass) : ''; ]]]"
         }
       }
     },

@@ -186,6 +186,32 @@ chip, and it was the hallway's. With `temp_sensor` set:
 - a thermometer that is unavailable falls back to exactly what it did before
 - Fill from area picks up a `sensor` with `device_class: temperature`
 
+### Readings
+
+Extra sensors shown as chips with their value, on the tile and in the pop-up
+header: the server closet's temperature on Charro, a humidity, a power draw.
+Editor: the **Readings** panel. Pick a sensor, and optionally a name, an icon
+and the limits.
+
+| field | what it does |
+| --- | --- |
+| `entity` | any `sensor`, `number` or `input_number` with a numeric state |
+| `name` | blank uses the sensor's name |
+| `icon` | blank picks by kind: thermometer, water-percent, flash… A Readings icon in the Chips panel covers every reading in the room |
+| `above` / `below` | red above, blue below; grey in range |
+
+A blank limit borrows the sensor's own comfort range when its device
+publishes one. The SONOFF screen thermometers do
+(`number.<name>_comfort_temperature_max` / `_min`, and the humidity pair), so
+`sensor.server_temp_monitor_temperature` goes red above 81°F with nothing
+set. The editor shows the borrowed number as the placeholder and says where it
+came from.
+
+Readings shows always by default. Set it to "Only when it is on" in Chips to
+show only the readings that are out of range. An unavailable sensor shows a
+dash rather than vanishing, so a dead battery gets noticed. Hovering a reading
+shows its exact value and the limit it crossed.
+
 ### Taking over the layout
 
 Set `layout` and the room stops arranging itself — you spell out the order

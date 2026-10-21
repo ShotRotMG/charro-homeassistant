@@ -28,6 +28,7 @@ const room = {
   locks: [{ entity: "lock.l" }],
   alert_sensors: ["binary_sensor.d"],
   cameras: [{ entity: "camera.c" }],
+  readings: [{ entity: "sensor.srv", name: "Server" }],
   gates: [{ name: "West", press: "script.gate_west" }],
   remotes: [{ name: "Apple TV" }],
   /* keyed by CHIP_SPECS key, which is what the Chips panel writes - not
@@ -61,6 +62,8 @@ const on = {
   "binary_sensor.d": { state: "on", attributes: { friendly_name: "Door",
     device_class: "door" } },
   "camera.c": { state: "idle", attributes: { friendly_name: "Camera" } },
+  "sensor.srv": { state: "92.5", attributes: { friendly_name: "Server temp",
+    device_class: "temperature", unit_of_measurement: "°F" } },
 };
 
 const hass = () => ({

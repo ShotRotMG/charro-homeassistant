@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.106.0";
+const VERSION = "5.107.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3041,6 +3041,8 @@ const CHIP_PAL = {
   orange: { bg: "rgba(255,152,0,0.22)",   fg: "#ffb74d" },
   red:    { bg: "rgba(244,67,54,0.22)",   fg: "#ef5350" },
   off:    { bg: "transparent",            fg: "var(--disabled-text-color)" },
+  /* a reading in range: there, legible, and not claiming anything */
+  neutral: { bg: "rgba(127,127,127,0.16)", fg: "var(--primary-text-color)" },
   /* A garage door's own four states. These are the security page's exact
    * values, lifted out of garage-card.json so the page and the pop-up
    * header read the same door the same way. The page is unchanged to the
@@ -3160,6 +3162,10 @@ const CHIP_SPECS = {
   spa:                { label: "Spa",           icon: "mdi:hot-tub",           pal: "sky",       order: 170,
     moods: [["resting", "Resting", "sky"], ["heating", "Heating", "orange"],
             ["warm", "Up to temperature", "green"]] },
+  /* Readings: one chip per sensor, its value on it. In range is a quiet
+   * grey; "active" shows only the ones out of range. */
+  readings:           { label: "Readings",      icon: "mdi:gauge",             pal: "neutral",   order: 180, show: "always",
+    moods: [["normal", "In range", "neutral"], ["high", "Too high", "red"], ["low", "Too low", "blue"]] },
   "garage-on":        { label: "Garage moving", icon: "mdi:garage-open",       pal: "door_move", order: 120 },
   "garage-open":      { label: "Garage open",   icon: "mdi:garage-open",       pal: "door_open", order: 130 },
   "garage-shut":      { label: "Garage, car in", icon: "mdi:garage-variant",   pal: "door_car",  order: 140 },
@@ -3222,7 +3228,7 @@ const TILE_CHIPS = {
   fountain: "fountain_entities", shades: "shade_entities",
   climate: "climate", music: "music",
   tv: "tv_entity", projector: "projector_entity", receiver: "receiver_entity",
-  pool: "pool", spa: "spa", nowplaying: "nowplaying",
+  pool: "pool", spa: "spa", nowplaying: "nowplaying", readings: "readings",
 };
 
 /* The tile is a button-card template and cannot call chipLook, so the
@@ -3273,6 +3279,168 @@ function entLabel(e, hass, key) {
   if (reg && (reg.name || reg.original_name)) return reg.name || reg.original_name;
   const st = hass.states[id];
   return (st && st.attributes && st.attributes.friendly_name) || id;
+}
+
+/* ------------------------------------------------------------ readings -- */
+/*
+ * A room can carry readings that are not its own thermostat: the server
+ * closet's temperature on Charro, a humidity, a power draw. Each is a chip
+ * with its value, on the tile and in the pop-up header, built by the one
+ * function below so the two cannot disagree.
+ *
+ *   readings: [{ entity: "sensor.server_temp_monitor_temperature",
+ *                name: "Server", icon: "mdi:server", above: 85, below: 60 }]
+ *
+ * A chip is the neutral grey while the value is in range, red above
+ * `above` and blue below `below`. A limit left blank borrows the sensor's
+ * own: the SONOFF screen thermometers publish
+ * number.<name>_comfort_temperature_max / _min (and humidity) on the same
+ * device, which is the range their own screen smiles at.
+ */
+const READING_ICONS = {
+  temperature: "mdi:thermometer", humidity: "mdi:water-percent",
+  battery: "mdi:battery", power: "mdi:flash", energy: "mdi:lightning-bolt",
+  carbon_dioxide: "mdi:molecule-co2", pressure: "mdi:gauge",
+  illuminance: "mdi:brightness-5", voltage: "mdi:sine-wave",
+  current: "mdi:current-ac", pm25: "mdi:blur",
+};
+
+const readingId = (e) => (typeof e === "string" ? e : (e && e.entity) || "");
+const readingList = (r) =>
+  (r && Array.isArray(r.readings) ? r.readings : []).filter((e) => readingId(e));
+const _num = (v) => (v === "" || v == null || !isFinite(Number(v)) ? null : Number(v));
+
+/* The device's number entities, found once per entity registry rather than
+ * by walking every entity in the house on every redraw. */
+const _devNumbers = new WeakMap();
+function devNumbers(hass, dev) {
+  const ents = hass && hass.entities;
+  if (!ents || !dev) return [];
+  let m = _devNumbers.get(ents);
+  if (!m) {
+    m = new Map();
+    for (const [id, reg] of Object.entries(ents))
+      if (reg && reg.device_id && id.startsWith("number.")) {
+        if (!m.has(reg.device_id)) m.set(reg.device_id, []);
+        m.get(reg.device_id).push(id);
+      }
+    _devNumbers.set(ents, m);
+  }
+  return m.get(dev) || [];
+}
+
+/* The limits a reading warns at: its own, else its device's comfort range. */
+function readingLimits(e, hass) {
+  const o = typeof e === "object" && e ? e : {};
+  const id = readingId(e);
+  const out = { high: _num(o.above), low: _num(o.below), highFrom: "", lowFrom: "" };
+  if (out.high != null && out.low != null) return out;
+  const st = hass && hass.states && hass.states[id];
+  const cls = st && st.attributes && st.attributes.device_class;
+  const reg = hass && hass.entities && hass.entities[id];
+  if (!cls || !reg || !reg.device_id) return out;
+  const re = new RegExp(`comfort_${cls}_(max|min)$`);
+  for (const nid of devNumbers(hass, reg.device_id)) {
+    const m = re.exec(nid);
+    if (!m) continue;
+    const v = _num((hass.states[nid] || {}).state);
+    if (v == null) continue;
+    if (m[1] === "max" && out.high == null) { out.high = v; out.highFrom = nid; }
+    if (m[1] === "min" && out.low == null) { out.low = v; out.lowFrom = nid; }
+  }
+  return out;
+}
+
+function _readingUnit(u) {
+  if (!u) return "";
+  return /^°|^%$/.test(u) ? u : ` ${u}`;
+}
+
+function readingText(v, unit, cls) {
+  if (cls === "temperature" || /^°/.test(unit || "")) return `${Math.round(v)}°`;
+  if (unit === "%") return `${Math.round(v)}%`;
+  const r = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+  return unit ? `${r} ${unit}` : String(r);
+}
+
+/* A room-wide icon set in the Chips panel wins over the sensor's kind. */
+function readingIconOver(r) {
+  return (((r && r.chips) || {}).readings || {}).icon
+      || (((r && r._chips) || {}).readings || {}).icon || "";
+}
+
+/* The chips. `look(mood)` answers { col, show, icon } - chipLook for the
+ * header, the tile's resolved variables for the tile - which is the only
+ * thing the two renderers supply differently. */
+function readingChipsFrom(list, hass, look, iconOver) {
+  const out = [];
+  const states = (hass && hass.states) || {};
+  for (const e of list || []) {
+    const id = readingId(e);
+    const o = typeof e === "object" && e ? e : {};
+    const st = states[id];
+    const a = (st && st.attributes) || {};
+    const name = o.name || (hass && hass.entities ? entLabel(id, hass) : a.friendly_name || id);
+    const cls = a.device_class || "";
+    const icon = o.icon || iconOver || READING_ICONS[cls] || a.icon || look("normal").icon || "mdi:gauge";
+    const v = st ? _num(st.state) : null;
+    if (v == null) {
+      const lk = look("normal");
+      if (lk.show !== "always") continue;
+      out.push({ key: "readings", icon, col: lk.col, text: "–", entity: id, mood: "normal",
+                 title: `${name} — ${st ? st.state : "not in Home Assistant"}`,
+                 tap: { kind: "more-info", entity: id } });
+      continue;
+    }
+    const lim = readingLimits(e, hass);
+    const mood = lim.high != null && v > lim.high ? "high"
+               : lim.low != null && v < lim.low ? "low" : "normal";
+    const lk = look(mood);
+    if (lk.show === "never" || (lk.show === "active" && mood === "normal")) continue;
+    const u = _readingUnit(a.unit_of_measurement);
+    const raw = Math.round(v * 10) / 10;
+    const own = " (the sensor’s own comfort limit)";
+    let title = `${name} — ${raw}${u}`;
+    if (mood === "high") title += `, above ${lim.high}${u}${lim.highFrom ? own : ""}.`;
+    else if (mood === "low") title += `, below ${lim.low}${u}${lim.lowFrom ? own : ""}.`;
+    else if (lim.high != null && lim.low != null) title += `. Comfortable ${lim.low}–${lim.high}${u}.`;
+    else if (lim.high != null) title += `. Warns above ${lim.high}${u}.`;
+    else if (lim.low != null) title += `. Warns below ${lim.low}${u}.`;
+    out.push({ key: "readings", icon, col: lk.col, text: readingText(v, a.unit_of_measurement, cls),
+               entity: id, mood, title, tap: { kind: "more-info", entity: id } });
+  }
+  return out;
+}
+
+/* The tile's half. button-card hands its templates `variables` and the
+ * whole `hass`, and the room card put the list, the icon override and the
+ * resolved looks in variables - so this is readingChipsFrom with the
+ * tile's own colours. */
+function charroReadingChips(v, hass) {
+  const c = ((v && v.chips) || {}).readings || {};
+  const look = (m) => {
+    const x = c[m] || c;
+    return { col: [x.bg, x.fg], show: c.show, icon: c.icon };
+  };
+  return readingChipsFrom(readingList(v), hass, look, (v && v.readings_icon) || "");
+}
+
+const _esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+  (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+function charroReadings(v, states, hass) {
+  return charroReadingChips(v, hass).map((c) =>
+    `<span title="${_esc(c.title)}" data-tip-ent="${_esc(c.entity)}" `
+    + `data-tip-do="Tap: open the pop-up" style="display:inline-flex;align-items:center;`
+    + `gap:4px;padding:1px 6px;border-radius:999px;background:${c.col[0]};color:${c.col[1]};`
+    + `font-size:14px;font-weight:700;white-space:nowrap;line-height:23px">`
+    + `<ha-icon icon="${_esc(c.icon)}" style="--mdc-icon-size:18px;width:18px;height:18px">`
+    + `</ha-icon>${_esc(c.text)}</span>`).join("");
+}
+
+if (typeof window !== "undefined") {
+  window.charroReadingChips = charroReadingChips;
+  window.charroReadings = charroReadings;
 }
 
 /* A room's own thermometer, when it has one: its reading as a number, or
@@ -3499,6 +3667,9 @@ function roomChips(r, hass) {
     const c = waterChip(r, hass, k);
     if (c) out.push(c);
   }
+
+  out.push(...readingChipsFrom(readingList(r), hass,
+    (m) => chipLook("readings", r, m), readingIconOver(r)));
 
   /* The one you'd want to know about from across the house, and now it
    * reads like its own tile on the security page: the same four states, the
@@ -4126,6 +4297,7 @@ class RoomPopup {
       (r.music_powers || []).map((p) => typeof p === "string" ? p : (p && (p.entity || p.power))),
       [r.media_player, roomTv(r), r.projector_entity, r.receiver_entity, r.climate_entity,
        r.temp_sensor],
+      readingList(r).map(readingId),
     ).filter(Boolean);
     let s = "";
     for (const e of ids) {
@@ -4981,6 +5153,9 @@ class CharroRoomCard extends CharroBase {
       climate_entity: c.climate_entity || "",
       // the room's own thermometer, when it has one - the chip's number
       temp_sensor: c.temp_sensor || "",
+      // extra sensor chips, and a Chips-panel icon that overrides theirs
+      readings: readingList(c),
+      readings_icon: readingIconOver(c),
       music_player: c.music_player || "",
       confirm_sensor: c.confirm_sensor || "",
       // the tile's garage chip counts these on its own
@@ -5020,6 +5195,8 @@ class CharroRoomCard extends CharroBase {
      * would only appear on a reload. */
     const tv = roomTv(c);
     if (tv) out.push(tv);
+    // a new reading redraws the tile; its device's comfort limits rarely move
+    out.push(...readingList(c).map(readingId));
     return uniq(out);
   }
 
@@ -9375,7 +9552,7 @@ function itemWhere(it) {
  * fields the form has no row for. */
 const FIELD_WHERE = {
   climate_entity: "Climate", climate_card: "Climate", climate_modes: "Climate",
-  temp_sensor: "Climate",
+  temp_sensor: "Climate", readings: "Readings",
   tv_entity: "Media & remotes", projector_entity: "Media & remotes",
   receiver_entity: "Media & remotes",
   media_player: "Music", media_card: "Advanced", music_player: "Music",
@@ -9602,16 +9779,17 @@ const PANEL_USED = {
   gates: (r) => !!(r.gates || []).length,
   cams:  (r) => !!(r.cameras || []).length,
   chips: (r) => !!(r.chips && Object.keys(r.chips).length),
+  readings: (r) => !!readingList(r).length,
   adv:   (r) => !!(r.sections || r.cards || r.media_card || r.camera_card),
 };
 const PANEL_ADD = { video: "Media & remotes", music: "Music", water: "Pool & water",
   doors: "Door / motion alert", gates: "Gates", cams: "Cameras",
-  chips: "Chips", adv: "Advanced" };
+  chips: "Chips", readings: "Readings", adv: "Advanced" };
 /* Which expansion-panel flag each one reads, so revealing a panel can open
  * it rather than leaving a shut panel the button appeared to do nothing to. */
 const PANEL_OPEN = { video: "_videoOpen", music: "_zoneOpen", water: "_waterOpen",
   doors: "_doorsOpen", gates: "_gatesOpen", cams: "_camsOpen",
-  chips: "_chipsOpen", adv: "_advOpen" };
+  chips: "_chipsOpen", readings: "_readOpen", adv: "_advOpen" };
 
 /* Returns how many it actually added, so the editor can say so. */
 function areaApply(r, key, ids) {
@@ -11292,6 +11470,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._doorsBox = document.createElement("div");
     this._gatesBox = document.createElement("div");
     this._camsBox = document.createElement("div");
+    this._readBox = document.createElement("div");
 
     const videoHost = this._panel("Media & remotes",
       "The TV, the screens, their sources, and every remote", "mdi:remote-tv",
@@ -11311,6 +11490,9 @@ class CharroRoomsEditor extends HTMLElement {
     const camsHost = this._panel("Cameras",
       "Which cameras this room shows, and what each is called", "mdi:cctv",
       "_camsOpen", this._camsBox);
+    const readHost = this._panel("Readings",
+      "Extra sensors shown as chips \u2014 a closet\u2019s temperature, a humidity",
+      "mdi:thermometer", "_readOpen", this._readBox);
     this._chipsBox = document.createElement("div");
     const chipsHost = this._panel("Chips",
       "Colour, glyph, when each one shows and where it sits \u2014 this room only",
@@ -11392,7 +11574,7 @@ class CharroRoomsEditor extends HTMLElement {
 
     const hosts = [["video", videoHost], ["music", zoneHost], ["water", waterHost],
                    ["doors", doorsHost], ["gates", gatesHost], ["cams", camsHost],
-                   ["chips", chipsHost], ["adv", advanced]];
+                   ["readings", readHost], ["chips", chipsHost], ["adv", advanced]];
     const simple = this._simpleOn();
     this._shownPanels = this._shownPanels || {};
     /* A panel revealed by one of the buttons below stays until the room is
@@ -11433,6 +11615,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._renderDoors();
     this._renderGates();
     this._renderCams();
+    this._renderReadings();
     this._renderChipsPanel();
     this._lbEnsure();
     this._lbRender();
@@ -11838,6 +12021,63 @@ class CharroRoomsEditor extends HTMLElement {
     note.textContent = "Each camera is its own tile in the layout, so it can sit "
       + "anywhere \u2014 beside the lights, two to a row, wherever you drag it. "
       + "A camera takes the full width unless you set it to half.";
+    box.appendChild(note);
+  }
+
+  /* Readings: a sensor per row, a name and icon that default to the
+   * sensor's own, and the limits it turns red or blue at - blank borrows
+   * the device's comfort range where it publishes one, and says so. */
+  _renderReadings() {
+    const box = this._readBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const r = this._room;
+    const redraw = () => { this._renderReadings(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    (r.readings || []).forEach((eRaw, i) => {
+      const e = typeof eRaw === "object" && eRaw ? eRaw : { entity: String(eRaw || "") };
+      if (typeof eRaw !== "object") r.readings[i] = e;
+      const set = (k) => (v) => { if (v) e[k] = v; else delete e[k]; };
+      const setN = (k) => (v) => {
+        const n = _num(v);
+        if (n == null) delete e[k]; else e[k] = n;
+      };
+      const row = f.rowBox();
+      row.appendChild(f.ent("Sensor", e.entity, ["sensor", "number", "input_number"], set("entity")));
+      const st = e.entity && this._hass && this._hass.states[e.entity];
+      const cls = (st && st.attributes && st.attributes.device_class) || "";
+      row.appendChild(f.text("Name", e.name, set("name"),
+        e.entity ? entLabel(e.entity, this._hass) : "Server"));
+      row.appendChild(f.icon("Icon", e.icon, set("icon"), READING_ICONS[cls]
+        ? `Blank uses ${READING_ICONS[cls]}, for a ${cls} sensor.` : ""));
+      const lim = readingLimits({ entity: e.entity }, this._hass);
+      const u = _readingUnit(st && st.attributes && st.attributes.unit_of_measurement).trim();
+      const hi = f.text(`Red above${u ? ` (${u})` : ""}`, e.above == null ? "" : String(e.above),
+        setN("above"), lim.high != null ? String(lim.high) : "e.g. 85");
+      const lo = f.text(`Blue below${u ? ` (${u})` : ""}`, e.below == null ? "" : String(e.below),
+        setN("below"), lim.low != null ? String(lim.low) : "e.g. 60");
+      if (e.above == null && lim.highFrom) this._borrowNote(hi, lim.highFrom, "sensor\u2019s comfort max");
+      if (e.below == null && lim.lowFrom) this._borrowNote(lo, lim.lowFrom, "sensor\u2019s comfort min");
+      row.append(hi, lo);
+      const x = document.createElement("button");
+      x.className = "vdel";
+      x.textContent = "Remove reading";
+      x.addEventListener("click", () => {
+        r.readings.splice(i, 1);
+        if (!r.readings.length) delete r.readings;
+        redraw();
+      });
+      row.appendChild(x);
+      box.appendChild(row);
+    });
+    box.appendChild(f.add("+ Reading", () => {
+      (r.readings = r.readings || []).push({ entity: "" });
+    }));
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "Each reading is a chip on the tile and in the pop-up header, "
+      + "with its value: grey in range, red above, blue below. To show only the ones "
+      + "out of range, set Readings to \u201cOnly when it is on\u201d in Chips.";
     box.appendChild(note);
   }
 
