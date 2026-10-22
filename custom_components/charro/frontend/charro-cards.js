@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.110.0";
+const VERSION = "5.111.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -5965,8 +5965,10 @@ class CharroVideoCard extends HTMLElement {
     const sp = document.createElement("span");
     sp.textContent = this._single() ? "On" : `Turn on ${d.name || "this screen"}`;
     b.appendChild(sp);
-    b.title = `${d.name || "This screen"} is off \u2014 turn it on (${p})`;
-    b.dataset.tipEnt = p;
+    const audio = this._audioFor(d);
+    b.title = `${d.name || "This screen"} is off \u2014 turn it on (${p})`
+      + (audio.length ? `, with ${audio.join(", ")}` : "");
+    b.dataset.tipEnt = [p].concat(audio).join(",");
     b.addEventListener("click", () => {
       b.disabled = true;
       b.classList.add("busy");
@@ -5980,6 +5982,15 @@ class CharroVideoCard extends HTMLElement {
           b.classList.remove("busy");
           b.dataset.tipBusy = `${p} refused: ${(err && err.message) || err}`;
         });
+      /* A picture with no sound is half a room: the receiver it plays
+       * through comes on with it, on whatever input it was left on - which
+       * live_from then reads back as the lit source. */
+      for (const id of this._audioFor(d)) {
+        const st = this._hass.states[id];
+        if (st && OFFISH.includes(st.state))
+          Promise.resolve(this._hass.callService("media_player", "turn_on", {}, { entity_id: id }))
+            .catch((err) => console.error("charro-video-card: receiver on", err));
+      }
     });
     return b;
   }
@@ -6051,6 +6062,14 @@ class CharroVideoCard extends HTMLElement {
       seen.add(k);
       return true;
     }) };
+  }
+
+  /* The receiver a screen plays through: what live_from reads, else its
+   * volume, as long as it is a media_player and not the screen itself. */
+  _audioFor(d) {
+    const p = screenPower(d);
+    return uniq([this._liveFrom(d), d && d.volume, d && d._volume_room])
+      .filter((id) => id !== p && String(id).startsWith("media_player."));
   }
 
   /* What is actually on for this screen: its power and the receiver it

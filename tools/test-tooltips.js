@@ -250,7 +250,8 @@ T.tipHide();
   let h = hv("off");
   let c = await render(h);
   const onB = c._wrap.querySelectorAll("button.vchip").find((b) => b.textContent.trim() === "On");
-  eq(onB && onB.dataset.tipEnt, "switch.theatre_projector", "On names the switch it turns on");
+  eq(onB && onB.dataset.tipEnt, "switch.theatre_projector,media_player.vsx_lx305",
+    "On names the switch it turns on, and the receiver that comes on with it");
   onB.click();
   await new Promise((r) => setTimeout(r, 0));
   ok(/waiting for switch\.theatre_projector to report on/.test(onB.dataset.tipBusy || ""),

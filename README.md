@@ -396,6 +396,11 @@ So when the helper won't move, the card does the work itself:
   the receiver on, and switches the receiver to that source's `live_input`.
   If it's already showing, nothing more happens.
 
+**On**, for a dark screen, turns on the screen's power and the receiver it
+plays through (`live_from`, else its `volume` media player), so one tap gives
+picture and sound. The receiver comes back on the input it was left on, and
+`live_from` reads that back as the lit source.
+
 With the helper on anything else, Off goes through the helper exactly as
 before, and your automation does the rest.
 

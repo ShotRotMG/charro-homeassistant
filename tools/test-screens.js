@@ -55,6 +55,14 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
   eq(h.calls[0], ["switch", "turn_on", {}, { entity_id: "switch.theatre_projector" }],
     "On turns the projector's switch on");
   ok(!!onBtn && onBtn.disabled, "and waits for the projector rather than flipping at once");
+  ok(h.calls.some((x) => x[0] === "media_player" && x[1] === "turn_on"
+    && x[3].entity_id === "media_player.vsx_lx305"), "and the receiver comes on with it, for sound");
+  eq(h.calls.length, 2, "nothing else");
+  h = hassWith("off", "Off", "on");
+  c = await render(h);
+  named(c, "On").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.length, 1, "a receiver already on is left alone");
 
   console.log("-- projector on, helper still Off (how tonight looked) --");
   h = hassWith("on", "Off");
