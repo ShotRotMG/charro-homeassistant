@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.109.0";
+const VERSION = "5.110.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6129,6 +6129,10 @@ class CharroVideoCard extends HTMLElement {
     if (!sf || !opt) return;
     const domain = sf.split(".")[0];
     const st = this._hass.states[sf];
+    /* A helper already on this option will not move when told it again,
+     * so the automation that would switch to it never runs - the same trap
+     * as Off. Noted now, before the select, and dealt with after it. */
+    const stuck = domain !== "media_player" && !!st && st.state === opt;
     const valid = st && st.attributes &&
       (st.attributes.options || st.attributes.source_list);
     if (valid && valid.length && !valid.includes(opt)) {
@@ -6145,7 +6149,40 @@ class CharroVideoCard extends HTMLElement {
     } catch (err) {
       console.error("Charro Cards: couldn\u2019t select source", opt, err);
     }
+    if (stuck && !this._showing(d, key)) await this._startDirect(d, key, spec);
     await this._wake(d);
+  }
+
+  /* Is this screen already showing that source? On, and - where live_from
+   * can say - on that input. With no live_from there is nothing to check
+   * against, so a lit screen is taken at its word. */
+  _showing(d, key) {
+    const p = screenPower(d);
+    const ps = p && this._hass.states[p];
+    if (p && (!ps || OFFISH.includes(ps.state))) return false;
+    const told = this._reported(d);
+    return told === null || told === key;
+  }
+
+  /* What the automation would have done, done directly: the screen's power
+   * on, the receiver on and on this source's input. Only what live_from and
+   * live_input describe, so a room that never said is left alone. */
+  async _startDirect(d, key, spec) {
+    const hass = this._hass;
+    const call = (dom, svc, data, id) =>
+      Promise.resolve(hass.callService(dom, svc, data, { entity_id: id }))
+        .catch((err) => console.error(`charro-video-card: ${dom}.${svc}`, err));
+    const p = screenPower(d);
+    const ps = p && hass.states[p];
+    if (ps && OFFISH.includes(ps.state)) await call(p.split(".")[0], "turn_on", {}, p);
+    const lf = this._liveFrom(d);
+    if (!lf || !lf.startsWith("media_player.")) return;
+    const rs = hass.states[lf];
+    if (!rs) return;
+    if (OFFISH.includes(rs.state)) await call("media_player", "turn_on", {}, lf);
+    const a = rs.attributes || {};
+    const input = liveInputFor(key, spec, a.source_list || []);
+    if (input && a.source !== input) await call("media_player", "select_source", { source: input }, lf);
   }
 
   /* Routing an input to a television that is off used to leave it off, and

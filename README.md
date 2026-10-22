@@ -391,6 +391,10 @@ So when the helper won't move, the card does the work itself:
 - **Off** switches off the screen's power and the receiver it plays through
   (`live_from`, else its `volume` media player). It only touches what is on,
   and each thing only once.
+- **Picking a source** the helper already shows still tells the helper, then,
+  if the screen isn't actually showing it, turns the screen's power on and
+  the receiver on, and switches the receiver to that source's `live_input`.
+  If it's already showing, nothing more happens.
 
 With the helper on anything else, Off goes through the helper exactly as
 before, and your automation does the rest.

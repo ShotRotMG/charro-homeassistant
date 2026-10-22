@@ -161,6 +161,37 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
     "with the helper on Dish, Off still goes through the helper as before");
   eq(h.calls.length, 1, "and nothing else");
 
+  console.log("-- picking the source the helper already holds --");
+  h = hassWith("on", "XBOX");                    // helper remembers Xbox; receiver was moved to SAT by remote
+  c = await renderLive(h);
+  named(c, "Xbox").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls[0], ["input_select", "select_option", { option: "XBOX" },
+    { entity_id: "input_select.theater_media_select" }], "the helper is still told, as always");
+  ok(h.calls.some((x) => x[1] === "select_source" && x[2].source === "GAME"
+    && x[3].entity_id === "media_player.vsx_lx305"),
+    "and since it cannot move, the receiver is switched to GAME directly");
+  ok(!h.calls.some((x) => x[1] === "turn_on"), "nothing already on is turned on");
+
+  h = hassWith("on", "XBOX");
+  h.states["media_player.vsx_lx305"].attributes.source = "GAME";
+  c = await renderLive(h);
+  named(c, "Xbox").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.length, 1, "already showing Xbox: nothing beyond the helper");
+
+  h = hassWith("on", "XBOX", "off");             // receiver off
+  c = await renderLive(h);
+  await c._pickSource("XBOX");
+  ok(h.calls.some((x) => x[0] === "media_player" && x[1] === "turn_on"), "a receiver that is off is turned on");
+  ok(h.calls.some((x) => x[1] === "select_source" && x[2].source === "GAME"), "and put on GAME");
+
+  h = hassWith("on", "Off");
+  c = await renderLive(h);
+  named(c, "Xbox").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.length, 1, "a helper that can move is left to its automation");
+
   console.log("-- the media block --");
   const room = { room: "theatre", projector_entity: "switch.theatre_projector",
     receiver_entity: "media_player.vsx_lx305", video: VIDEO };
