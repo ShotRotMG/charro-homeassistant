@@ -377,6 +377,26 @@ Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
 
+### No helper: the receiver picks
+
+A room doesn't need an `input_select` and an automation per source. Point the
+screen's **Current source comes from** at the receiver itself
+(`source_from: media_player.vsx_lx305`) and give each source the receiver
+input it lives on (`input: SAT`, `DVD`, `GAME`…). Then:
+
+- **Picking a source** turns the screen's power on if it's off, turns the
+  receiver on if it's off, runs that source's own actions (for example, the
+  Xbox's `media_player.turn_on`, or a Harmony PowerOn for the Dish box), and
+  switches the receiver to its input. Everything uses `turn_on`, never a
+  toggle, so a second tap can't switch anything off.
+- **What's lit** is the receiver's own input, so changing it with the
+  receiver's remote shows straight away.
+- **Off** runs an `Off` source's actions when the room has one (mark it hidden
+  so it isn't drawn as a source). Otherwise it switches off the screen's power
+  and the receiver.
+
+Nothing remembers anything, so there is nothing to drift.
+
 ### When the helper already says it
 
 A room that picks sources through a helper (`input_select`) relies on

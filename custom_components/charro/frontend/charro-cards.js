@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.111.0";
+const VERSION = "5.112.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6051,6 +6051,14 @@ class CharroVideoCard extends HTMLElement {
         for (const id of this._litPower(d)) jobs.push({ power: id });
         continue;
       }
+      /* A receiver that picks the sources has no Off among them: the
+       * screen and the receiver both go off, not just the screen with the
+       * sound left playing to an empty room. */
+      if (sf && sf.startsWith("media_player.")) {
+        for (const id of uniq(this._litPower(d).concat(
+          st && !OFFISH.includes(st.state) ? [sf] : []))) jobs.push({ power: id });
+        continue;
+      }
       const p = screenPower(d);
       if (p && hass && hass.states[p]) jobs.push({ power: p });
     }
@@ -6157,6 +6165,20 @@ class CharroVideoCard extends HTMLElement {
     if (valid && valid.length && !valid.includes(opt)) {
       console.warn(`Charro Cards: "${opt}" is not an option on ${sf}. ` +
                    `It offers: ${valid.join(", ")}`);
+    }
+    /* A receiver picking the sources itself, with no helper and no
+     * automation behind it, is the whole job: it has to be on to take an
+     * input, and the screen it feeds has to come on too. turn_on, never a
+     * toggle, so a second tap cannot switch anything off. */
+    if (domain === "media_player") {
+      const p = screenPower(d);
+      const ps = p && this._hass.states[p];
+      if (ps && OFFISH.includes(ps.state) && p !== sf)
+        await Promise.resolve(this._hass.callService(p.split(".")[0], "turn_on", {}, { entity_id: p }))
+          .catch((err) => console.error("charro-video-card: screen on", err));
+      if (st && OFFISH.includes(st.state))
+        await Promise.resolve(this._hass.callService("media_player", "turn_on", {}, { entity_id: sf }))
+          .catch((err) => console.error("charro-video-card: receiver on", err));
     }
     try {
       if (domain === "media_player")

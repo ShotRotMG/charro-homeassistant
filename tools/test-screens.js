@@ -200,6 +200,60 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
   await new Promise((r) => setTimeout(r, 0));
   eq(h.calls.length, 1, "a helper that can move is left to its automation");
 
+  console.log("-- no helper: the receiver picks the sources --");
+  const RX = { displays: [{ name: "Theatre", icon: "mdi:projector",
+      screen: "switch.theatre_projector", source_from: "media_player.vsx_lx305",
+      volume: "media_player.vsx_lx305" }],
+    sources: { Dish: { title: "Dish", input: "SAT" }, AppleTV: { title: "Theatre AppleTV", input: "DVD" },
+               SuperBox: { title: "Theatre SuperBox", input: "STRM" },
+               XBOX: { title: "Xbox", input: "GAME", do: [{ action: "media_player.turn_on",
+                 target: { entity_id: "media_player.xbox" } }] } } };
+  async function renderRx(h, v = RX) {
+    const c = Object.create(T.CharroVideoCard.prototype);
+    c._config = { video: v }; c._v = v; c._templates = {}; c._zones = []; c._tabs = false;
+    c._wrap = T.el("div"); c._hass = h;
+    await c._render();
+    return c;
+  }
+  h = hassWith("on", "Off");                         // receiver on SAT
+  c = await renderRx(h);
+  eq(selOf(c), ["Dish"], "the receiver's own input is what's lit");
+  named(c, "Xbox").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.map((x) => x[0] + "." + x[1] + " " + x[3].entity_id),
+    ["media_player.turn_on media_player.xbox", "media_player.select_source media_player.vsx_lx305"],
+    "picking Xbox runs its own action and switches the receiver - no helper");
+  eq(h.calls[1][2], { source: "GAME" }, "to GAME");
+
+  h = hassWith("off", "Off", "off");                 // all dark
+  c = await renderRx(h);
+  await c._pickSource("Dish");
+  eq(h.calls.map((x) => x[0] + "." + x[1] + " " + x[3].entity_id),
+    ["switch.turn_on switch.theatre_projector", "media_player.turn_on media_player.vsx_lx305",
+     "media_player.select_source media_player.vsx_lx305"],
+    "from dark: projector on, receiver on, then the input");
+
+  h = hassWith("on", "Off");
+  c = await renderRx(h);
+  c._wrap.querySelector(".vchip.off").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.map((x) => x[0] + "." + x[1] + " " + x[3].entity_id).sort(),
+    ["media_player.turn_off media_player.vsx_lx305", "switch.turn_off switch.theatre_projector"],
+    "Off with no Off source: projector and receiver, each once");
+
+  const RXOFF = { ...RX, sources: { ...RX.sources, Off: { hidden: true, do: [
+    { action: "media_player.turn_off", target: { entity_id: ["media_player.vsx_lx305", "media_player.sony_projector"] } },
+    { action: "remote.send_command", target: { entity_id: "remote.theatre_harmonyhub" },
+      data: { device: "83001072", command: "PowerOff" } }] } } };
+  h = hassWith("on", "Off");
+  c = await renderRx(h, RXOFF);
+  ok(!named(c, "Off") || named(c, "Off").className.includes("vchip off"),
+    "a hidden Off source is not drawn as a source chip");
+  c._wrap.querySelector(".vchip.off").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.map((x) => x[0] + "." + x[1]), ["media_player.turn_off", "remote.send_command"],
+    "an Off source's own actions win: everything, Harmony included, with no automation");
+
   console.log("-- the media block --");
   const room = { room: "theatre", projector_entity: "switch.theatre_projector",
     receiver_entity: "media_player.vsx_lx305", video: VIDEO };
