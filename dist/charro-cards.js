@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.108.0";
+const VERSION = "5.109.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6026,11 +6026,46 @@ class CharroVideoCard extends HTMLElement {
       const st = sf && hass && hass.states[sf];
       const opts = st && st.attributes &&
         (st.attributes.options || st.attributes.source_list);
-      if (opts && opts.includes(off)) { jobs.push({ pick: sf, option: off }); continue; }
+      if (opts && opts.includes(off)) {
+        /* A helper that already says Off cannot be told Off: selecting
+         * the option it holds changes nothing, so the automation waiting
+         * for it to become Off never runs. That was the Theatre the night
+         * it was switched on by remote - the helper said Off for four
+         * hours and the card's Off did nothing at all. When the helper
+         * will not move, the card switches off what is on itself. */
+        if (sf.startsWith("media_player.") || st.state !== off) {
+          jobs.push({ pick: sf, option: off });
+          continue;
+        }
+        for (const id of this._litPower(d)) jobs.push({ power: id });
+        continue;
+      }
       const p = screenPower(d);
       if (p && hass && hass.states[p]) jobs.push({ power: p });
     }
-    return { kind: "jobs", steps: jobs };
+    /* two screens sharing one receiver turn it off once */
+    const seen = new Set();
+    return { kind: "jobs", steps: jobs.filter((j) => {
+      const k = j.power ? "p:" + j.power : "s:" + j.pick;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }) };
+  }
+
+  /* What is actually on for this screen: its power and the receiver it
+   * plays through (what live_from reads, else its volume), whichever are
+   * on now. A receiver driven as a number or a matrix select is left out -
+   * only a media_player can be told off. */
+  _litPower(d) {
+    const hass = this._hass;
+    const ids = uniq([screenPower(d), this._liveFrom(d),
+      d && d.volume, d && d._volume_room]
+      .filter((id) => id && (id === screenPower(d) || String(id).startsWith("media_player."))));
+    return ids.filter((id) => {
+      const st = hass && hass.states[id];
+      return st && !OFFISH.includes(st.state);
+    });
   }
 
   async _allOff() {

@@ -377,6 +377,24 @@ Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
 
+### When the helper already says it
+
+A room that picks sources through a helper (`input_select`) relies on
+automations that fire when the helper *changes*. Selecting the option the
+helper already holds changes nothing, so no automation runs. That happens
+whenever the gear was switched on or off some other way, such as a Harmony
+remote, the receiver's own remote or a keypad. The Theatre sat with its helper
+on Off for four hours while everything was on, and Off did nothing.
+
+So when the helper won't move, the card does the work itself:
+
+- **Off** switches off the screen's power and the receiver it plays through
+  (`live_from`, else its `volume` media player). It only touches what is on,
+  and each thing only once.
+
+With the helper on anything else, Off goes through the helper exactly as
+before, and your automation does the rest.
+
 ### What picking a source does
 
 A source can carry its own actions, written in Home Assistant's own shape —

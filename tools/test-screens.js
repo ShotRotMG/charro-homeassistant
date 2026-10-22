@@ -130,6 +130,37 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
   lc._hass.states["media_player.vsx_lx305"].attributes.source = "GAME";
   ok(lc._sig() !== s1, "the card redraws when the receiver changes input");
 
+  console.log("-- Off when the helper already says Off (2026-10-21) --");
+  h = hassWith("on", "Off");                     // switched on by remote: helper never moved
+  c = await renderLive(h);
+  const offB = c._wrap.querySelector(".vchip.off");
+  ok(!!offB, "the lit room offers Off");
+  offB.click();
+  await new Promise((r) => setTimeout(r, 0));
+  ok(!h.calls.some((x) => x[1] === "select_option"),
+    "it does not re-select Off on a helper already at Off - that changes nothing");
+  ok(h.calls.some((x) => x[0] === "switch" && x[1] === "turn_off"
+    && x[3].entity_id === "switch.theatre_projector"), "it switches the projector off itself");
+  ok(h.calls.some((x) => x[0] === "media_player" && x[1] === "turn_off"
+    && x[3].entity_id === "media_player.vsx_lx305"), "and the receiver");
+  eq(h.calls.filter((x) => x[1] === "turn_off").length, 2, "once each");
+
+  h = hassWith("on", "Off", "off");              // receiver already off
+  c = await renderLive(h);
+  c._wrap.querySelector(".vchip.off").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls.map((x) => x[3].entity_id), ["switch.theatre_projector"],
+    "only what is on is switched off");
+
+  h = hassWith("on", "Dish");                    // the helper can move: let the automation work
+  c = await renderLive(h);
+  c._wrap.querySelector(".vchip.off").click();
+  await new Promise((r) => setTimeout(r, 0));
+  eq(h.calls[0], ["input_select", "select_option", { option: "Off" },
+    { entity_id: "input_select.theater_media_select" }],
+    "with the helper on Dish, Off still goes through the helper as before");
+  eq(h.calls.length, 1, "and nothing else");
+
   console.log("-- the media block --");
   const room = { room: "theatre", projector_entity: "switch.theatre_projector",
     receiver_entity: "media_player.vsx_lx305", video: VIDEO };
