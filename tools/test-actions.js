@@ -37,5 +37,20 @@ sel.dispatchEvent({ type: "value-changed", detail: { value: [] }, stopPropagatio
 ok(!("do" in ed._room.video.sources.XBOX), "removing the last action clears it");
 eq(sel.value, [], "and the editor shows none");
 
+console.log("-- the action editor's words --");
+const asked = [];
+const h2 = { ...hass, loadFragmentTranslation: async (f) => { asked.push(f); } };
+const ed2 = Object.create(T.CharroRoomsEditor.prototype);
+ed2._hass = h2; ed2._videoBox = T.el("div"); ed2._renderPreview = () => {};
+ed2._room = JSON.parse(JSON.stringify(ed._room));
+ed2._room.video.sources.Dish = { title: "Dish", input: "SAT" };
+ed2._renderVideo();
+eq(asked, ["config"], "the config translations are asked for, once, however many sources");
+const sels = ed2._videoBox.querySelectorAll("ha-selector");
+const h3 = { ...h2, localize: () => "Add action" };
+ed2._built = true;
+ed2.hass = h3;
+ok(sels.length === 2 && sels.every((s) => s.hass === h3), "and each action editor gets the hass that carries them");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

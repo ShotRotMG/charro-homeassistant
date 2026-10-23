@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.114.0";
+const VERSION = "5.115.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10672,12 +10672,32 @@ class CharroRoomsEditor extends HTMLElement {
     this._hass = h;
     if (!this._built) this._build();
     if (this._form) this._form.hass = h;
+    /* The action editors open their pickers with the hass they hold, so
+     * they get every new one - including the one that arrives once the
+     * config strings below have loaded. */
+    if (this._actSels)
+      for (const s of [...this._actSels]) {
+        if (s.isConnected) s.hass = h; else this._actSels.delete(s);
+      }
     if (Array.isArray(this._prev)) for (const c of this._prev) c.hass = h;
     else if (this._prev) this._prev.hass = h;
   }
   getCardSize() { return 12; }
 
   _path(k) { return `/config/charro_rooms/${k}.json`; }
+
+  /* Home Assistant's action editor is borrowed from its automation editor,
+   * and its words live in the "config" translations - which load when the
+   * Settings panel is opened, not on a custom panel like this one. Without
+   * them the action picker opened as tabs and rows with no text at all.
+   * Asked for once; the hass that comes back carries them. */
+  _configStrings() {
+    if (this._cfgStrings) return;
+    this._cfgStrings = true;
+    const h = this._hass;
+    if (h && typeof h.loadFragmentTranslation === "function")
+      Promise.resolve(h.loadFragmentTranslation("config")).catch(() => {});
+  }
   _canWrite() { return this._saveMode() !== "copy"; }
 
   _saveMode() {
@@ -13227,6 +13247,8 @@ class CharroRoomsEditor extends HTMLElement {
         const sel = document.createElement("ha-selector");
         sel.hass = this._hass;
         sel.selector = { action: {} };
+        (this._actSels = this._actSels || new Set()).add(sel);
+        this._configStrings();
         sel.value = spec.do || [];
         sel.addEventListener("value-changed", (ev) => {
           ev.stopPropagation();
