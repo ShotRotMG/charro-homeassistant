@@ -917,6 +917,20 @@ side; `"width": "full"` takes the row. The rows appear in the tray under
 
 ### Alert sensors
 
+Each sensor is sorted into a kind: garage (a cover), window, motion or door.
+The device class decides when there is one; an Elk zone is a plain `sensor`
+with none, so its id and name are read instead ("Theater Motion", "Hall PIR").
+
+The pop-up's far-left marker follows the kind:
+
+- **Doors and windows:** a grey shut door while all are closed, red (and a
+  window glyph if only windows are open) the moment one isn't. A room with no
+  door or window sensors gets no marker at all.
+- **Motion:** nothing while it's still, and a red motion marker while
+  something is moving. Click it for the sensor.
+
+The tile's corner badge uses the same kinds, one badge per kind.
+
 An `alert_sensors` entry is an id, or an object carrying what the door needs:
 
 ```json

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.113.0";
+const VERSION = "5.114.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1478,11 +1478,32 @@ if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
  * On `window` for the same reason charroOpenAlerts is: the template needs
  * the same answer in three places and a button-card template can only reach
  * a shared implementation through a global. */
-function charroAlertIcon(id) {
-  if (String(id).startsWith("cover.")) return "mdi:garage-open";
-  if (String(id).includes("window")) return "mdi:window-open-variant";
-  if (String(id).includes("motion")) return "mdi:motion-sensor";
-  return "mdi:door-open";
+/* What an alert sensor is: a garage, a window, motion, or a door. The
+ * device class says when there is one. An Elk zone is a plain `sensor` with
+ * none, so its own name is the next best word - "Theater Motion" was being
+ * called a door that was "closed". Read from the id and the friendly name,
+ * which is all a button-card template's `states` can offer. */
+const MOTION_CLASSES = ["motion", "occupancy", "presence", "moving"];
+function alertKind(id, states) {
+  const s = String(id || "");
+  if (s.startsWith("cover.")) return "garage";
+  const st = states && states[s];
+  const a = (st && st.attributes) || {};
+  const cls = a.device_class || "";
+  if (MOTION_CLASSES.includes(cls)) return "motion";
+  if (cls === "window") return "window";
+  if (cls === "garage_door") return "garage";
+  if (cls === "door" || cls === "opening") return "door";
+  const words = `${s} ${a.friendly_name || ""}`.toLowerCase();
+  if (/window/.test(words)) return "window";
+  if (/motion|\bpir\b|occupan|presence/.test(words)) return "motion";
+  return "door";
+}
+const ALERT_ICON = { garage: "mdi:garage-open", window: "mdi:window-open-variant",
+  motion: "mdi:motion-sensor", door: "mdi:door-open" };
+
+function charroAlertIcon(id, states) {
+  return ALERT_ICON[alertKind(id, states)];
 }
 
 function charroUnlocked(v, states) {
@@ -1496,7 +1517,7 @@ if (typeof window !== "undefined") window.charroUnlocked = charroUnlocked;
 function charroAlertGroups(v, states) {
   const out = [];
   for (const id of charroOpenAlerts(v, states)) {
-    const icon = charroAlertIcon(id);
+    const icon = charroAlertIcon(id, states);
     const hit = out.find((g) => g[0] === icon);
     if (hit) hit[1]++;
     else out.push([icon, 1]);
@@ -2862,6 +2883,7 @@ const POPUP_CSS = `
   color:var(--secondary-text-color); cursor:default; flex:none;
 }
 .charro-pop-hd .door.open{ color:#ef5350; cursor:pointer; }
+.charro-pop-hd .door + .door{ margin-left:6px; }
 /* Only the round icon buttons — a chip is a button too, and this rule's
  * fixed 32px box was squaring it and stacking the count under the icon. */
 .charro-pop-hd .tail > button{
@@ -4374,20 +4396,37 @@ class RoomPopup {
     const hd = document.createElement("div");
     hd.className = "charro-pop-hd";
 
-    // the far-left marker for the room as a whole: grey while everything's
-    // shut, red the moment something isn't
+    /* The far-left markers for the room as a whole. Doors and windows: grey
+     * while all are shut, red the moment one isn't - and nothing at all for
+     * a room with none, rather than a door standing in for a motion sensor.
+     * Motion has nothing to say while it is still, so it only appears, red,
+     * while something is moving. */
     const plain = plainSensors(this.room, this._hass);
     if (plain.length) {
       const { all, bad } = this._sensorState(plain);
-      const d = document.createElement("ha-icon");
-      d.className = bad.length ? "door open" : "door";
-      d.icon = bad.length ? "mdi:door-open" : "mdi:door-closed";
-      d.title = bad.length
-        ? `${listNames(bad)} violated.`
-        : `${listNames(all)} closed.`;
-      if (bad.length) d.addEventListener("click", () => this._moreInfo(bad[0].entity));
-      d.setAttribute("aria-label", d.title);
-      hd.appendChild(d);
+      const kind = (row) => alertKind(row.entity, this._hass.states);
+      const doors = all.filter((row) => kind(row) !== "motion");
+      const open = bad.filter((row) => kind(row) !== "motion");
+      const moving = bad.filter((row) => kind(row) === "motion");
+      const mark = (cls, icon, title, entity) => {
+        const d = document.createElement("ha-icon");
+        d.className = cls;
+        d.icon = icon;
+        d.title = title;
+        if (entity) d.addEventListener("click", () => this._moreInfo(entity));
+        d.setAttribute("aria-label", title);
+        hd.appendChild(d);
+      };
+      if (doors.length) {
+        const windows = open.length && open.every((row) => kind(row) === "window");
+        if (open.length)
+          mark("door open", windows ? "mdi:window-open-variant" : "mdi:door-open",
+               `${listNames(open)} open.`, open[0].entity);
+        else mark("door", "mdi:door-closed", `${listNames(doors)} closed.`);
+      }
+      if (moving.length)
+        mark("door open motion", "mdi:motion-sensor",
+             `${listNames(moving)} \u2014 movement.`, moving[0].entity);
     }
 
     const mid = document.createElement("div");
