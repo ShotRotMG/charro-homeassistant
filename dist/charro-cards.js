@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.112.0";
+const VERSION = "5.113.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -13193,6 +13193,12 @@ class CharroRoomsEditor extends HTMLElement {
           ev.stopPropagation();
           const val = ev.detail && ev.detail.value;
           if (val && val.length) spec.do = val; else delete spec.do;
+          /* Hand the value back. The action editor draws from .value and
+           * nothing else, so without this a new action was counted in the
+           * summary and vanished from the editor the moment it was picked -
+           * before its target or command could be filled in, which saved a
+           * bare remote.send_command with neither. */
+          sel.value = val || [];
           label();
           /* Deliberately not the panel's redraw: rebuilding this box under
            * the editor would take the focus and the half-finished row with
