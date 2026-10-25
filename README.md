@@ -425,6 +425,14 @@ Rules that keep it from misbehaving:
 The Home Assistant log says what it switched and why, e.g. "turn on
 switch.theatre_projector, to match media_player.vsx_lx305".
 
+### What counts as on
+
+**Show the sources and remotes when** (Media & remotes, `video.on_from`):
+the screen is on (the default), the receiver is on, or either is on. Until
+then the screens card shows just On. For the Theatre, "the receiver is on"
+shows the remotes as soon as the receiver is up, while the projector is still
+warming.
+
 ### No helper: the receiver picks
 
 A room doesn't need an `input_select` and an automation per source. Point the

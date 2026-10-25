@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.122.0";
+const VERSION = "5.123.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6480,6 +6480,17 @@ class CharroVideoCard extends HTMLElement {
   }
   _isLive(d) {
     if (!d) return false;
+    /* What counts as on: the screen (the default), the receiver it plays
+     * through, or either. The Theatre's receiver can be on GAME with the
+     * projector still warming up, and "On" alone was all the card showed. */
+    const by = (d && d.on_from) || this._v.on_from || "screen";
+    const lit = (id) => { const st = id && this._hass.states[id]; return st ? !OFFISH.includes(st.state) : null; };
+    if (by !== "screen") {
+      const rx = this._audioFor(d)[0];
+      const r = lit(rx);
+      if (by === "receiver" && r !== null) return r;
+      if (by === "either" && (r || lit(screenPower(d)))) return true;
+    }
     const p = screenPower(d);
     if (p) {
       const st = this._hass.states[p];
@@ -12825,6 +12836,12 @@ class CharroRoomsEditor extends HTMLElement {
     });
     keep.append(keepTxt, keepBox);
     box.appendChild(keep);
+
+    box.appendChild(this._fields(changed).sel("Show the sources and remotes when",
+      v.on_from || "", [["", "the screen is on"], ["receiver", "the receiver is on"],
+                        ["either", "either is on"]],
+      (x) => { if (x) v.on_from = x; else delete v.on_from; },
+      "Until then the screen shows just On."));
 
     // one screen needs no picker; more than one does
     const many = (v.displays || []).length > 1;

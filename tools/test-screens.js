@@ -254,6 +254,16 @@ const named = (c, t) => chips(c).find((b) => b.textContent.trim() === t);
   eq(h.calls.map((x) => x[0] + "." + x[1]), ["media_player.turn_off", "remote.send_command"],
     "an Off source's own actions win: everything, Harmony included, with no automation");
 
+  console.log("-- what counts as on --");
+  for (const [on_from, pj, rx, want] of [
+    [undefined, "off", "on", false], ["receiver", "off", "on", true], ["receiver", "on", "off", false],
+    ["either", "off", "on", true], ["either", "on", "off", true], ["either", "off", "off", false]]) {
+    const v = { ...RX, on_from };
+    h = hassWith(pj, "Off", rx);
+    c = await renderRx(h, v);
+    eq(!named(c, "On"), want, `on_from ${on_from || "screen"}, projector ${pj}, receiver ${rx}: ${want ? "sources" : "just On"}`);
+  }
+
   console.log("-- the media block --");
   const room = { room: "theatre", projector_entity: "switch.theatre_projector",
     receiver_entity: "media_player.vsx_lx305", video: VIDEO };
