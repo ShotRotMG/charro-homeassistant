@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.125.0";
+const VERSION = "5.126.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -6881,11 +6881,12 @@ class CharroVideoCard extends HTMLElement {
    * media_player the slider is its volume_level; for a number it is the
    * number itself, and +/- go through charro.volume_step so the entity's own
    * step and limits hold. It follows the volume live without redrawing the
-   * card, and leaves the slider alone while a finger is on it. Off with
-   * video.volume_bar: false, which brings the remote's own buttons back. */
+   * card, and leaves the slider alone while a finger is on it. Only with
+   * video.volume_bar: true; without it the remote keeps its own buttons. */
   _volumeBar(d, spec) {
     this._vbar = null;
-    if (this._v.volume_bar === false) return null;
+    // opt-in: a room asks for it, every other remote keeps its own buttons
+    if (this._v.volume_bar !== true) return null;
     const vol = volumeFor(d, spec);
     const mp = vol.startsWith("media_player.");
     const num = vol.startsWith("number.") || vol.startsWith("input_number.");
@@ -13002,9 +13003,9 @@ class CharroRoomsEditor extends HTMLElement {
     vbTxt.textContent = "Volume bar above the remote (replaces its volume buttons)";
     const vbBox = document.createElement("input");
     vbBox.type = "checkbox";
-    vbBox.checked = v.volume_bar !== false;
+    vbBox.checked = v.volume_bar === true;
     vbBox.addEventListener("change", () => {
-      if (vbBox.checked) delete v.volume_bar; else v.volume_bar = false;
+      if (vbBox.checked) v.volume_bar = true; else delete v.volume_bar;
       this._renderPreview();
     });
     vb.append(vbTxt, vbBox);

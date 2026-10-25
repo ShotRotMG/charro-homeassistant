@@ -13,7 +13,7 @@ const TPL = { xbox: { type: "custom:remote", rows: [["up"], ["vol_up", "vol_down
     { name: "vol_up", tap_action: { action: "perform-action", perform_action: "media_player.volume_up", target: { entity_id: "{{volume}}" } } },
     { name: "vol_down", tap_action: { action: "perform-action", perform_action: "media_player.volume_down", target: { entity_id: "{{volume}}" } } },
     { name: "mute", tap_action: { action: "perform-action", perform_action: "media_player.volume_mute", target: { entity_id: "{{volume}}" } } }] } };
-const VIDEO = { source_from: RX, displays: [{ name: "Theatre", screen: PJ, volume: RX }],
+const VIDEO = { volume_bar: true, source_from: RX, displays: [{ name: "Theatre", screen: PJ, volume: RX }],
   sources: { XBOX: { title: "Xbox", input: "GAME", use: "xbox" } } };
 const built = [];
 window.loadCardHelpers = async () => ({ createCardElement: (cfg) => { built.push(cfg); return T.el("div"); } });
@@ -62,8 +62,9 @@ async function render(h, v = VIDEO) {
 
   await new Promise((r) => setTimeout(r, 20));    // let the live card's own redraw settle
   console.log("-- off --");
-  c = await render(hassWith(0.42, false), { ...VIDEO, volume_bar: false });
-  ok(!c._wrap.querySelector(".vvol"), "volume_bar: false - no bar");
+  const { volume_bar, ...PLAIN } = VIDEO;
+  c = await render(hassWith(0.42, false), PLAIN);
+  ok(!c._wrap.querySelector(".vvol"), "not asked for - no bar, so it's opt-in");
   eq(built.find((x) => x.type === "custom:remote").custom_actions.length, 4, "and the remote keeps its buttons");
 
   console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");

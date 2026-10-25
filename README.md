@@ -441,8 +441,9 @@ toggles its mute. A number's slider is the number itself, with − and + going
 through `charro.volume_step` so its step and limits hold. The bar follows the
 volume live without redrawing the remote, and leaves the slider alone while
 you're dragging it. The remote's own volume and mute buttons are dropped, so
-there is one control, not two. Untick **Volume bar above the remote** in
-Media & remotes (`video.volume_bar: false`) to get them back.
+there is one control, not two. It's opt-in: tick **Volume bar above the
+remote** in Media & remotes (`video.volume_bar: true`) for the rooms that want
+it. Every other room keeps its remotes' own buttons.
 
 ### No helper: the receiver picks
 
