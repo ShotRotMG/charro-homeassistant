@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.128.0";
+const VERSION = "5.129.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1798,13 +1798,14 @@ function dropButtons(rows, names) {
  * Resolution; the defaults suit a Pioneer at resolution 200. */
 const VOL_DB_MIN = -82, VOL_DB_MAX = 18;
 function volLabel(pct, v) {
-  if (!v || v.volume_display !== "db") return String(pct);
+  if (!v || v.volume_display !== "db") return String(Math.round(pct * 10) / 10);
   if (pct <= 0) return "Min";
   const lo = isFinite(Number(v.volume_db_min)) && v.volume_db_min !== "" && v.volume_db_min != null
     ? Number(v.volume_db_min) : VOL_DB_MIN;
   const hi = isFinite(Number(v.volume_db_max)) && v.volume_db_max !== "" && v.volume_db_max != null
     ? Number(v.volume_db_max) : VOL_DB_MAX;
-  const db = Math.round((lo + (hi - lo) * pct / 100) * 2) / 2;   // the receiver's own 0.5 steps
+  // to 0.1, not to the half-dB: rounding twice would swallow a step
+  const db = Math.round((lo + (hi - lo) * pct / 100) * 10) / 10;
   return `${db > 0 ? "+" : ""}${db.toFixed(1)} dB`;
 }
 
@@ -6966,8 +6967,10 @@ class CharroVideoCard extends HTMLElement {
       bar.classList.toggle("off", unav);
       let n;
       if (mp) {
-        slider.min = "0"; slider.max = "100"; slider.step = "1";
-        n = a.volume_level != null ? Math.round(a.volume_level * 100) : null;
+        /* half-percent steps: at Volume Resolution 200 one press of + is
+         * 0.005, and rounding to whole percents hid every other press */
+        slider.min = "0"; slider.max = "100"; slider.step = "0.5";
+        n = a.volume_level != null ? Math.round(a.volume_level * 200) / 2 : null;
       } else {
         slider.min = String(a.min != null ? a.min : 0);
         slider.max = String(a.max != null ? a.max : 100);

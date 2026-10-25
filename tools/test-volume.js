@@ -68,9 +68,14 @@ async function render(h, v = VIDEO) {
   eq(T.volLabel(90, { volume_display: "db" }), "+8.0 dB", "above 0 gets a plus");
   eq(T.volLabel(0, { volume_display: "db" }), "Min", "the bottom is Min");
   eq(T.volLabel(50, { volume_display: "db", volume_db_min: -80, volume_db_max: 12 }), "-34.0 dB", "the ends are settable");
-  eq(T.volLabel(33, { volume_display: "db", volume_db_min: -80, volume_db_max: 12 }), "-49.5 dB", "rounded to the receiver's half-dB steps");
+  eq(T.volLabel(33, { volume_display: "db", volume_db_min: -80, volume_db_max: 12 }), "-49.6 dB", "to a tenth");
+  eq(T.volLabel(50.5, { volume_display: "db" }), "-31.5 dB", "a half-percent step shows as a half dB");
+  eq(T.volLabel(50.5, {}), "50.5", "and as a half percent");
   c = await render(hassWith(0.5, false), { ...VIDEO, volume_display: "db" });
   ok(c._wrap.querySelector(".vvol").textContent.includes("-32.0 dB"), "the bar shows it");
+  c = await render(hassWith(0.505, false), { ...VIDEO, volume_display: "db" });
+  ok(c._wrap.querySelector(".vvol").textContent.includes("-31.5 dB"), "a 0.005 step from the receiver is not rounded away");
+  eq(c._wrap.querySelector(".vvol").querySelector("input").value, "50.5", "nor on the slider");
   await new Promise((r) => setTimeout(r, 20));
   console.log("-- off --");
   const { volume_bar, ...PLAIN } = VIDEO;
