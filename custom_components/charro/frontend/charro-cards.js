@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.119.0";
+const VERSION = "5.120.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -241,6 +241,33 @@ function def(tag, cls) {
   if (customElements.get(tag)) return;
   customElements.define(tag, cls);
 }
+
+/* A card somebody adds to a dashboard, declared where the card is defined.
+ * The "Add card" registration at the bottom of the file is built from this,
+ * so a new card cannot be defined and then forgotten there - the hand-kept
+ * list it replaces had already missed the feed card. `inRoom` also offers
+ * it in the room editor's card library, for a card that belongs inside a
+ * room rather than only on a dashboard of its own. */
+const CARD_META = {};
+function defCard(tag, cls, meta) {
+  def(tag, cls);
+  CARD_META[tag] = meta;
+}
+
+/* Everything defined that is not a card to add, and why. tools/test-coverage
+ * fails on a tag in neither place, so a new element is a decision rather
+ * than an omission. A card's own editor (`<card>-editor`) needs no entry. */
+const INTERNAL_TAGS = {
+  "charro-zone-source": "a source row inside the zone card",
+  "charro-video-card": "the screens in a room's pop-up, built from its video block",
+  "charro-gap-card": "an empty layout cell, placed by the layout builder",
+  "charro-irrigation-panel": "the body of the irrigation pop-up",
+  "charro-chips-editor": "the Chips tab of Charro Config",
+  "charro-house-editor": "the Settings tab of Charro Config",
+  "charro-notify-editor": "the Notifications tab of Charro Config",
+  "charro-config-panel": "the Charro Config sidebar panel itself",
+  "charro-unifi-panel": "the UniFi tab of Charro Config",
+};
 
 /* Every room, fetched once per page over the websocket.
  *
@@ -2138,6 +2165,7 @@ function blockCards(name, r, hass) {
              cards: list.map((l) => lightCard(l, r.no_dim, fans)) });
     }
   }
+
   /* One sensor card per reading: the value and a day of it as a line. Two
    * to a row, or the row to itself when there is only one. */
   if (name === "readings") {
@@ -5287,7 +5315,8 @@ class CharroRoomCard extends CharroBase {
     return { columns: size === "full" ? 12 : 6, rows: "auto", min_columns: 3 };
   }
 }
-def("charro-room-card", CharroRoomCard);
+defCard("charro-room-card", CharroRoomCard, { name: "Charro Room Card",
+  description: "Room summary \u2014 lights, fans, climate, music, door alert." });
 
 const ROOM_SCHEMA = [
   { name: "room", selector: { text: {} } },
@@ -5417,7 +5446,10 @@ class CharroSecurityCard extends CharroBase {
   overrides() { return { entity: this._config.entity }; }
   getGridOptions() { return { columns: 6, rows: 1, min_columns: 3 }; }
 }
-def("charro-security-card", CharroSecurityCard);
+defCard("charro-security-card", CharroSecurityCard, { name: "Charro Security Tile",
+  description: "Elk zone or garage door, coloured client-side.",
+  inRoom: true,
+  seed: { type: "custom:charro-security-card", entity: "" } });
 
 makeEditor("charro-security-card-editor", [
   { name: "entity", required: true, selector: ent(["sensor", "binary_sensor", "cover"]) },
@@ -5475,7 +5507,9 @@ class CharroZoneCard extends CharroBase {
   overrides() { return { entity: this._config.entity }; }
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
-def("charro-zone-card", CharroZoneCard);
+defCard("charro-zone-card", CharroZoneCard, { name: "Charro Zone Card",
+  description: "RTI AD-8x single-line zone control.",
+  inRoom: true });
 
 class CharroLockCard extends CharroBase {
   static getConfigElement() { return document.createElement("charro-lock-card-editor"); }
@@ -5510,7 +5544,10 @@ class CharroLockCard extends CharroBase {
   overrides() { return { entity: this._config.entity }; }
   getGridOptions() { return { columns: 6, rows: 1, min_columns: 3 }; }
 }
-def("charro-lock-card", CharroLockCard);
+defCard("charro-lock-card", CharroLockCard, { name: "Charro Lock Card",
+  description: "A lock, green when locked and red when not.",
+  inRoom: true,
+  seed: { type: "custom:charro-lock-card", entity: "" } });
 
 makeEditor("charro-lock-card-editor", [
   { name: "entity", required: true, selector: ent(["lock"]) },
@@ -6758,7 +6795,9 @@ class CharroAllOffCard extends CharroBase {
 
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 }
-def("charro-all-off-card", CharroAllOffCard);
+defCard("charro-all-off-card", CharroAllOffCard, { name: "Charro All Zones Off",
+  description: "Turn every music zone off at once.",
+  inRoom: true });
 
 /* Nothing, drawn deliberately. A grid cell has to be filled by something for
  * the next tile to land in the other column, so a gap is a card that renders
@@ -7965,7 +8004,9 @@ class CharroIrrigationCard extends HTMLElement {
     this._box.appendChild(card);
   }
 }
-def("charro-irrigation-card", CharroIrrigationCard);
+defCard("charro-irrigation-card", CharroIrrigationCard, { name: "Charro Irrigation",
+  description: "A Hydrawise controller: what is running, what is next, every zone.",
+  inRoom: true });
 
 /* The editor. Everything is found, so there is nothing to type: a title, an
  * icon, which controller if there is more than one, and per zone whether to
@@ -8392,7 +8433,10 @@ class CharroLightsCard extends HTMLElement {
     this.style.display = shown || this._config.keep_empty ? "" : "none";
   }
 }
-def("charro-lights-card", CharroLightsCard);
+defCard("charro-lights-card", CharroLightsCard, { name: "Charro Lights Card",
+  description: "One room of lights \u2014 equal rows, dim by dragging the row.",
+  inRoom: true,
+  seed: { type: "custom:charro-lights-card", entities: [] } });
 
 /* ------------------------------------------------- lights card editor --- */
 
@@ -8690,13 +8734,16 @@ function cardLibrary() {
   const buckets = new Map();
   for (const c of window.customCards || []) {
     if (!c || !c.type) continue;
-    if (c.type.startsWith("charro-")) continue;          // our own, not room content
+    /* our own: only the ones that belong inside a room - a room card in a
+     * room is a loop, and the editors are not content */
+    if (c.type.startsWith("charro-") && !(CARD_META[c.type] || {}).inRoom) continue;
     const key = Object.keys(CARD_VENDORS).find((k) => c.type.startsWith(k)) || "";
     const label = CARD_VENDORS[key] || "Other custom cards";
     if (!buckets.has(label)) buckets.set(label, []);
+    const own = CARD_META[c.type];
     buckets.get(label).push({ type: `custom:${c.type}`,
                               name: c.name || c.type,
-                              seed: { type: `custom:${c.type}` } });
+                              seed: (own && own.seed) ? clone(own.seed) : { type: `custom:${c.type}` } });
   }
   for (const [label, items] of [...buckets].sort((a, b) => a[0].localeCompare(b[0]))) {
     items.sort((a, b) => a.name.localeCompare(b.name));
@@ -13754,7 +13801,8 @@ class CharroRoomsEditor extends HTMLElement {
   }
 }
 Object.assign(CharroRoomsEditor.prototype, LayoutUI);
-def("charro-rooms-editor", CharroRoomsEditor);
+defCard("charro-rooms-editor", CharroRoomsEditor, { name: "Charro Rooms Editor",
+  description: "Edit the files behind `room:` without leaving Home Assistant." });
 
 /* --------------------------------------------------------------- panel -- *
 
@@ -13994,7 +14042,9 @@ class CharroFeedCard extends HTMLElement {
     }
   }
 }
-def("charro-feed-card", CharroFeedCard);
+defCard("charro-feed-card", CharroFeedCard, { name: "Charro Feed",
+  description: "What the house told you, and what reached a phone.",
+  inRoom: true });
 
 /* ======================================================== CHIPS EDITOR == */
 /*
@@ -16715,22 +16765,6 @@ if (typeof window !== "undefined") {
 /* ------------------------------------------------------------ registry -- */
 
 window.customCards = window.customCards || [];
-window.customCards.push(
-  { type: "charro-room-card", name: "Charro Room Card",
-    description: "Room summary — lights, fans, climate, music, door alert.", preview: false },
-  { type: "charro-security-card", name: "Charro Security Tile",
-    description: "Elk zone or garage door, coloured client-side.", preview: false },
-  { type: "charro-zone-card", name: "Charro Zone Card",
-    description: "RTI AD-8x single-line zone control.", preview: false },
-  { type: "charro-lock-card", name: "Charro Lock Card",
-    description: "A lock, green when locked and red when not.", preview: false },
-  { type: "charro-all-off-card", name: "Charro All Zones Off",
-    description: "Turn every music zone off at once.", preview: false },
-  { type: "charro-irrigation-card", name: "Charro Irrigation",
-    description: "A Hydrawise controller: what is running, what is next, every zone.",
-    preview: false },
-  { type: "charro-lights-card", name: "Charro Lights Card",
-    description: "One room of lights — equal rows, dim by dragging the row.", preview: false },
-  { type: "charro-rooms-editor", name: "Charro Rooms Editor",
-    description: "Edit the files behind `room:` without leaving Home Assistant.", preview: false }
-);
+for (const [type, m] of Object.entries(CARD_META))
+  if (!window.customCards.some((c) => c && c.type === type))
+    window.customCards.push({ type, name: m.name, description: m.description, preview: false });

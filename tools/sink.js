@@ -16,6 +16,7 @@ const room = {
   bath_fan_entities: ["switch.bf"],
   fountain_entities: ["switch.fo"],
   climate_entity: "climate.c",
+  temp_sensor: "sensor.t",
   music_powers: ["switch.z"],
   music_player: "media_player.ma",
   media_player: "media_player.ma",
@@ -62,6 +63,8 @@ const on = {
   "binary_sensor.d": { state: "on", attributes: { friendly_name: "Door",
     device_class: "door" } },
   "camera.c": { state: "idle", attributes: { friendly_name: "Camera" } },
+  "sensor.t": { state: "71.5", attributes: { friendly_name: "Room temp",
+    device_class: "temperature", unit_of_measurement: "°F" } },
   "sensor.srv": { state: "92.5", attributes: { friendly_name: "Server temp",
     device_class: "temperature", unit_of_measurement: "°F" } },
 };

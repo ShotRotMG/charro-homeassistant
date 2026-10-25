@@ -1447,6 +1447,27 @@ header are compared against each other rather than against anybody's
 assumption about either. `tools/sink.js` is a room with one of everything,
 shared by the suites that need one.
 
+`tools/test-coverage.js` is the "did a new thing reach every list" check.
+Adding something fails it until every list that should offer it does:
+
+- **Elements:** every element the bundle defines must be either a card,
+  declared with `defCard(tag, Class, { name, description, inRoom })`, or listed
+  in `INTERNAL_TAGS` with the reason it isn't. A card's own `-editor` needs
+  neither.
+- **Cards:** every card is in Home Assistant's Add card list exactly once.
+  That list is built from `defCard`, so nothing is hand-kept. Every `inRoom`
+  card, and only those, is in the room editor's card library, under Charro.
+- **Sections:** every pop-up section has a name in the layout builder, draws
+  something for a room that has one, and is offered under Available until it's
+  placed.
+- **Panels:** every editor panel has its "This room has no…" button and its
+  open flag, and the sink room uses it.
+- **Chips:** every chip has a row in the Chips panels.
+
+It found two real bugs on its first run: a remote with a missing template took
+the whole media block down instead of saying so (5.118.0), and the All lights
+block drew nothing in a custom layout (5.119.0).
+
 `tools/test_notify.py` lifts the payload builders out of `__init__.py` with
 `ast` and runs them, since `homeassistant` is not importable outside Home
 Assistant.
