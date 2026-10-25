@@ -62,13 +62,20 @@ setTimeout(() => {
   ok(!!pop, "tapping the name opens everything");
   eq(pop.querySelectorAll("input").filter((i) => i.type === "range").length, 3, "brightness, white and colour sliders");
   eq(pop.querySelector(".sw").querySelectorAll("button").length, 9, "the swatches");
-  const sels = pop.querySelectorAll("select");
-  eq(sels.map((x) => x.children.map((o) => o.textContent)),
-    [["Scenes…", "Movie", "Read"], ["Effects…", "colorloop", "candle"]],
+  const dds = c._drops;
+  eq(dds.map((d) => [d.btn.querySelector("span").textContent].concat(d.list.children.map((o) => o.firstChild.textContent))),
+    [["Scenes", "Movie", "Read"], ["Effects", "colorloop", "candle"]],
     "scenes and effects as dropdowns, its own Zigbee2MQTT scenes only");
-  sels[0].value = "scene.javon_lamps_read"; sels[0].fire("change");
-  eq(sels[0].value, "", "a picked scene resets the box so it can be picked again");
-  sels[1].value = "candle"; sels[1].fire("change");
+  ok(dds.every((d) => d.list.style.display === "none"), "both start closed");
+  dds[0].btn.click();
+  ok(dds[0].list.style.display !== "none", "tapping Scenes opens its list");
+  dds[1].btn.click();
+  ok(dds[0].list.style.display === "none" && dds[1].list.style.display !== "none", "only one list is open at a time");
+  dds[1].btn.click();
+  ok(dds[1].list.style.display === "none", "tapping it again closes it");
+  dds[0].btn.click(); dds[0].list.children[1].click();
+  ok(dds[0].list.style.display === "none", "a pick closes the list");
+  dds[1].btn.click(); dds[1].list.children[1].click();
   setTimeout(() => {
     eq(h.calls.map((x) => [x[0], x[1], x[2], x[3].entity_id]), [
       ["scene", "turn_on", {}, "scene.javon_lamps_read"], ["light", "turn_on", { effect: "candle" }, L]],

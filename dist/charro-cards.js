@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.134.0";
+const VERSION = "5.135.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8907,9 +8907,25 @@ const CL_POP_CSS = `
   border:2px solid rgba(127,127,127,.35); }
 .charro-cl-pop .sw button.sel{ border-color:var(--primary-text-color); }
 .charro-cl-pop .sw input[type=color]{ width:30px; height:30px; border:none; padding:0; background:none; cursor:pointer; }
-.charro-cl-pop select{ flex:1; font:inherit; color:var(--primary-text-color);
+.charro-cl-pop .dw{ flex:1; min-width:0; }
+.charro-cl-pop .dd{ width:100%; display:flex; align-items:center; gap:8px; cursor:pointer;
+  font:inherit; font-size:14px; color:var(--primary-text-color); text-align:left;
   background:rgba(127,127,127,.12); border:1px solid var(--divider-color, rgba(255,255,255,.12));
-  border-radius:10px; padding:8px 10px; }
+  border-radius:12px; padding:9px 12px; }
+.charro-cl-pop .dd span{ flex:1; }
+.charro-cl-pop .dd ha-icon{ --mdc-icon-size:18px; color:var(--secondary-text-color); transition:transform .15s; }
+.charro-cl-pop .dw.open .dd{ border-color:var(--cl-col, var(--primary-color)); }
+.charro-cl-pop .dw.open .dd ha-icon{ transform:rotate(180deg); }
+.charro-cl-pop .dl{ margin-top:6px; max-height:296px; overflow:auto; padding:4px;
+  border-radius:12px; background:rgba(127,127,127,.10);
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); }
+.charro-cl-pop .di{ width:100%; display:flex; align-items:center; gap:8px; cursor:pointer;
+  font:inherit; font-size:14px; text-transform:capitalize; text-align:left;
+  color:var(--primary-text-color); background:none; border:none; border-radius:8px; padding:8px 10px; }
+.charro-cl-pop .di span{ flex:1; }
+.charro-cl-pop .di ha-icon{ --mdc-icon-size:16px; visibility:hidden; color:var(--cl-col, var(--primary-color)); }
+.charro-cl-pop .di.cur ha-icon{ visibility:visible; }
+.charro-cl-pop .di:hover{ background:rgba(127,127,127,.18); }
 `;
 
 /* A slider that leaves itself alone while it is being dragged. */
@@ -9078,32 +9094,57 @@ class CharroColorLightCard extends HTMLElement {
       sw.appendChild(d.pick);
       pop.appendChild(sw);
     }
-    /* Scenes and effects as dropdowns: picking one applies it, and the
-     * box goes back to its label so the same one can be picked again. */
-    const drop = (icon, label, items, onPick) => {
+    /* Scenes and effects as dropdowns of our own: a native <select> list
+     * is drawn by the browser, light grey with near-invisible text on a
+     * dark theme. This one opens in place under its button, in the card's
+     * own colours, scrolls past eight rows, and closes on a pick; the
+     * light's current effect carries a tick. */
+    const drops = [];
+    const drop = (icon, label, items, onPick, current) => {
       if (!items.length) return null;
-      const sel = document.createElement("select");
-      const first = document.createElement("option");
-      first.value = ""; first.textContent = label;
-      sel.appendChild(first);
+      const w = document.createElement("div");
+      w.className = "dw";
+      const btn = document.createElement("button");
+      btn.className = "dd";
+      const part = (tag, txt, ic) => {
+        const e = document.createElement(tag);
+        if (txt != null) e.textContent = txt;
+        if (ic) e.setAttribute("icon", ic);
+        return e;
+      };
+      btn.append(part("span", label), part("ha-icon", null, "mdi:chevron-down"));
+      const list = document.createElement("div");
+      list.className = "dl";
+      list.style.display = "none";
+      const shut = () => { list.style.display = "none"; w.classList.remove("open"); };
       for (const it of items) {
-        const o = document.createElement("option");
-        o.value = it.id; o.textContent = it.name;
-        sel.appendChild(o);
+        const o = document.createElement("button");
+        o.className = "di" + (current && current() === it.id ? " cur" : "");
+        o.dataset.id = it.id;
+        o.append(part("span", it.name), part("ha-icon", null, "mdi:check"));
+        o.addEventListener("click", (ev) => { ev.stopPropagation(); shut(); onPick(it); });
+        list.appendChild(o);
       }
-      sel.addEventListener("change", () => {
-        const it = items.find((i) => i.id === sel.value);
-        if (it) onPick(it);
-        sel.value = "";
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const opening = list.style.display === "none";
+        for (const d of drops) d.shut();
+        if (opening) { list.style.display = ""; w.classList.add("open"); }
       });
-      row(icon, sel);
-      return sel;
+      w.append(btn, list);
+      row(icon, w);
+      const d = { w, btn, list, shut };
+      drops.push(d);
+      return d;
     };
-    drop("mdi:palette-swatch", "Scenes…", clScenes(this._hass, this._config.entity),
+    drop("mdi:palette-swatch", "Scenes", clScenes(this._hass, this._config.entity),
       (it) => this._hass.callService("scene", "turn_on", {}, { entity_id: it.id }));
-    drop("mdi:auto-fix", "Effects…",
+    drop("mdi:auto-fix", "Effects",
       caps.effects.map((e) => ({ id: e, name: String(e).replace(/_/g, " ") })),
-      (it) => this._call("turn_on", { effect: it.id }));
+      (it) => this._call("turn_on", { effect: it.id }),
+      () => { const st = this._hass.states[this._config.entity]; return st && st.attributes.effect; });
+    this._drops = drops;
+    pop.addEventListener("click", () => { for (const d of drops) d.shut(); });
 
     back.addEventListener("click", () => this._closeDetails());
     this._key = (ev) => { if (ev.key === "Escape") this._closeDetails(); };
