@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.116.0";
+const VERSION = "5.117.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -12269,8 +12269,17 @@ class CharroRoomsEditor extends HTMLElement {
         setN("above"), lim.high != null ? String(lim.high) : "e.g. 85");
       const lo = f.text(`Blue below${u ? ` (${u})` : ""}`, e.below == null ? "" : String(e.below),
         setN("below"), lim.low != null ? String(lim.low) : "e.g. 60");
-      if (e.above == null && lim.highFrom) this._borrowNote(hi, lim.highFrom, "sensor\u2019s comfort max");
-      if (e.below == null && lim.lowFrom) this._borrowNote(lo, lim.lowFrom, "sensor\u2019s comfort min");
+      /* The borrowed number, not the entity it came from: "Blank uses
+       * Server Temp Monitor Temperature" named the sensor being limited
+       * rather than the limit, and read as if the sensor were its own max. */
+      const said = (el, v, what) => {
+        const n = document.createElement("div");
+        n.className = "vhelp vborrow";
+        n.textContent = `Blank uses ${v}${u}, the sensor\u2019s own comfort ${what}.`;
+        el.appendChild(n);
+      };
+      if (e.above == null && lim.highFrom) said(hi, lim.high, "max");
+      if (e.below == null && lim.lowFrom) said(lo, lim.low, "min");
       row.append(hi, lo);
       /* One reading can differ from the rest: the server closet always,
        * a humidity only when it's out of range, a battery not at all. */

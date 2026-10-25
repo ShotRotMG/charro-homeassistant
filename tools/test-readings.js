@@ -128,6 +128,9 @@ const inputs = ed._readBox.querySelectorAll("input");
 const hi = inputs.find((i) => i.placeholder === "81");
 ok(!!hi, "Red above shows the borrowed 81 as its placeholder");
 ok(ed._readBox.querySelectorAll(".vborrow").length === 2, "and both limits say where they came from");
+eq(ed._readBox.querySelectorAll(".vborrow").map((n) => n.textContent),
+  ["Blank uses 81\u00b0F, the sensor\u2019s own comfort max.", "Blank uses 66\u00b0F, the sensor\u2019s own comfort min."],
+  "saying the number it borrows, not the sensor's name");
 hi.value = "85"; hi.fire("change");
 eq(ed._room.readings[0].above, 85, "typing a limit stores a number");
 const hi2 = ed._readBox.querySelectorAll("input").find((i) => i.value === "85");
