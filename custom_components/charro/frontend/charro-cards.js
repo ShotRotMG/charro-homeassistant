@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.131.0";
+const VERSION = "5.132.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -427,9 +427,14 @@ const roomHash = (c) => {
  * a source list that mean nothing when the thing on screen is a Dish box
  * the matrix is feeding it. A room with no video block has no such pop-up
  * and its chip keeps more-info. */
+/* A room with a TV and remotes but no screens block - Javon's - gets the
+ * same thing: its TV chip opens a pop-up of its Media & remotes, rather
+ * than more-info's bare volume slider. */
 const tvHash = (c) => {
   const h = roomHash(c);
-  return h && c.video && (c.video.displays || []).length ? `${h}-tv` : "";
+  if (!h) return "";
+  if (c.video && (c.video.displays || []).length) return `${h}-tv`;
+  return roomTv(c) && (c.remotes || []).length ? `${h}-tv` : "";
 };
 
 /* A projector that is one of the room's screens is the screen, not a
@@ -3903,7 +3908,11 @@ function roomChips(r, hass) {
     }
     out.push({ key, icon, col, text: "",
                title: `${label} — ${st.state}`,
-               tap: { kind: "more-info", entity: id } });
+               /* the TV chip opens the room's screens or TV pop-up, as on
+                * the tile; a receiver keeps more-info */
+               tap: key === "tv_entity" && tvHash(r)
+                 ? { kind: "navigate", path: tvHash(r) }
+                 : { kind: "more-info", entity: id } });
   }
 
   if (r.climate_entity || r.temp_sensor) {
@@ -5433,11 +5442,14 @@ class CharroRoomCard extends CharroBase {
        * chip, so the page this flattens into is short when the television
        * is off and worth scrolling when it is on. */
       ? new RoomPopup(want, m, this._hass,
-                      (r) => [{ type: "custom:charro-video-card", video: r.video,
-                                templates: r._remotes || {},
-                                music_powers: r.music_powers || [],
-                                tabs: false }],
-                      `${m.room_name || ""} \u2014 Screens`.trim())
+                      (r, h) => (r.video && (r.video.displays || []).length)
+                        ? [{ type: "custom:charro-video-card", video: r.video,
+                             templates: r._remotes || {},
+                             music_powers: r.music_powers || [],
+                             tabs: false }]
+                        // no screens block: the room's own TV and its remotes
+                        : blockCards("media", r, h || this._hass),
+                      `${m.room_name || ""} \u2014 ${m.video ? "Screens" : "TV"}`.trim())
       : new RoomPopup(want, m, this._hass);
     await this._popup.open();
   }

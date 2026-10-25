@@ -108,5 +108,19 @@ eq(T.roomIconColor(T.avFill(XB), hd), amber, "theatre off: back to the lights");
 hd.states["light.cans"].state = "off";
 eq(T.roomIconColor(T.avFill(XB), hd), "", "nothing lit: no colour");
 
+console.log("-- a TV with remotes and no screens block --");
+const JAVON = { room: "javon", room_name: "Javon", popup_hash: "#javon",
+  tv_entity: "media_player.javon_samsung_70", remotes: [{ use: "samsung", media_player: "media_player.javon_samsung_70" }] };
+eq(T.tvHash(JAVON), "#javon-tv", "it gets a TV pop-up of its own");
+const hj = { entities: {}, config: { unit_system: { temperature: "\u00b0F" } },
+  states: { "media_player.javon_samsung_70": { state: "on", attributes: { friendly_name: "Samsung" } } } };
+const vj = vars(JAVON, hj);
+eq(vj.tv_popup, "#javon-tv", "so the tile's TV chip navigates there instead of more-info");
+eq(T.tvHash({ ...JAVON, remotes: [] }), "", "a TV with no remotes keeps more-info");
+eq(T.roomChips(JAVON, hj).find((c) => c.key === "tv_entity").tap, { kind: "navigate", path: "#javon-tv" },
+  "the pop-up header's TV chip opens it too");
+ok(T.blockCards("media", { ...JAVON, _remotes: { samsung: { type: "custom:remote", rows: [] } } }, hj).length > 0,
+  "and the pop-up has the room's TV and remote to show");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);
