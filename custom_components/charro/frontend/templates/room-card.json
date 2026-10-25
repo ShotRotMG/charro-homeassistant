@@ -88,7 +88,7 @@
         "justify-self": "start"
       },
       {
-        "color": "[[[\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : 'var(--primary-text-color)';\n]]]"
+        "color": "[[[\n  /* the highest-priority lit chip, worked out from the room's own chips */\n  const col = window.charroRoomIcon ? window.charroRoomIcon(variables.room_key, hass) : null;\n  if (col !== null) return col || 'var(--primary-text-color)';\n  const all = [].concat(variables.light_entities || [], variables.landscape_entities || []);\n  const on = all.some(e => states[e]?.state === 'on');\n  return on ? variables.pal.amber.fg : 'var(--primary-text-color)';\n]]]"
       }
     ],
     "name": [

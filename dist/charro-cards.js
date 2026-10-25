@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.123.0";
+const VERSION = "5.124.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3259,8 +3259,8 @@ const CHIP_SPECS = {
   /* These five are on the tile whenever the room has them, greyed when
    * nothing is on - that is what the tile already did, and the registry
    * has to say so or applying it would make them vanish. */
-  light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10,  show: "always" },
-  landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20,  show: "always" },
+  light_entities:     { label: "Lights",        icon: "mdi:lightbulb",         pal: "amber",     order: 10,  show: "always", icon_priority: 1 },
+  landscape_entities: { label: "Landscape",     icon: "mdi:palm-tree",         pal: "amber",     order: 20,  show: "always", icon_priority: 1 },
   /* Down is the news, so unlike the lights this one is silent when every
    * shade is up rather than sitting there grey. */
   shade_entities:     { label: "Shades",        icon: "mdi:blinds",            pal: "orange",    order: 25 },
@@ -3347,8 +3347,36 @@ function chipLook(key, r, mood) {
     col: chipCol(colour, pal(hit ? hit[2] : (base.pal || "amber"))),
     show: pick("show") || base.show || "active",
     order: ord != null ? Number(ord) : base.order != null ? base.order : 999,
+    /* how strongly a lit chip of this kind colours the room's icon: 0 never,
+     * otherwise the highest lit one wins */
+    iconPriority: Number(pick("icon_priority") != null ? pick("icon_priority")
+                         : base.icon_priority || 0) || 0,
   };
 }
+
+/* The room icon's colour: the lit chip with the highest icon priority, in
+ * that chip's own colour. Lights and landscape ship at 1, which is the old
+ * "amber whenever anything is lit"; give the projector a 2 in Chips and a
+ * room playing Xbox goes violet with the lights up. "" when nothing lit
+ * claims it. */
+function roomIconColor(r, hass) {
+  let best = null, bestP = 0;
+  for (const c of roomChips(r, hass)) {
+    if (!c.col || c.col[1] === CHIP_OFF[1]) continue;
+    const p = chipLook(c.key, r).iconPriority;
+    if (p > bestP) { best = c; bestP = p; }
+  }
+  return best ? best.col[1] : "";
+}
+
+/* The tile's template reaches the room through this - its variables are
+ * fixed when the card is built, the room's chips are not. */
+const _iconRooms = {};
+function charroRoomIcon(key, hass) {
+  const r = key && _iconRooms[key];
+  return r && hass ? roomIconColor(r, hass) : null;
+}
+if (typeof window !== "undefined") window.charroRoomIcon = charroRoomIcon;
 
 /* The template's field names are its own; the map to registry keys lives
  * here, once, and nowhere else. */
@@ -4561,12 +4589,9 @@ class RoomPopup {
     if (this.room.room_icon) {
       const i = document.createElement("ha-icon");
       i.icon = this.room.room_icon;
-      // amber whenever anything in the room is lit, exactly as on the tile
-      const skip = uncountedIds(this.room);
-      const lit = onCount(this._hass,
-        [].concat(countedList(this.room, "light_entities", skip),
-                  countedList(this.room, "landscape_entities", skip)));
-      if (lit) i.style.color = "var(--state-light-active-color, #ffc107)";
+      // the highest-priority lit chip's colour, exactly as on the tile
+      const col = roomIconColor(this.room, this._hass);
+      if (col) i.style.color = col;
       mid.appendChild(i);
     }
 
@@ -5341,6 +5366,9 @@ class CharroRoomCard extends CharroBase {
       tv_popup: tvHash(c),
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
+      // the icon's colour is worked out from the room's chips, by key
+      room_key: (() => { const k = c.room || roomHash(c) || c.room_name || "";
+                         if (k) _iconRooms[k] = c; return k; })(),
       // a projector that is one of the screens works like a TV chip
       ...screenVars(c),
       // the tile's chips read their colours from here, so they cannot drift
@@ -10725,7 +10753,7 @@ function chipInherit(key, house) {
   const base = CHIP_SPECS[key] || {};
   const look = chipLook(key, r);
   const out = { icon: look.icon, show: look.show, order: look.order,
-                colour: look.col[1], moods: {} };
+                colour: look.col[1], moods: {}, iconPriority: look.iconPriority };
   for (const m of base.moods || []) out.moods[m[0]] = chipLook(key, r, m[0]).col[1];
   return out;
 }
@@ -10775,6 +10803,13 @@ function chipRow(f, key, spec, cur, inherit) {
     [["", `\u2014 inherit (${said[inherit.show] || inherit.show}) \u2014`]]
       .concat(opts), set("show"),
     spec.showHelp || "Always draws the chip in the off grey when there is nothing to report."));
+
+  row.appendChild(f.text("Room icon priority",
+    cur.icon_priority == null ? "" : String(cur.icon_priority), (v) => {
+      const n = Number(v);
+      if (String(v).trim() === "") delete cur.icon_priority;
+      else if (!isNaN(n)) cur.icon_priority = n;
+    }, String(inherit.iconPriority || 0)));
 
   row.appendChild(f.text("Order", cur.order == null ? "" : String(cur.order), (v) => {
     const n = Number(v);

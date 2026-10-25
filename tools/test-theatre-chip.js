@@ -94,5 +94,19 @@ pop._chipTap({ kind: "navigate", path: "#theatre-tv" });
 history.pushState = was;
 eq(pushed, ["#theatre-tv"], "pushes the screens pop-up's hash");
 
+console.log("-- the room icon --");
+const LIT = { ...THEATRE, light_entities: ["light.cans"] };
+const hl = hassWith("on", "on", "GAME"); hl.states["light.cans"] = { state: "on", attributes: {} };
+const iconTpl = tpl.styles.icon.find((x) => "color" in x).color;
+const iconOf = (r) => { const v = vars(r, hl); return [T.roomIconColor(T.avFill(r), hl), run(iconTpl, v, hl)]; };
+const amber = T.chipLook("light_entities", {}).col[1], violet = T.chipLook("projector_entity", {}).col[1];
+eq(iconOf(LIT), [amber, amber], "lights win by default: amber, header and tile");
+const XB = { ...LIT, chips: { projector_entity: { icon_priority: 2 } } };
+eq(iconOf(XB), [violet, violet], "projector given priority 2: violet with the lights up");
+const hd = hassWith("off", "off", ""); hd.states["light.cans"] = { state: "on", attributes: {} };
+eq(T.roomIconColor(T.avFill(XB), hd), amber, "theatre off: back to the lights");
+hd.states["light.cans"].state = "off";
+eq(T.roomIconColor(T.avFill(XB), hd), "", "nothing lit: no colour");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

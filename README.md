@@ -1422,6 +1422,15 @@ rather than one per character.
 
 ---
 
+### The room icon's colour
+
+The icon at the top left of the tile and pop-up takes the colour of the lit
+chip with the highest **Room icon priority** (a field on every chip in
+Chips, house-wide or per room). Lights and Landscape ship at 1, which is the
+old "amber when a light is on". Give Projector a 2 and the Theatre's icon
+goes violet while it's playing, lights up or not. A priority of 0 never
+colours the icon.
+
 ## Changing how the cards look
 
 `dist/templates/*.json` hold the full button-card templates — padding, grids,
