@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.129.0";
+const VERSION = "5.130.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2993,7 +2993,9 @@ const POPUP_CSS = `
  * right can push it off centre or squeeze the chips. Below 900px the cluster
  * rejoins the flow, where overlapping would be the worse problem. */
 .charro-pop-hd{
-  position:relative; display:flex; align-items:center; gap:8px;
+  /* its own layer above the body, so the scenes panel hanging off it is
+   * never under a card that makes a stacking context of its own */
+  position:relative; z-index:20; display:flex; align-items:center; gap:8px;
   margin:2px 4px 14px; min-height:34px;
 }
 .charro-pop-hd .mid{
@@ -3075,11 +3077,17 @@ const POPUP_CSS = `
   color:var(--primary-color, #03a9f4);
 }
 .charro-scenes{
-  position:absolute; top:calc(100% + 6px); right:0; z-index:3;
+  position:absolute; top:calc(100% + 6px); right:0; z-index:30;
   width:min(300px, calc(100vw - 48px));
   max-height:min(60vh, 420px); overflow:auto;
   box-sizing:border-box; padding:8px; text-align:left; font-size:14px;
-  background:var(--ha-card-background, var(--card-background-color, #1c1c1c));
+  /* Solid. A glass theme's --ha-card-background is see-through, and the
+   * panel read as text printed over the media card under it. The page's
+   * own background is opaque under every theme; the card colour goes on
+   * top of it, so the panel still looks like a card. */
+  background:
+    linear-gradient(var(--card-background-color, #1c1c1c), var(--card-background-color, #1c1c1c)),
+    var(--primary-background-color, #111);
   border:1px solid var(--divider-color, rgba(255,255,255,.12));
   border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.45);
 }
