@@ -1356,11 +1356,15 @@ Fountain rows go blue when on; everything else goes amber.
 
 ## `charro-color-light-card`
 
-One light, everything it can do: power, a **brightness** slider, nine **colour**
-swatches plus a free colour picker, a **warm-to-cool** slider, its
-**effects** (colorloop, candle, fireplace… with the one-shot ones like blink
-left out), and its **Zigbee2MQTT scenes**. Each part appears only when the
-light supports it, so a plain dimmer gets just the slider.
+One light on one line: the bulb (tap to toggle), its name and state, and up to
+three buttons — **brightness**, **white** (warm to cool) and **colour** (hue).
+Tap one and its slider takes the name's place; tap it again to go back. Each
+button appears only when the light supports it, so a plain dimmer gets just
+brightness.
+
+Tap the name for the **details pop-up**: power, all three sliders, nine colour
+swatches plus a free colour picker, and **Scenes** and **Effects** dropdowns
+(colorloop, candle, fireplace… with one-shot effects like blink left out).
 
 ```yaml
 type: custom:charro-color-light-card

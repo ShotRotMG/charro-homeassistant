@@ -1,6 +1,7 @@
-/* The colour light: brightness, swatches and a picker, warmth, effects and
- * the Zigbee2MQTT scenes on the light's device - each only when the light
- * supports it - updated in place and never under a held slider. */
+/* The colour light: one line - bulb, name, and a button each for
+ * brightness, white and colour that swaps the name for that slider - and a
+ * details pop-up with all of it, swatches and the picker, and the light's
+ * Zigbee2MQTT scenes and effects as dropdowns. */
 const T = require("./harness.js");
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log("  FAIL " + m); } else console.log("  ok   " + m); };
@@ -14,7 +15,8 @@ const mk = (attrs, state = "on") => {
       "scene.javon_lamps_read": { device_id: "grp1" }, "scene.kitchen_dinner": { device_id: "other" },
       [D]: { device_id: "dim1" } },
     states: { [L]: { state, attributes: { friendly_name: "Javon Lamps", supported_color_modes: ["color_temp", "xy"],
-        min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, effect_list: ["blink", "colorloop", "candle", "stop_effect"], ...attrs } },
+        min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500,
+        effect_list: ["blink", "colorloop", "candle", "stop_effect"], ...attrs } },
       [D]: { state: "on", attributes: { friendly_name: "Ceiling", supported_color_modes: ["brightness"], brightness: 128 } },
       "scene.javon_lamps_movie": { state: "x", attributes: { friendly_name: "Movie" } },
       "scene.javon_lamps_read": { state: "x", attributes: { friendly_name: "Read" } } } };
@@ -25,55 +27,65 @@ const card = (h, entity = L) => {
   c.dispatchEvent = () => true;
   c.setConfig({ entity }); c.hass = h; return c;
 };
-const btns = (c, sel) => c.shadowRoot.querySelectorAll(sel);
+const sr = (c) => c.shadowRoot;
 
-console.log("-- what it offers --");
-let h = mk({ brightness: 158, rgb_color: [255, 40, 30], color_mode: "xy" });
+console.log("-- one line --");
+let h = mk({ brightness: 158, hs_color: [210, 80], rgb_color: [40, 110, 255], color_mode: "xy" });
 let c = card(h);
-const sliders = c.shadowRoot.querySelectorAll("input").filter((i) => i.type === "range");
-eq(sliders.length, 2, "brightness and warmth sliders");
-eq(sliders[0].value, "62", "brightness reads 62%");
-eq(c.shadowRoot.querySelectorAll(".sw")[0].querySelectorAll("button").length, 9, "nine colour swatches");
-ok(!!c.shadowRoot.querySelectorAll("input").find((i) => i.type === "color"), "and a free colour picker");
-const chipTexts = c.shadowRoot.querySelectorAll(".chips").map((r) => r.children.map((b) => b.textContent));
-eq(chipTexts, [["Movie", "Read"], ["colorloop", "candle"]], "its own Zigbee2MQTT scenes, and its looks (not blink or stop)");
-ok(c.shadowRoot.querySelectorAll(".sw")[0].querySelectorAll("button")[0].classList.contains("sel"), "the red swatch shows as current");
+const md = sr(c).querySelector(".md").children;
+eq(md.map((b) => b.title), ["Brightness", "White", "Colour"], "a button each for brightness, white and colour");
+ok(sr(c).querySelector(".sl").hidden && !sr(c).querySelector(".tx").hidden, "the name shows until one is pressed");
+md[0].click();
+let s = sr(c).querySelector(".sl").querySelector("input");
+ok(!sr(c).querySelector(".sl").hidden && sr(c).querySelector(".tx").hidden, "brightness swaps the name for its slider");
+eq(s.value, "62", "reading 62%");
+s.value = "30"; s.fire("change");
+md[2].click();
+s = sr(c).querySelector(".sl").querySelector("input");
+ok(s.className === "hue" && s.value === "210", "colour shows the hue slider, at the light's hue");
+s.value = "120"; s.fire("change");
+md[1].click();
+s = sr(c).querySelector(".sl").querySelector("input");
+s.value = "2700"; s.fire("change");
+md[1].click();
+ok(sr(c).querySelector(".sl").hidden, "pressing the same one again brings the name back");
+sr(c).querySelector(".ic").click();
 
-console.log("-- what it sends --");
-c.shadowRoot.querySelectorAll(".sw")[0].querySelectorAll("button")[6].click();
-sliders[0].value = "30"; sliders[0].fire("change");
-sliders[1].value = "2700"; sliders[1].fire("change");
-c.shadowRoot.querySelectorAll(".chips")[0].children[0].click();
-c.shadowRoot.querySelectorAll(".chips")[1].children[0].click();
-btns(c, ".pw")[0].click();
 setTimeout(() => {
-  eq(h.calls.map((x) => [x[0], x[1], x[2], x[3].entity_id]), [
-    ["light", "turn_on", { rgb_color: [40, 110, 255] }, L],
-    ["light", "turn_on", { brightness_pct: 30 }, L],
-    ["light", "turn_on", { color_temp_kelvin: 2700 }, L],
-    ["scene", "turn_on", {}, "scene.javon_lamps_movie"],
-    ["light", "turn_on", { effect: "colorloop" }, L],
-    ["light", "toggle", {}, L]], "blue, 30%, 2700K, the Movie scene, colorloop, power");
+  eq(h.calls.map((x) => [x[1], x[2]]), [["turn_on", { brightness_pct: 30 }], ["turn_on", { hs_color: [120, 100] }],
+    ["turn_on", { color_temp_kelvin: 2700 }], ["toggle", {}]], "30%, green, 2700K, and the bulb toggles");
 
-  console.log("-- live, but not under a finger --");
-  const h2 = mk({ brightness: 255, rgb_color: [40, 110, 255] });
-  c.hass = h2;
-  eq(sliders[0].value, "100", "a new brightness moves the slider");
-  sliders[0].fire("pointerdown");
-  c.hass = mk({ brightness: 25 });
-  eq(sliders[0].value, "100", "not while it is held");
+  console.log("-- the details pop-up --");
+  h.calls.length = 0;
+  sr(c).querySelector(".tx").click();
+  const pop = c._pop;
+  ok(!!pop, "tapping the name opens everything");
+  eq(pop.querySelectorAll("input").filter((i) => i.type === "range").length, 3, "brightness, white and colour sliders");
+  eq(pop.querySelector(".sw").querySelectorAll("button").length, 9, "the swatches");
+  const sels = pop.querySelectorAll("select");
+  eq(sels.map((x) => x.children.map((o) => o.textContent)),
+    [["Scenes…", "Movie", "Read"], ["Effects…", "colorloop", "candle"]],
+    "scenes and effects as dropdowns, its own Zigbee2MQTT scenes only");
+  sels[0].value = "scene.javon_lamps_read"; sels[0].fire("change");
+  eq(sels[0].value, "", "a picked scene resets the box so it can be picked again");
+  sels[1].value = "candle"; sels[1].fire("change");
+  setTimeout(() => {
+    eq(h.calls.map((x) => [x[0], x[1], x[2], x[3].entity_id]), [
+      ["scene", "turn_on", {}, "scene.javon_lamps_read"], ["light", "turn_on", { effect: "candle" }, L]],
+      "the scene and the effect are applied");
+    c._closeDetails();
+    ok(!c._pop, "and it closes");
 
-  console.log("-- a plain dimmer --");
-  const d = card(mk({}), D);
-  eq(d.shadowRoot.querySelectorAll("input").filter((i) => i.type === "range").length, 1, "just the brightness slider");
-  eq(d.shadowRoot.querySelectorAll(".sw").length, 0, "no colours");
-  eq(d.shadowRoot.querySelectorAll(".chips").length, 0, "no scenes or effects");
+    console.log("-- a plain dimmer --");
+    const d = card(mk({}), D);
+    eq(sr(d).querySelector(".md").children.map((b) => b.title), ["Brightness"], "a dimmer gets only brightness");
 
-  console.log("-- in a room --");
-  ok(!!T.RENDER_KINDS.color, "the layout builder offers it as a way to draw a light");
-  eq(T.lightCard({ entity: L, render: "color", name: "Lamps" }), { type: "custom:charro-color-light-card", entity: L, name: "Lamps" },
-    "and a light set to it draws the colour card");
+    console.log("-- in a room --");
+    ok(!!T.RENDER_KINDS.color, "the layout builder offers it as a way to draw a light");
+    eq(T.lightCard({ entity: L, render: "color", name: "Lamps" }),
+      { type: "custom:charro-color-light-card", entity: L, name: "Lamps" }, "a light set to it draws the card");
 
-  console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
-  process.exit(fails ? 1 : 0);
-}, 10);
+    console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
+    process.exit(fails ? 1 : 0);
+  }, 5);
+}, 5);

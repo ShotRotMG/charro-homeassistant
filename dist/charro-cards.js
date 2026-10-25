@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.133.0";
+const VERSION = "5.134.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8848,38 +8848,80 @@ const clRgb = (hex) => {
 
 const CL_CSS = `
 :host{ display:block; }
-ha-card{ padding:12px 14px; }
-.hd{ display:flex; align-items:center; gap:12px; }
-.ic{ width:40px; height:40px; border-radius:50%; display:flex; align-items:center;
-  justify-content:center; background:rgba(127,127,127,.16); flex:none; }
+ha-card{ padding:8px 10px; }
+.ln{ display:flex; align-items:center; gap:10px; min-height:44px; }
+.ic{ width:38px; height:38px; border-radius:50%; display:flex; align-items:center;
+  justify-content:center; background:rgba(127,127,127,.16); flex:none; cursor:pointer;
+  border:none; color:inherit; padding:0; }
+.ic.on{ background:var(--cl-glow, rgba(255,193,7,.25)); }
 .ic ha-icon{ --mdc-icon-size:22px; }
-.tx{ flex:1; min-width:0; }
+.tx{ flex:1; min-width:0; cursor:pointer; }
 .nm{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.st{ font-size:12.5px; color:var(--secondary-text-color); }
-.pw{ width:40px; height:40px; border-radius:50%; border:none; cursor:pointer;
-  background:rgba(127,127,127,.16); color:var(--primary-text-color); flex:none;
+.st{ font-size:12.5px; color:var(--secondary-text-color); white-space:nowrap; }
+.sl{ flex:1; min-width:0; display:flex; align-items:center; }
+.sl[hidden], .tx[hidden]{ display:none; }
+.md{ display:flex; gap:4px; flex:none; }
+.md button{ width:32px; height:32px; border-radius:50%; border:none; cursor:pointer; padding:0;
+  background:rgba(127,127,127,.14); color:var(--secondary-text-color);
   display:flex; align-items:center; justify-content:center; }
-.pw.on{ background:var(--cl-glow, rgba(255,193,7,.25)); color:var(--cl-col, #ffc107); }
-.row{ display:flex; align-items:center; gap:10px; margin-top:12px; }
-.row > ha-icon{ --mdc-icon-size:18px; color:var(--secondary-text-color); flex:none; }
-input[type=range]{ flex:1; accent-color:var(--cl-col, var(--primary-color)); }
-input.temp{ accent-color:#ffb74d; background:linear-gradient(90deg,#ffb35c,#fff4e6,#cfe3ff);
-  height:6px; border-radius:3px; -webkit-appearance:none; appearance:none; }
-input.temp::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
-  border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.3); }
-.sw{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; align-items:center; }
-.sw button{ width:28px; height:28px; border-radius:50%; border:2px solid rgba(127,127,127,.35);
-  cursor:pointer; padding:0; }
-.sw button.sel{ border-color:var(--primary-text-color); }
-.sw input[type=color]{ width:30px; height:30px; border:none; padding:0; background:none; cursor:pointer; }
-.chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
-.chips button{ border:none; border-radius:999px; padding:5px 11px; cursor:pointer; font:inherit;
-  font-size:13px; background:rgba(127,127,127,.16); color:var(--primary-text-color); }
-.chips button.sel{ background:var(--cl-glow, rgba(255,193,7,.25)); }
-.cap{ font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; margin-top:12px;
-  color:var(--secondary-text-color); }
-.off .dimmable{ opacity:.45; }
+.md button ha-icon{ --mdc-icon-size:18px; }
+.md button.sel{ background:var(--cl-glow, rgba(255,193,7,.25)); color:var(--cl-col, #ffc107); }
+${"" /* the sliders, shared with the details pop-up */}
+input[type=range]{ width:100%; margin:0; accent-color:var(--cl-col, var(--primary-color)); }
+input.temp, input.hue{ -webkit-appearance:none; appearance:none; height:8px; border-radius:4px; }
+input.temp{ background:linear-gradient(90deg,#ffb35c,#fff4e6,#cfe3ff); }
+input.hue{ background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+input.temp::-webkit-slider-thumb, input.hue::-webkit-slider-thumb{ -webkit-appearance:none;
+  width:18px; height:18px; border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.35); }
+input.temp::-moz-range-thumb, input.hue::-moz-range-thumb{
+  width:16px; height:16px; border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.35); }
 `;
+
+/* The details pop-up: everything the light does, one screen. Lives in the
+ * same host as the room pop-ups so Home Assistant's taps reach it. */
+const CL_POP_CSS = `
+.charro-cl-back{ position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.45); }
+.charro-cl-pop{ position:fixed; z-index:41; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(380px, calc(100vw - 32px)); max-height:calc(100vh - 48px); overflow:auto;
+  box-sizing:border-box; padding:16px; border-radius:18px;
+  background:linear-gradient(var(--card-background-color,#1c1c1c),var(--card-background-color,#1c1c1c)),
+    var(--primary-background-color,#111);
+  color:var(--primary-text-color); box-shadow:0 12px 40px rgba(0,0,0,.5);
+  font-family:var(--paper-font-body1_-_font-family, system-ui, sans-serif); }
+.charro-cl-pop .hd{ display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+.charro-cl-pop .hd .t{ flex:1; font-size:18px; font-weight:650; }
+.charro-cl-pop .hd .s{ font-size:12.5px; color:var(--secondary-text-color); }
+.charro-cl-pop button.b{ width:38px; height:38px; border-radius:50%; border:none; cursor:pointer;
+  background:rgba(127,127,127,.16); color:var(--primary-text-color); padding:0;
+  display:flex; align-items:center; justify-content:center; }
+.charro-cl-pop button.b.on{ background:var(--cl-glow, rgba(255,193,7,.25)); color:var(--cl-col,#ffc107); }
+.charro-cl-pop .row{ display:flex; align-items:center; gap:10px; margin-top:14px; }
+.charro-cl-pop .row > ha-icon{ --mdc-icon-size:18px; color:var(--secondary-text-color); flex:none; }
+.charro-cl-pop input[type=range]{ flex:1; margin:0; accent-color:var(--cl-col, var(--primary-color)); }
+.charro-cl-pop input.temp, .charro-cl-pop input.hue{ -webkit-appearance:none; appearance:none;
+  height:8px; border-radius:4px; }
+.charro-cl-pop input.temp{ background:linear-gradient(90deg,#ffb35c,#fff4e6,#cfe3ff); }
+.charro-cl-pop input.hue{ background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+.charro-cl-pop .sw{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; align-items:center; }
+.charro-cl-pop .sw button{ width:28px; height:28px; border-radius:50%; cursor:pointer; padding:0;
+  border:2px solid rgba(127,127,127,.35); }
+.charro-cl-pop .sw button.sel{ border-color:var(--primary-text-color); }
+.charro-cl-pop .sw input[type=color]{ width:30px; height:30px; border:none; padding:0; background:none; cursor:pointer; }
+.charro-cl-pop select{ flex:1; font:inherit; color:var(--primary-text-color);
+  background:rgba(127,127,127,.12); border:1px solid var(--divider-color, rgba(255,255,255,.12));
+  border-radius:10px; padding:8px 10px; }
+`;
+
+/* A slider that leaves itself alone while it is being dragged. */
+function clSlider(cls, min, max, step, held, onSet) {
+  const s = document.createElement("input");
+  s.type = "range"; s.min = String(min); s.max = String(max); s.step = String(step);
+  if (cls) s.className = cls;
+  s.addEventListener("pointerdown", () => held.add(s));
+  s.addEventListener("pointerup", () => held.delete(s));
+  s.addEventListener("change", () => { held.delete(s); onSet(Number(s.value)); });
+  return s;
+}
 
 class CharroColorLightCard extends HTMLElement {
   static getStubConfig() { return { type: "custom:charro-color-light-card", entity: "" }; }
@@ -8894,113 +8936,187 @@ class CharroColorLightCard extends HTMLElement {
     tipBoot(h);
     if (!this._built) this._build(); else this._update();
   }
-  getCardSize() { return 4; }
+  getCardSize() { return 1; }
+  disconnectedCallback() { this._closeDetails(); }
 
   _call(svc, data) {
-    const id = this._config.entity;
-    return Promise.resolve(this._hass.callService("light", svc, data || {}, { entity_id: id }))
+    return Promise.resolve(this._hass.callService("light", svc, data || {},
+      { entity_id: this._config.entity }))
       .catch((err) => console.error("charro-color-light-card:", svc, err));
   }
 
+  /* One line: the bulb (tap = on/off), the name (tap = everything), and a
+   * button per thing it can change - brightness, white, colour - each of
+   * which swaps the name for that one slider. */
   _build() {
     const st = this._hass && this._hass.states[this._config.entity];
     if (!st) return;
     this._built = true;
-    this._caps = clCaps(st);
-    const caps = this._caps;
+    const caps = this._caps = clCaps(st);
+    this._held = new Set();
     const root = this.shadowRoot || this.attachShadow({ mode: "open" });
     root.innerHTML = "";
     const style = document.createElement("style");
     style.textContent = CL_CSS;
     const card = document.createElement("ha-card");
-    const el = (tag, cls, text) => {
-      const e = document.createElement(tag);
-      if (cls) e.className = cls;
-      if (text != null) e.textContent = text;
-      return e;
-    };
+    const ln = document.createElement("div");
+    ln.className = "ln";
 
-    const hd = el("div", "hd");
-    const ic = el("div", "ic");
+    this._ic = document.createElement("button");
+    this._ic.className = "ic";
     this._icon = document.createElement("ha-icon");
-    ic.appendChild(this._icon);
-    const tx = el("div", "tx");
-    this._nm = el("div", "nm");
-    this._st = el("div", "st");
-    tx.append(this._nm, this._st);
-    this._pw = el("button", "pw");
-    this._pw.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
-    this._pw.addEventListener("click", () => this._call("toggle"));
-    ic.addEventListener("click", () => fireEvent(this, "hass-more-info", { entityId: this._config.entity }));
-    hd.append(ic, tx, this._pw);
-    card.appendChild(hd);
+    this._ic.appendChild(this._icon);
+    this._ic.addEventListener("click", () => this._call("toggle"));
 
-    this._held = new Set();
-    const slider = (cls, icon, min, max, step, onSet) => {
-      const row = el("div", "row dimmable");
-      const i = document.createElement("ha-icon");
-      i.icon = icon;
-      const s = document.createElement("input");
-      s.type = "range"; s.min = String(min); s.max = String(max); s.step = String(step);
-      if (cls) s.className = cls;
-      s.addEventListener("pointerdown", () => this._held.add(s));
-      s.addEventListener("pointerup", () => this._held.delete(s));
-      s.addEventListener("change", () => { this._held.delete(s); onSet(Number(s.value)); });
-      row.append(i, s);
-      card.appendChild(row);
-      return s;
-    };
-    if (caps.dim)
-      this._bri = slider("", "mdi:brightness-6", 1, 100, 1,
-        (v) => this._call("turn_on", { brightness_pct: v }));
-    if (caps.temp)
-      this._temp = slider("temp", "mdi:thermometer", caps.minK, caps.maxK, 50,
-        (v) => this._call("turn_on", { color_temp_kelvin: v }));
+    this._tx = document.createElement("div");
+    this._tx.className = "tx";
+    this._nm = document.createElement("div"); this._nm.className = "nm";
+    this._st = document.createElement("div"); this._st.className = "st";
+    this._tx.append(this._nm, this._st);
+    this._tx.addEventListener("click", () => this._openDetails());
 
-    if (caps.color) {
-      const sw = el("div", "sw dimmable");
-      this._sw = [];
-      for (const [name, rgb] of CL_SWATCHES) {
-        const b = el("button");
-        b.title = name;
-        b.style.background = clHex(rgb);
-        b.addEventListener("click", () => this._call("turn_on", { rgb_color: rgb }));
-        sw.appendChild(b);
-        this._sw.push([b, rgb]);
-      }
-      this._pick = document.createElement("input");
-      this._pick.type = "color";
-      this._pick.title = "Any colour";
-      this._pick.addEventListener("change", () => {
-        const rgb = clRgb(this._pick.value);
-        if (rgb) this._call("turn_on", { rgb_color: rgb });
-      });
-      sw.appendChild(this._pick);
-      card.appendChild(sw);
+    this._sl = document.createElement("div");
+    this._sl.className = "sl";
+    this._sl.hidden = true;
+    const sliders = {};
+    if (caps.dim) sliders.bri = clSlider("", 1, 100, 1, this._held,
+      (v) => this._call("turn_on", { brightness_pct: v }));
+    if (caps.temp) sliders.temp = clSlider("temp", caps.minK, caps.maxK, 50, this._held,
+      (v) => this._call("turn_on", { color_temp_kelvin: v }));
+    if (caps.color) sliders.hue = clSlider("hue", 0, 360, 1, this._held,
+      (v) => this._call("turn_on", { hs_color: [v, 100] }));
+    this._sliders = sliders;
+
+    const md = document.createElement("div");
+    md.className = "md";
+    this._modeBtns = {};
+    for (const [k, icon, title] of [["bri", "mdi:brightness-6", "Brightness"],
+      ["temp", "mdi:white-balance-sunny", "White"], ["hue", "mdi:palette", "Colour"]]) {
+      if (!sliders[k]) continue;
+      const b = document.createElement("button");
+      b.title = title;
+      b.innerHTML = `<ha-icon icon="${icon}"></ha-icon>`;
+      b.addEventListener("click", () => this._setMode(this._mode === k ? null : k));
+      md.appendChild(b);
+      this._modeBtns[k] = b;
     }
-
-    const chipRow = (label, items, onTap) => {
-      if (!items.length) return null;
-      card.appendChild(el("div", "cap", label));
-      const row = el("div", "chips");
-      const out = [];
-      for (const it of items) {
-        const b = el("button", "", it.name);
-        b.addEventListener("click", () => onTap(it));
-        row.appendChild(b);
-        out.push([b, it]);
-      }
-      card.appendChild(row);
-      return out;
-    };
-    this._scenes = chipRow("Scenes", clScenes(this._hass, this._config.entity),
-      (it) => this._hass.callService("scene", "turn_on", {}, { entity_id: it.id }));
-    this._fx = chipRow("Effects", caps.effects.map((e) => ({ name: String(e).replace(/_/g, " "), id: e })),
-      (it) => this._call("turn_on", { effect: it.id }));
-
+    ln.append(this._ic, this._tx, this._sl, md);
+    card.appendChild(ln);
     this._card = card;
     root.append(style, card);
     this._update();
+  }
+
+  _setMode(k) {
+    this._mode = k;
+    this._sl.textContent = "";
+    if (k && this._sliders[k]) this._sl.appendChild(this._sliders[k]);
+    this._sl.hidden = !k;
+    this._tx.hidden = !!k;
+    for (const [m, b] of Object.entries(this._modeBtns)) b.classList.toggle("sel", m === k);
+  }
+
+  _openDetails() {
+    if (this._pop) return;
+    const host = popupHost();
+    if (!host.__charroClCss) {
+      const s = document.createElement("style");
+      s.textContent = CL_POP_CSS;
+      host.appendChild(s);
+      host.__charroClCss = true;
+    }
+    const caps = this._caps;
+    const back = document.createElement("div");
+    back.className = "charro-cl-back";
+    const pop = document.createElement("div");
+    pop.className = "charro-cl-pop";
+    pop.setAttribute("role", "dialog");
+    const d = this._det = { held: new Set() };
+
+    const hd = document.createElement("div"); hd.className = "hd";
+    d.pw = document.createElement("button"); d.pw.className = "b";
+    d.pw.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+    d.pw.addEventListener("click", () => this._call("toggle"));
+    const tt = document.createElement("div");
+    d.t = document.createElement("div"); d.t.className = "t";
+    d.s = document.createElement("div"); d.s.className = "s";
+    tt.style.flex = "1";
+    tt.append(d.t, d.s);
+    const x = document.createElement("button"); x.className = "b";
+    x.title = "Close";
+    x.innerHTML = `<ha-icon icon="mdi:close"></ha-icon>`;
+    x.addEventListener("click", () => this._closeDetails());
+    hd.append(d.pw, tt, x);
+    pop.appendChild(hd);
+
+    const row = (icon, el) => {
+      const r = document.createElement("div"); r.className = "row";
+      const i = document.createElement("ha-icon"); i.icon = icon;
+      r.append(i, el); pop.appendChild(r);
+    };
+    if (caps.dim) row("mdi:brightness-6", d.bri = clSlider("", 1, 100, 1, d.held,
+      (v) => this._call("turn_on", { brightness_pct: v })));
+    if (caps.temp) row("mdi:white-balance-sunny", d.temp = clSlider("temp", caps.minK, caps.maxK, 50, d.held,
+      (v) => this._call("turn_on", { color_temp_kelvin: v })));
+    if (caps.color) {
+      row("mdi:palette", d.hue = clSlider("hue", 0, 360, 1, d.held,
+        (v) => this._call("turn_on", { hs_color: [v, 100] })));
+      const sw = document.createElement("div"); sw.className = "sw";
+      d.sw = [];
+      for (const [name, rgb] of CL_SWATCHES) {
+        const b = document.createElement("button");
+        b.title = name; b.style.background = clHex(rgb);
+        b.addEventListener("click", () => this._call("turn_on", { rgb_color: rgb }));
+        sw.appendChild(b); d.sw.push([b, rgb]);
+      }
+      d.pick = document.createElement("input");
+      d.pick.type = "color"; d.pick.title = "Any colour";
+      d.pick.addEventListener("change", () => {
+        const rgb = clRgb(d.pick.value);
+        if (rgb) this._call("turn_on", { rgb_color: rgb });
+      });
+      sw.appendChild(d.pick);
+      pop.appendChild(sw);
+    }
+    /* Scenes and effects as dropdowns: picking one applies it, and the
+     * box goes back to its label so the same one can be picked again. */
+    const drop = (icon, label, items, onPick) => {
+      if (!items.length) return null;
+      const sel = document.createElement("select");
+      const first = document.createElement("option");
+      first.value = ""; first.textContent = label;
+      sel.appendChild(first);
+      for (const it of items) {
+        const o = document.createElement("option");
+        o.value = it.id; o.textContent = it.name;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => {
+        const it = items.find((i) => i.id === sel.value);
+        if (it) onPick(it);
+        sel.value = "";
+      });
+      row(icon, sel);
+      return sel;
+    };
+    drop("mdi:palette-swatch", "Scenes…", clScenes(this._hass, this._config.entity),
+      (it) => this._hass.callService("scene", "turn_on", {}, { entity_id: it.id }));
+    drop("mdi:auto-fix", "Effects…",
+      caps.effects.map((e) => ({ id: e, name: String(e).replace(/_/g, " ") })),
+      (it) => this._call("turn_on", { effect: it.id }));
+
+    back.addEventListener("click", () => this._closeDetails());
+    this._key = (ev) => { if (ev.key === "Escape") this._closeDetails(); };
+    window.addEventListener("keydown", this._key);
+    host.append(back, pop);
+    this._pop = pop; this._back = back;
+    this._update();
+  }
+
+  _closeDetails() {
+    if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
+    for (const n of [this._pop, this._back]) if (n) { try { n.remove(); } catch (err) {} }
+    this._pop = null; this._back = null; this._det = null;
   }
 
   _update() {
@@ -9010,12 +9126,16 @@ class CharroColorLightCard extends HTMLElement {
     const on = st.state === "on";
     const rgb = on && a.rgb_color ? a.rgb_color : null;
     const col = rgb ? clHex(rgb) : on ? "var(--state-light-active-color, #ffc107)" : "var(--disabled-text-color)";
-    this._card.classList.toggle("off", !on);
-    this._card.style.setProperty("--cl-col", col);
-    this._card.style.setProperty("--cl-glow", rgb ? `rgba(${rgb.join(",")},.25)` : "rgba(255,193,7,.25)");
+    const glow = rgb ? `rgba(${rgb.join(",")},.25)` : "rgba(255,193,7,.25)";
+    for (const el of [this._card, this._pop]) if (el) {
+      el.style.setProperty("--cl-col", col);
+      el.style.setProperty("--cl-glow", glow);
+    }
     this._icon.icon = this._config.icon || a.icon || (on ? "mdi:lightbulb" : "mdi:lightbulb-outline");
     this._icon.style.color = col;
-    this._nm.textContent = this._config.name || a.friendly_name || this._config.entity;
+    this._ic.classList.toggle("on", on);
+    const name = this._config.name || a.friendly_name || this._config.entity;
+    this._nm.textContent = name;
     const pct = a.brightness != null ? Math.max(1, Math.round(a.brightness / 2.55)) : null;
     const bits = [];
     if (st.state === "unavailable") bits.push("Unavailable");
@@ -9025,17 +9145,24 @@ class CharroColorLightCard extends HTMLElement {
       if (a.color_mode === "color_temp" && a.color_temp_kelvin) bits.push(`${a.color_temp_kelvin}K`);
       if (a.effect && !["none", "off"].includes(String(a.effect).toLowerCase())) bits.push(a.effect);
     }
-    this._st.textContent = bits.join(" · ");
-    this._pw.classList.toggle("on", on);
-    this._pw.title = on ? "Turn off" : "Turn on";
-    if (this._bri && !this._held.has(this._bri) && pct != null) this._bri.value = String(pct);
-    if (this._temp && !this._held.has(this._temp) && a.color_temp_kelvin) this._temp.value = String(a.color_temp_kelvin);
-    if (this._sw) {
-      const near = (x) => rgb && x.every((n, i) => Math.abs(n - rgb[i]) < 30);
-      for (const [b, x] of this._sw) b.classList.toggle("sel", !!near(x));
-      if (rgb && this._pick) this._pick.value = clHex(rgb);
+    const said = bits.join(" · ");
+    this._st.textContent = said;
+    const hue = a.hs_color ? Math.round(a.hs_color[0]) : null;
+    const put = (s, held, v) => { if (s && v != null && !held.has(s)) s.value = String(v); };
+    put(this._sliders.bri, this._held, pct);
+    put(this._sliders.temp, this._held, a.color_temp_kelvin);
+    put(this._sliders.hue, this._held, hue);
+    const d = this._det;
+    if (d) {
+      d.t.textContent = name; d.s.textContent = said;
+      d.pw.classList.toggle("on", on);
+      put(d.bri, d.held, pct); put(d.temp, d.held, a.color_temp_kelvin); put(d.hue, d.held, hue);
+      if (d.sw) {
+        const near = (x) => rgb && x.every((n, i) => Math.abs(n - rgb[i]) < 30);
+        for (const [b, x] of d.sw) b.classList.toggle("sel", !!near(x));
+        if (rgb && d.pick) d.pick.value = clHex(rgb);
+      }
     }
-    if (this._fx) for (const [b, it] of this._fx) b.classList.toggle("sel", on && a.effect === it.id);
   }
 }
 defCard("charro-color-light-card", CharroColorLightCard, { name: "Charro Colour Light",
