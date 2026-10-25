@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.126.0";
+const VERSION = "5.127.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -11065,7 +11065,12 @@ class CharroRoomsEditor extends HTMLElement {
     if (!this._room) return false;
     const save = { ...this._room };
     delete save._remotes;
-    return JSON.stringify(save) !== JSON.stringify(this._orig || {});
+    /* _remotes is fetched, not part of the file, and _load leaves it on
+     * _orig - compared as it was, every room read as changed the moment it
+     * was opened */
+    const orig = { ...(this._orig || {}) };
+    delete orig._remotes;
+    return JSON.stringify(save) !== JSON.stringify(orig);
   }
 
   /* Wait for the typing to stop before writing — a keystroke per save would
@@ -11563,8 +11568,28 @@ class CharroRoomsEditor extends HTMLElement {
   _say(msg, cls) { this._status.textContent = msg; this._status.className = "status " + (cls || ""); }
 
   /* -------------------------------------------------------------- load -- */
+  /* Before leaving whatever is open: save it under its own name if it has
+   * unsaved changes and autosave is on, and cancel the pending autosave
+   * either way. On 2026-10-25 a Backyard autosave was still waiting when
+   * Theatre was opened; _load had already switched the file name and was
+   * still awaiting the new room, so the timer wrote Backyard into
+   * theatre.json. */
+  async _leave() {
+    clearTimeout(this._autoT);
+    this._autoT = null;
+    if (this._autoOn() && this._canWrite() && this._dirty() && !this._saving)
+      await this._doSave(true);
+  }
+
   async _load(key, quiet) {
     if (!key) return;
+    // taken before anything awaits, so the last room clicked is the one opened
+    const ticket = this._loadTicket = (this._loadTicket || 0) + 1;
+    await this._leave();
+    if (ticket !== this._loadTicket) return;
+    /* The name and the contents change together: nothing is open while the
+     * new room is read, so nothing can be saved under the wrong name. */
+    this._room = null;
     this._key = key;
     if (this._crumb) this._crumb.textContent = key;
     this._renderRail();
@@ -11573,6 +11598,7 @@ class CharroRoomsEditor extends HTMLElement {
       // always from the server, never the copy the cards are holding
       invalidateRooms();
       const { rooms, remotes } = await loadAll(this._hass);
+      if (ticket !== this._loadTicket) return;   // another room was opened meanwhile
       this._roomsAll = rooms;
       this._remotesAll = remotes;
       this._mode = "room";
@@ -11602,6 +11628,7 @@ class CharroRoomsEditor extends HTMLElement {
 
   /* ----------------------------------------------------------- remotes -- */
   async _loadRemote(name) {
+    await this._leave();
     this._mode = "remote";
     this._rkey = name;
     if (this._crumb) this._crumb.textContent = `remote: ${name}`;
