@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.118.0";
+const VERSION = "5.119.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2123,6 +2123,21 @@ function blockCards(name, r, hass) {
 
   if (name === "climate" && r.climate_entity) push(climateCard(r, hass));
 
+  /* Every light, grouped by the list it came from. This lived in autoBody
+   * alone, so the "All lights" block a custom layout can place drew
+   * nothing at all. */
+  if (name === "lights") {
+    const fans = fanIdSet(r);
+    const groups = LIGHT_GROUPS
+      .map(([label, key]) => [label, r[key]])
+      .filter(([, l]) => (l || []).length);
+    for (const [label, list] of groups) {
+      if (groups.length > 1)
+        push({ type: "heading", heading: label, heading_style: "subtitle" });
+      push({ type: "grid", columns: 2, square: false,
+             cards: list.map((l) => lightCard(l, r.no_dim, fans)) });
+    }
+  }
   /* One sensor card per reading: the value and a day of it as a line. Two
    * to a row, or the row to itself when there is only one. */
   if (name === "readings") {
@@ -2258,19 +2273,7 @@ function autoBody(r, hass) {
 
   for (const c of extra.start || []) push(asConditional(c));
   for (const name of order) {
-    if (name === "lights") {
-      const groups = LIGHT_GROUPS
-        .map(([label, key]) => [label, r[key]])
-        .filter(([, l]) => (l || []).length);
-      for (const [label, list] of groups) {
-        if (groups.length > 1)
-          push({ type: "heading", heading: label, heading_style: "subtitle" });
-        push({ type: "grid", columns: 2, square: false,
-               cards: list.map((l) => lightCard(l, r.no_dim, fans)) });
-      }
-    } else {
-      for (const c of blockCards(name, r, hass)) push(c);
-    }
+    for (const c of blockCards(name, r, hass)) push(c);
     for (const c of extra[name] || []) push(asConditional(c));
   }
   for (const c of extra.end || []) push(asConditional(c));
