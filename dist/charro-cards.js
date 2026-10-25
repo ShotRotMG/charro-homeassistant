@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.117.0";
+const VERSION = "5.118.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -831,7 +831,10 @@ function remoteCards(r, templates) {
     const tpl = templates[spec0.use];
     if (!tpl) {
       out.push({ type: "markdown",
-                 content: `\`_remotes.json\` has no template named **${spec.use}**.` });
+                 /* spec0: `spec` is declared below this line, and naming it
+                  * here threw instead of drawing the warning - a remote
+                  * with a missing template took the whole media block down */
+                 content: `\`_remotes.json\` has no template named **${spec0.use}**.` });
       continue;
     }
     const spec = harmonyAlias(spec0);
