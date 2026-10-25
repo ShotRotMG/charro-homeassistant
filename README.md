@@ -433,6 +433,17 @@ then the screens card shows just On. For the Theatre, "the receiver is on"
 shows the remotes as soon as the receiver is up, while the projector is still
 warming.
 
+### Volume bar
+
+Above the remote: **mute, −, a slider, +**, aimed at the screen's volume (the
+Theatre's receiver). A media_player's slider is its volume level, and mute
+toggles its mute. A number's slider is the number itself, with − and + going
+through `charro.volume_step` so its step and limits hold. The bar follows the
+volume live without redrawing the remote, and leaves the slider alone while
+you're dragging it. The remote's own volume and mute buttons are dropped, so
+there is one control, not two. Untick **Volume bar above the remote** in
+Media & remotes (`video.volume_bar: false`) to get them back.
+
 ### No helper: the receiver picks
 
 A room doesn't need an `input_select` and an automation per source. Point the

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.124.0";
+const VERSION = "5.125.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1788,6 +1788,24 @@ function dropButtons(rows, names) {
     out.push(r);
   }
   return out;
+}
+
+/* A remote's own volume and mute buttons, for when the volume bar above it
+ * already does the job - one volume control, not two. Only buttons aimed at
+ * the bar's entity go; a button for anything else stays. */
+function dropVolumeButtons(card, vol) {
+  if (!card || !vol) return card;
+  const gone = [];
+  for (const a of card.custom_actions || []) {
+    const t = a && a.tap_action;
+    if (!t || VOL_ACTS[actionService(t)] === undefined) continue;
+    const tgt = (t.target && t.target.entity_id) || a.entity_id || "";
+    if (!tgt || tgt === vol) gone.push(a.name);
+  }
+  if (!gone.length) return card;
+  card.custom_actions = card.custom_actions.filter((a) => gone.indexOf(a.name) < 0);
+  card.rows = dropButtons(card.rows, gone);
+  return card;
 }
 
 /* The matrix's CEC volume arrives as two buttons named for the direction
@@ -5841,6 +5859,17 @@ def("charro-zone-source", CharroZoneSource);
  * however many screens can show that box.
  */
 const VIDEO_CSS = `
+.vvol{ display:flex; align-items:center; gap:8px; margin:0 0 10px;
+  padding:6px 10px; border-radius:999px; background:rgba(127,127,127,.12); }
+.vvol.off{ opacity:.45; }
+.vvb{ flex:none; width:34px; height:34px; border:none; border-radius:50%;
+  background:rgba(127,127,127,.16); color:var(--primary-text-color); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; padding:0; }
+.vvb ha-icon{ --mdc-icon-size:20px; }
+.vvb.on{ background:rgba(244,67,54,.22); color:#ef5350; }
+.vvs{ flex:1; min-width:60px; accent-color:var(--primary-color); }
+.vvn{ flex:none; min-width:2.2em; text-align:right; font-variant-numeric:tabular-nums;
+  color:var(--secondary-text-color); font-size:13px; }
 .vtabs{ display:flex; gap:4px; margin:4px 0 10px; flex-wrap:wrap; }
 .vtabs button{
   font:inherit; font-size:13px; font-weight:600; cursor:pointer;
@@ -5947,6 +5976,8 @@ class CharroVideoCard extends HTMLElement {
     this._hass = h;
     tipBoot(h);
     for (const c of this._live || []) c.hass = h;
+    // the volume bar follows the volume without a redraw
+    if (this._vbar && this._vbar.el.isConnected !== false) this._vbar.update(h);
     const sig = this._sig();
     if (sig === this._lastSig) return;
     this._lastSig = sig;
@@ -6823,6 +6854,8 @@ class CharroVideoCard extends HTMLElement {
       stranded();
       return;
     }
+    const bar = this._volumeBar(d, spec);
+    if (bar) this._out.appendChild(bar);
     if (spec.card) { add(spec.card); return; }
     const tpl = this._templates[spec.use];
     if (!tpl) {
@@ -6840,7 +6873,98 @@ class CharroVideoCard extends HTMLElement {
                    volume: volumeFor(d, spec),
                    volume_mute: volumeMute(d, spec),
                    volume_steps: volumeSteps(d, spec) };
-    add(pruneTemplate(retargetVolume(fillTemplate(clone(tpl), vars), vars)));
+    const card = pruneTemplate(retargetVolume(fillTemplate(clone(tpl), vars), vars));
+    add(bar ? dropVolumeButtons(card, vars.volume) : card);
+  }
+
+  /* One volume control above the remote: mute, -, a slider, +. For a
+   * media_player the slider is its volume_level; for a number it is the
+   * number itself, and +/- go through charro.volume_step so the entity's own
+   * step and limits hold. It follows the volume live without redrawing the
+   * card, and leaves the slider alone while a finger is on it. Off with
+   * video.volume_bar: false, which brings the remote's own buttons back. */
+  _volumeBar(d, spec) {
+    this._vbar = null;
+    if (this._v.volume_bar === false) return null;
+    const vol = volumeFor(d, spec);
+    const mp = vol.startsWith("media_player.");
+    const num = vol.startsWith("number.") || vol.startsWith("input_number.");
+    if (!mp && !num) return null;
+    const hass = this._hass;
+    const call = (dom, svc, data) => Promise.resolve(
+      hass.callService(dom, svc, data || {}, { entity_id: vol }))
+      .catch((err) => console.error("charro-video-card: volume", err));
+    const muteId = volumeMute(d, spec);
+    const bar = document.createElement("div");
+    bar.className = "vvol";
+    const btn = (icon, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "vvb";
+      b.title = title;
+      b.innerHTML = `<ha-icon icon="${icon}"></ha-icon>`;
+      b.addEventListener("click", fn);
+      return b;
+    };
+    const mute = (mp || muteId) ? btn("mdi:volume-high", "Mute", () => {
+      if (muteId) {
+        this._hass.callService(muteId.split(".")[0], "toggle", {}, { entity_id: muteId });
+        return;
+      }
+      const st = this._hass.states[vol];
+      call("media_player", "volume_mute",
+           { is_volume_muted: !(st && st.attributes && st.attributes.is_volume_muted) });
+    }) : null;
+    const steps = volumeSteps(d, spec);
+    const down = btn("mdi:minus", "Volume down", () => mp
+      ? call("media_player", "volume_down") : call("charro", "volume_step", { steps: -steps }));
+    const up = btn("mdi:plus", "Volume up", () => mp
+      ? call("media_player", "volume_up") : call("charro", "volume_step", { steps }));
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "vvs";
+    slider.setAttribute("aria-label", "Volume");
+    let holding = false;
+    slider.addEventListener("pointerdown", () => { holding = true; });
+    slider.addEventListener("pointerup", () => { holding = false; });
+    slider.addEventListener("change", () => {
+      holding = false;
+      const n = Number(slider.value);
+      if (mp) call("media_player", "volume_set", { volume_level: n / 100 });
+      else call(vol.split(".")[0], "set_value", { value: n });
+    });
+    const val = document.createElement("span");
+    val.className = "vvn";
+    if (mute) bar.appendChild(mute);
+    bar.append(down, slider, up, val);
+    const update = (h) => {
+      const st = h && h.states[vol];
+      const a = (st && st.attributes) || {};
+      const unav = !st || st.state === "unavailable" || (mp && OFFISH.includes(st.state));
+      bar.classList.toggle("off", unav);
+      let n;
+      if (mp) {
+        slider.min = "0"; slider.max = "100"; slider.step = "1";
+        n = a.volume_level != null ? Math.round(a.volume_level * 100) : null;
+      } else {
+        slider.min = String(a.min != null ? a.min : 0);
+        slider.max = String(a.max != null ? a.max : 100);
+        slider.step = String(a.step || 1);
+        n = st && isFinite(Number(st.state)) ? Number(st.state) : null;
+      }
+      if (!holding && n != null) slider.value = String(n);
+      val.textContent = n == null ? "" : String(n);
+      const muted = muteId ? !!(h.states[muteId] && h.states[muteId].state === "on")
+                           : !!a.is_volume_muted;
+      if (mute) {
+        mute.classList.toggle("on", muted);
+        mute.title = muted ? "Unmute" : "Mute";
+        const ic = mute.querySelector && mute.querySelector("ha-icon");
+        if (ic) ic.setAttribute("icon", muted ? "mdi:volume-off" : "mdi:volume-high");
+      }
+    };
+    update(hass);
+    this._vbar = { el: bar, update };
+    return bar;
   }
 }
 def("charro-video-card", CharroVideoCard);
@@ -12871,6 +12995,20 @@ class CharroRoomsEditor extends HTMLElement {
     });
     keep.append(keepTxt, keepBox);
     box.appendChild(keep);
+
+    const vb = document.createElement("label");
+    vb.className = "vfield";
+    const vbTxt = document.createElement("span");
+    vbTxt.textContent = "Volume bar above the remote (replaces its volume buttons)";
+    const vbBox = document.createElement("input");
+    vbBox.type = "checkbox";
+    vbBox.checked = v.volume_bar !== false;
+    vbBox.addEventListener("change", () => {
+      if (vbBox.checked) delete v.volume_bar; else v.volume_bar = false;
+      this._renderPreview();
+    });
+    vb.append(vbTxt, vbBox);
+    box.appendChild(vb);
 
     box.appendChild(this._fields(changed).sel("Show the sources and remotes when",
       v.on_from || "", [["", "the screen is on"], ["receiver", "the receiver is on"],
