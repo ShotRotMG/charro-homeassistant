@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.132.0";
+const VERSION = "5.133.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -531,7 +531,8 @@ function countedList(r, key, skip) {
 const countedIds = (r, key, skip) =>
   countedList(r, key, skip).map(lightId).filter(Boolean);
 
-const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style" };
+const RENDER_KINDS = { mushroom: "Mushroom", tile: "Tile", hue: "Hue-style",
+  color: "Colour (slider, colours, scenes)" };
 
 /* The light groups aren't all lights. Ceiling fans here are Lutron dimmers in
  * the light domain, but a real fan, a plain switch or a valve can sit in the
@@ -569,6 +570,12 @@ function lightCard(l, noDim, fans) {
     const feat = domain === "fan" ? "fan-speed"
                : domain === "light" ? "light-brightness" : null;
     if (dims && feat) { card.features_position = "bottom"; card.features = [{ type: feat }]; }
+    return card;
+  }
+  if (o.render === "color" && domain === "light") {
+    const card = { type: "custom:charro-color-light-card", entity: id };
+    if (o.name) card.name = o.name;
+    if (o.icon) card.icon = o.icon;
     return card;
   }
   if (o.render === "hue" && domain === "light") {
@@ -4047,7 +4054,7 @@ const TIP_DELAY = 400;
 const TIP_SCOPE = new Set(["charro-room-card", "charro-video-card",
   "charro-lights-card", "charro-irrigation-card", "charro-irrigation-panel",
   "charro-zone-card", "charro-zone-source", "charro-security-card",
-  "charro-lock-card", "charro-all-off-card"]);
+  "charro-lock-card", "charro-all-off-card", "charro-color-light-card"]);
 
 /* The Settings tab's choices. Blank is the built-in. */
 const TIP_DELAYS = [["", "Normal (0.4 s)"], ["150", "Quick (0.15 s)"],
@@ -8776,6 +8783,266 @@ class CharroLightsCard extends HTMLElement {
     this.style.display = shown || this._config.keep_empty ? "" : "none";
   }
 }
+/* ===================================================== COLOUR LIGHT ====== */
+/*
+ * One light, everything it can do: on/off, a brightness slider, colour
+ * swatches and a free colour picker, a warm-to-cool slider, its effects,
+ * and the scenes Zigbee2MQTT stored for it.
+ *
+ *   type: custom:charro-color-light-card
+ *   entity: light.javon_lamps_2
+ *
+ * In a room's layout it is the "Colour" way of drawing a light. Each part
+ * appears only when the light supports it, so a dimmer gets a slider and
+ * nothing else.
+ *
+ * Zigbee2MQTT scenes: Zigbee2MQTT publishes the scenes stored on a device
+ * or group as Home Assistant scene entities on that device, so the card
+ * lists every scene.* whose device is the light's. Hue-style effects come
+ * from the light's own effect_list.
+ *
+ * It updates in place from hass; nothing is rebuilt while a slider is held.
+ */
+const CL_SWATCHES = [
+  ["Red", [255, 40, 30]], ["Orange", [255, 120, 20]], ["Amber", [255, 180, 60]],
+  ["Yellow", [255, 230, 70]], ["Green", [60, 220, 90]], ["Teal", [40, 210, 200]],
+  ["Blue", [40, 110, 255]], ["Purple", [150, 70, 255]], ["Pink", [255, 80, 180]],
+];
+const CL_COLOR_MODES = ["hs", "xy", "rgb", "rgbw", "rgbww"];
+// the effects that are a one-shot flash or a stop button, not a look
+const CL_EFFECT_SKIP = ["blink", "breathe", "okay", "channel_change", "finish_effect",
+  "stop_effect", "stop_hue_effect", "none"];
+
+/* What the light can do, from its own attributes. */
+function clCaps(st) {
+  const a = (st && st.attributes) || {};
+  const modes = a.supported_color_modes || [];
+  return {
+    dim: modes.some((m) => m !== "onoff"),
+    color: modes.some((m) => CL_COLOR_MODES.includes(m)),
+    temp: modes.includes("color_temp"),
+    effects: (a.effect_list || []).filter((e) => !CL_EFFECT_SKIP.includes(String(e).toLowerCase())),
+    minK: a.min_color_temp_kelvin || 2000, maxK: a.max_color_temp_kelvin || 6500,
+  };
+}
+
+/* The Zigbee2MQTT scenes stored for this light: scene entities that share
+ * its device (a Zigbee2MQTT group is a device of its own, so a group's
+ * scenes come with the group's light). */
+function clScenes(hass, id) {
+  const ents = (hass && hass.entities) || {};
+  const dev = ents[id] && ents[id].device_id;
+  if (!dev) return [];
+  return Object.keys(ents)
+    .filter((e) => e.startsWith("scene.") && ents[e].device_id === dev && !ents[e].hidden_by)
+    .map((e) => ({ id: e, name: entLabel(e, hass) }))
+    .sort((x, y) => x.name.localeCompare(y.name));
+}
+
+const clHex = (rgb) => "#" + (rgb || [255, 255, 255]).map((n) =>
+  Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
+const clRgb = (hex) => {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+};
+
+const CL_CSS = `
+:host{ display:block; }
+ha-card{ padding:12px 14px; }
+.hd{ display:flex; align-items:center; gap:12px; }
+.ic{ width:40px; height:40px; border-radius:50%; display:flex; align-items:center;
+  justify-content:center; background:rgba(127,127,127,.16); flex:none; }
+.ic ha-icon{ --mdc-icon-size:22px; }
+.tx{ flex:1; min-width:0; }
+.nm{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.st{ font-size:12.5px; color:var(--secondary-text-color); }
+.pw{ width:40px; height:40px; border-radius:50%; border:none; cursor:pointer;
+  background:rgba(127,127,127,.16); color:var(--primary-text-color); flex:none;
+  display:flex; align-items:center; justify-content:center; }
+.pw.on{ background:var(--cl-glow, rgba(255,193,7,.25)); color:var(--cl-col, #ffc107); }
+.row{ display:flex; align-items:center; gap:10px; margin-top:12px; }
+.row > ha-icon{ --mdc-icon-size:18px; color:var(--secondary-text-color); flex:none; }
+input[type=range]{ flex:1; accent-color:var(--cl-col, var(--primary-color)); }
+input.temp{ accent-color:#ffb74d; background:linear-gradient(90deg,#ffb35c,#fff4e6,#cfe3ff);
+  height:6px; border-radius:3px; -webkit-appearance:none; appearance:none; }
+input.temp::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
+  border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.3); }
+.sw{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; align-items:center; }
+.sw button{ width:28px; height:28px; border-radius:50%; border:2px solid rgba(127,127,127,.35);
+  cursor:pointer; padding:0; }
+.sw button.sel{ border-color:var(--primary-text-color); }
+.sw input[type=color]{ width:30px; height:30px; border:none; padding:0; background:none; cursor:pointer; }
+.chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+.chips button{ border:none; border-radius:999px; padding:5px 11px; cursor:pointer; font:inherit;
+  font-size:13px; background:rgba(127,127,127,.16); color:var(--primary-text-color); }
+.chips button.sel{ background:var(--cl-glow, rgba(255,193,7,.25)); }
+.cap{ font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; margin-top:12px;
+  color:var(--secondary-text-color); }
+.off .dimmable{ opacity:.45; }
+`;
+
+class CharroColorLightCard extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-color-light-card", entity: "" }; }
+  setConfig(config) {
+    if (!config || !config.entity) throw new Error("charro-color-light-card needs an entity");
+    this._config = config;
+    this._built = false;
+    if (this._hass) this._build();
+  }
+  set hass(h) {
+    this._hass = h;
+    tipBoot(h);
+    if (!this._built) this._build(); else this._update();
+  }
+  getCardSize() { return 4; }
+
+  _call(svc, data) {
+    const id = this._config.entity;
+    return Promise.resolve(this._hass.callService("light", svc, data || {}, { entity_id: id }))
+      .catch((err) => console.error("charro-color-light-card:", svc, err));
+  }
+
+  _build() {
+    const st = this._hass && this._hass.states[this._config.entity];
+    if (!st) return;
+    this._built = true;
+    this._caps = clCaps(st);
+    const caps = this._caps;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = CL_CSS;
+    const card = document.createElement("ha-card");
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    };
+
+    const hd = el("div", "hd");
+    const ic = el("div", "ic");
+    this._icon = document.createElement("ha-icon");
+    ic.appendChild(this._icon);
+    const tx = el("div", "tx");
+    this._nm = el("div", "nm");
+    this._st = el("div", "st");
+    tx.append(this._nm, this._st);
+    this._pw = el("button", "pw");
+    this._pw.innerHTML = `<ha-icon icon="mdi:power"></ha-icon>`;
+    this._pw.addEventListener("click", () => this._call("toggle"));
+    ic.addEventListener("click", () => fireEvent(this, "hass-more-info", { entityId: this._config.entity }));
+    hd.append(ic, tx, this._pw);
+    card.appendChild(hd);
+
+    this._held = new Set();
+    const slider = (cls, icon, min, max, step, onSet) => {
+      const row = el("div", "row dimmable");
+      const i = document.createElement("ha-icon");
+      i.icon = icon;
+      const s = document.createElement("input");
+      s.type = "range"; s.min = String(min); s.max = String(max); s.step = String(step);
+      if (cls) s.className = cls;
+      s.addEventListener("pointerdown", () => this._held.add(s));
+      s.addEventListener("pointerup", () => this._held.delete(s));
+      s.addEventListener("change", () => { this._held.delete(s); onSet(Number(s.value)); });
+      row.append(i, s);
+      card.appendChild(row);
+      return s;
+    };
+    if (caps.dim)
+      this._bri = slider("", "mdi:brightness-6", 1, 100, 1,
+        (v) => this._call("turn_on", { brightness_pct: v }));
+    if (caps.temp)
+      this._temp = slider("temp", "mdi:thermometer", caps.minK, caps.maxK, 50,
+        (v) => this._call("turn_on", { color_temp_kelvin: v }));
+
+    if (caps.color) {
+      const sw = el("div", "sw dimmable");
+      this._sw = [];
+      for (const [name, rgb] of CL_SWATCHES) {
+        const b = el("button");
+        b.title = name;
+        b.style.background = clHex(rgb);
+        b.addEventListener("click", () => this._call("turn_on", { rgb_color: rgb }));
+        sw.appendChild(b);
+        this._sw.push([b, rgb]);
+      }
+      this._pick = document.createElement("input");
+      this._pick.type = "color";
+      this._pick.title = "Any colour";
+      this._pick.addEventListener("change", () => {
+        const rgb = clRgb(this._pick.value);
+        if (rgb) this._call("turn_on", { rgb_color: rgb });
+      });
+      sw.appendChild(this._pick);
+      card.appendChild(sw);
+    }
+
+    const chipRow = (label, items, onTap) => {
+      if (!items.length) return null;
+      card.appendChild(el("div", "cap", label));
+      const row = el("div", "chips");
+      const out = [];
+      for (const it of items) {
+        const b = el("button", "", it.name);
+        b.addEventListener("click", () => onTap(it));
+        row.appendChild(b);
+        out.push([b, it]);
+      }
+      card.appendChild(row);
+      return out;
+    };
+    this._scenes = chipRow("Scenes", clScenes(this._hass, this._config.entity),
+      (it) => this._hass.callService("scene", "turn_on", {}, { entity_id: it.id }));
+    this._fx = chipRow("Effects", caps.effects.map((e) => ({ name: String(e).replace(/_/g, " "), id: e })),
+      (it) => this._call("turn_on", { effect: it.id }));
+
+    this._card = card;
+    root.append(style, card);
+    this._update();
+  }
+
+  _update() {
+    const st = this._hass && this._hass.states[this._config.entity];
+    if (!st || !this._card) return;
+    const a = st.attributes || {};
+    const on = st.state === "on";
+    const rgb = on && a.rgb_color ? a.rgb_color : null;
+    const col = rgb ? clHex(rgb) : on ? "var(--state-light-active-color, #ffc107)" : "var(--disabled-text-color)";
+    this._card.classList.toggle("off", !on);
+    this._card.style.setProperty("--cl-col", col);
+    this._card.style.setProperty("--cl-glow", rgb ? `rgba(${rgb.join(",")},.25)` : "rgba(255,193,7,.25)");
+    this._icon.icon = this._config.icon || a.icon || (on ? "mdi:lightbulb" : "mdi:lightbulb-outline");
+    this._icon.style.color = col;
+    this._nm.textContent = this._config.name || a.friendly_name || this._config.entity;
+    const pct = a.brightness != null ? Math.max(1, Math.round(a.brightness / 2.55)) : null;
+    const bits = [];
+    if (st.state === "unavailable") bits.push("Unavailable");
+    else if (!on) bits.push("Off");
+    else {
+      bits.push(pct != null ? `${pct}%` : "On");
+      if (a.color_mode === "color_temp" && a.color_temp_kelvin) bits.push(`${a.color_temp_kelvin}K`);
+      if (a.effect && !["none", "off"].includes(String(a.effect).toLowerCase())) bits.push(a.effect);
+    }
+    this._st.textContent = bits.join(" · ");
+    this._pw.classList.toggle("on", on);
+    this._pw.title = on ? "Turn off" : "Turn on";
+    if (this._bri && !this._held.has(this._bri) && pct != null) this._bri.value = String(pct);
+    if (this._temp && !this._held.has(this._temp) && a.color_temp_kelvin) this._temp.value = String(a.color_temp_kelvin);
+    if (this._sw) {
+      const near = (x) => rgb && x.every((n, i) => Math.abs(n - rgb[i]) < 30);
+      for (const [b, x] of this._sw) b.classList.toggle("sel", !!near(x));
+      if (rgb && this._pick) this._pick.value = clHex(rgb);
+    }
+    if (this._fx) for (const [b, it] of this._fx) b.classList.toggle("sel", on && a.effect === it.id);
+  }
+}
+defCard("charro-color-light-card", CharroColorLightCard, { name: "Charro Colour Light",
+  description: "One light: brightness, colour, warmth, effects and its Zigbee2MQTT scenes.",
+  inRoom: true,
+  seed: { type: "custom:charro-color-light-card", entity: "" } });
+
 defCard("charro-lights-card", CharroLightsCard, { name: "Charro Lights Card",
   description: "One room of lights \u2014 equal rows, dim by dragging the row.",
   inRoom: true,

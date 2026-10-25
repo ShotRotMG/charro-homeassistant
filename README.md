@@ -1354,6 +1354,29 @@ closes up instead of leaving an empty header.
 
 Fountain rows go blue when on; everything else goes amber.
 
+## `charro-color-light-card`
+
+One light, everything it can do: power, a **brightness** slider, nine **colour**
+swatches plus a free colour picker, a **warm-to-cool** slider, its
+**effects** (colorloop, candle, fireplace… with the one-shot ones like blink
+left out), and its **Zigbee2MQTT scenes**. Each part appears only when the
+light supports it, so a plain dimmer gets just the slider.
+
+```yaml
+type: custom:charro-color-light-card
+entity: light.javon_lamps_2
+```
+
+In a room's layout builder, set a light's **How this light is drawn** to
+**Colour**. It's also under Charro in the card library.
+
+**Zigbee2MQTT scenes:** Zigbee2MQTT publishes the scenes stored on a device or
+group to Home Assistant as `scene.*` entities on that device, and the card
+lists every scene on the light's device. A Zigbee2MQTT group is a device of
+its own, so a group light shows the group's scenes. If none appear, check
+the scene exists in Zigbee2MQTT (Groups or Devices → Scene) and that Home
+Assistant discovery is on there.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —
