@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.130.0";
+const VERSION = "5.131.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -2866,11 +2866,23 @@ function sceneGroupsFor(r) {
   return SCENE_GROUPS.filter(([k]) => sceneGroupIds(r, k).length);
 }
 
-function captureScene(r, groups, hass) {
+/* Lights and the rest a room keeps out of every scene: never saved into
+ * one, and left alone when an older scene that has them is applied. */
+const sceneSkip = (r) => new Set(((r && r.scene_skip) || []).filter(Boolean));
+
+/* What a scene can control in a group: the group, minus the room's skips. */
+function sceneChoices(r, group) {
+  const skip = sceneSkip(r);
+  return sceneGroupIds(r, group).filter((id) => !skip.has(id));
+}
+
+function captureScene(r, groups, hass, pick) {
   const out = {};
   const states = (hass && hass.states) || {};
   for (const g of groups) {
-    for (const id of sceneGroupIds(r, g)) {
+    for (const id of sceneChoices(r, g)) {
+      // a scene saved with a choice of entities remembers only those
+      if (pick && !pick.has(id)) continue;
       const st = states[id];
       // an entity HA can't see would be recalled as a guess, so skip it
       if (!st || st.state === "unavailable" || st.state === "unknown") continue;
@@ -2886,9 +2898,12 @@ function captureScene(r, groups, hass) {
   return out;
 }
 
-function applyScene(hass, entities) {
-  if (!entities || !Object.keys(entities).length) return Promise.resolve();
-  return hass.callService("scene", "apply", { entities });
+function applyScene(hass, entities, r) {
+  const skip = sceneSkip(r);
+  const keep = {};
+  for (const [id, st] of Object.entries(entities || {})) if (!skip.has(id)) keep[id] = st;
+  if (!Object.keys(keep).length) return Promise.resolve();
+  return hass.callService("scene", "apply", { entities: keep });
 }
 
 /* Read the room back from the server before writing, so a scene saved from
@@ -3147,6 +3162,11 @@ const POPUP_CSS = `
   background:color-mix(in srgb, var(--primary-text-color, #fff) 8%, transparent);
 }
 .charro-scenes .sc-groups input{ accent-color:var(--primary-color, #03a9f4); margin:0; }
+.charro-scenes .sc-groups label > span{ flex:1; }
+.charro-scenes .sc-tw{ padding:2px; background:none; border:none; color:inherit; cursor:pointer; }
+.charro-scenes .sc-ents{ display:flex; flex-direction:column; gap:1px; padding:0 0 4px 30px; }
+.charro-scenes .sc-ents[hidden]{ display:none; }
+.charro-scenes .sc-ents label{ padding:3px 6px; font-size:13px; }
 .charro-scenes .sc-save{
   display:flex; gap:6px; align-items:center; padding:4px 2px 2px;
 }
@@ -4796,6 +4816,8 @@ class RoomPopup {
           const was = scenes[name].groups;
           this._scGroups = new Set(
             (was && was.length ? was : have).filter((k) => have.includes(k)));
+          // and with the very lights it was saved with ticked, no others
+          this._scPick = new Set(Object.keys(scenes[name].entities || {}));
           this._scRedraw();
         });
         const del = document.createElement("button");
@@ -4834,6 +4856,7 @@ class RoomPopup {
           this._scMode = "new"; this._scEdit = null; this._scDel = null;
           this._scErr = "";
           this._scGroups = new Set(groups.map(([k]) => k));
+          this._scPick = new Set(groups.flatMap(([k]) => sceneChoices(this.room, k)));
           this._scRedraw();
         });
         p.appendChild(add);
@@ -4856,23 +4879,65 @@ class RoomPopup {
   _scForm(groups, name) {
     const wrap = document.createElement("div");
 
+    /* A group's box ticks every one of its lights at once; the arrow opens
+     * the list to choose them one by one. A light the room keeps out of
+     * scenes isn't offered at all. Nothing here redraws - the name being
+     * typed below would go with it - so the boxes keep each other honest. */
+    const pick = this._scPick || (this._scPick = new Set());
     const gs = document.createElement("div");
     gs.className = "sc-groups";
     for (const [k, label, icon] of groups) {
+      const ids = sceneChoices(this.room, k);
+      if (!ids.length) continue;
       const l = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = this._scGroups.has(k);
-      // no redraw on a tick: the name field would lose what was typed in it
-      cb.addEventListener("change", () => {
-        if (cb.checked) this._scGroups.add(k); else this._scGroups.delete(k);
-      });
       const i = document.createElement("ha-icon");
       i.icon = icon;
-      const s = document.createElement("span");
-      s.textContent = `${label} (${sceneGroupIds(this.room, k).length})`;
-      l.append(cb, i, s);
-      gs.appendChild(l);
+      const sp = document.createElement("span");
+      const tw = document.createElement("button");
+      tw.className = "sc-tw";
+      tw.title = `Choose which ${label.toLowerCase()}`;
+      tw.innerHTML = `<ha-icon icon="mdi:chevron-down"></ha-icon>`;
+      const list = document.createElement("div");
+      list.className = "sc-ents";
+      list.hidden = !(this._scOpenGroups && this._scOpenGroups.has(k));
+      const boxes = [];
+      const sync = () => {
+        const n = ids.filter((id) => pick.has(id)).length;
+        cb.checked = n === ids.length;
+        cb.indeterminate = n > 0 && n < ids.length;
+        sp.textContent = `${label} (${n === ids.length ? n : `${n} of ${ids.length}`})`;
+        if (n) this._scGroups.add(k); else this._scGroups.delete(k);
+        for (const [b, id] of boxes) b.checked = pick.has(id);
+      };
+      cb.addEventListener("change", () => {
+        for (const id of ids) { if (cb.checked) pick.add(id); else pick.delete(id); }
+        sync();
+      });
+      tw.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        list.hidden = !list.hidden;
+        this._scOpenGroups = this._scOpenGroups || new Set();
+        if (list.hidden) this._scOpenGroups.delete(k); else this._scOpenGroups.add(k);
+      });
+      for (const id of ids) {
+        const el = document.createElement("label");
+        const b = document.createElement("input");
+        b.type = "checkbox";
+        const t = document.createElement("span");
+        t.textContent = entLabel(id, this._hass);
+        b.addEventListener("change", () => {
+          if (b.checked) pick.add(id); else pick.delete(id);
+          sync();
+        });
+        boxes.push([b, id]);
+        el.append(b, t);
+        list.appendChild(el);
+      }
+      l.append(cb, i, sp, tw);
+      gs.append(l, list);
+      sync();
     }
     wrap.appendChild(gs);
 
@@ -4916,7 +4981,7 @@ class RoomPopup {
     if (!sc) return;
     this._scClose();
     try {
-      await applyScene(this._hass, sc.entities);
+      await applyScene(this._hass, sc.entities, this.room);
     } catch (err) {
       console.error("charro-room-card: apply scene", err);
     }
@@ -4935,7 +5000,7 @@ class RoomPopup {
       this._scErr = "Tick at least one thing to remember.";
       this._scRedraw(); return;
     }
-    const entities = captureScene(this.room, groups, this._hass);
+    const entities = captureScene(this.room, groups, this._hass, this._scPick);
     if (!Object.keys(entities).length) {
       this._scErr = "Nothing in those groups is answering right now.";
       this._scRedraw(); return;
@@ -10060,7 +10125,7 @@ function itemWhere(it) {
  * fields the form has no row for. */
 const FIELD_WHERE = {
   climate_entity: "Climate", climate_card: "Climate", climate_modes: "Climate",
-  temp_sensor: "Climate", readings: "Readings",
+  temp_sensor: "Climate", readings: "Readings", scene_skip: "Scenes",
   tv_entity: "Media & remotes", projector_entity: "Media & remotes",
   receiver_entity: "Media & remotes",
   media_player: "Music", media_card: "Advanced", music_player: "Music",
@@ -10288,16 +10353,17 @@ const PANEL_USED = {
   cams:  (r) => !!(r.cameras || []).length,
   chips: (r) => !!(r.chips && Object.keys(r.chips).length),
   readings: (r) => !!readingList(r).length,
+  scenes: (r) => !!((r.scene_skip || []).length || (r.scenes && Object.keys(r.scenes).length)),
   adv:   (r) => !!(r.sections || r.cards || r.media_card || r.camera_card),
 };
 const PANEL_ADD = { video: "Media & remotes", music: "Music", water: "Pool & water",
   doors: "Door / motion alert", gates: "Gates", cams: "Cameras",
-  chips: "Chips", readings: "Readings", adv: "Advanced" };
+  chips: "Chips", readings: "Readings", scenes: "Scenes", adv: "Advanced" };
 /* Which expansion-panel flag each one reads, so revealing a panel can open
  * it rather than leaving a shut panel the button appeared to do nothing to. */
 const PANEL_OPEN = { video: "_videoOpen", music: "_zoneOpen", water: "_waterOpen",
   doors: "_doorsOpen", gates: "_gatesOpen", cams: "_camsOpen",
-  chips: "_chipsOpen", readings: "_readOpen", adv: "_advOpen" };
+  chips: "_chipsOpen", readings: "_readOpen", scenes: "_scenesOpen", adv: "_advOpen" };
 
 /* Returns how many it actually added, so the editor can say so. */
 function areaApply(r, key, ids) {
@@ -12037,6 +12103,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._gatesBox = document.createElement("div");
     this._camsBox = document.createElement("div");
     this._readBox = document.createElement("div");
+    this._scenesBox = document.createElement("div");
 
     const videoHost = this._panel("Media & remotes",
       "The TV, the screens, their sources, and every remote", "mdi:remote-tv",
@@ -12059,6 +12126,9 @@ class CharroRoomsEditor extends HTMLElement {
     const readHost = this._panel("Readings",
       "Extra sensors shown as chips \u2014 a closet\u2019s temperature, a humidity",
       "mdi:thermometer", "_readOpen", this._readBox);
+    const scenesHost = this._panel("Scenes",
+      "Lights and the rest that no scene should ever touch", "mdi:palette-outline",
+      "_scenesOpen", this._scenesBox);
     this._chipsBox = document.createElement("div");
     const chipsHost = this._panel("Chips",
       "Colour, glyph, when each one shows and where it sits \u2014 this room only",
@@ -12140,7 +12210,8 @@ class CharroRoomsEditor extends HTMLElement {
 
     const hosts = [["video", videoHost], ["music", zoneHost], ["water", waterHost],
                    ["doors", doorsHost], ["gates", gatesHost], ["cams", camsHost],
-                   ["readings", readHost], ["chips", chipsHost], ["adv", advanced]];
+                   ["readings", readHost], ["scenes", scenesHost], ["chips", chipsHost],
+                   ["adv", advanced]];
     const simple = this._simpleOn();
     this._shownPanels = this._shownPanels || {};
     /* A panel revealed by one of the buttons below stays until the room is
@@ -12182,6 +12253,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._renderGates();
     this._renderCams();
     this._renderReadings();
+    this._renderScenes();
     this._renderChipsPanel();
     this._lbEnsure();
     this._lbRender();
@@ -12587,6 +12659,27 @@ class CharroRoomsEditor extends HTMLElement {
     note.textContent = "Each camera is its own tile in the layout, so it can sit "
       + "anywhere \u2014 beside the lights, two to a row, wherever you drag it. "
       + "A camera takes the full width unless you set it to half.";
+    box.appendChild(note);
+  }
+
+  /* What no scene may touch. Saving a scene skips them, and applying one
+   * saved before they were added leaves them alone too. */
+  _renderScenes() {
+    const box = this._scenesBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const r = this._room;
+    const f = this._fields(() => { this._renderScenes(); this._renderPreview(); });
+    box.appendChild(f.many("Never controlled by scenes", r.scene_skip || [],
+      ["light", "switch", "fan", "cover", "climate", "media_player"], (ids) => {
+        if (ids && ids.length) r.scene_skip = ids; else delete r.scene_skip;
+      }));
+    const names = Object.keys(r.scenes || {});
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = (names.length ? `This room's scenes: ${names.join(", ")}. ` : "")
+      + "Save and pick scenes from the palette button on the room's pop-up; there you can "
+      + "also choose, light by light, what each scene controls.";
     box.appendChild(note);
   }
 

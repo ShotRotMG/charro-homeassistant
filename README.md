@@ -1450,6 +1450,18 @@ old "amber when a light is on". Give Projector a 2 and the Theatre's icon
 goes violet while it's playing, lights up or not. A priority of 0 never
 colours the icon.
 
+### Scenes
+
+The palette button on a room's pop-up saves the room as a scene and applies
+it. When saving, each group (lights, fans, climate, music, screens) has a
+box that ticks all of it and an arrow that opens the list, so you can choose
+light by light what the scene controls ("Lights (1 of 2)"). **Update** reopens
+with exactly the lights the scene was saved with.
+
+A room's **Scenes** panel in the editor (`scene_skip`) lists what no scene may
+ever touch. Those are never saved into a scene, and are left alone when an
+older scene that includes them is applied.
+
 ## Changing how the cards look
 
 `dist/templates/*.json` hold the full button-card templates — padding, grids,
