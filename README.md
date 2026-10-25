@@ -445,6 +445,13 @@ there is one control, not two. It's opt-in: tick **Volume bar above the
 remote** in Media & remotes (`video.volume_bar: true`) for the rooms that want
 it. Every other room keeps its remotes' own buttons.
 
+**Volume shows as** percent (default) or **decibels** (`video.volume_display:
+"db"`). Decibels are mapped straight across from Home Assistant's 0–100 to
+the receiver's dB at each end. **dB at 0%** and **dB at 100%** default to −82
+and +18, which suits a Pioneer at Volume Resolution 200, and are rounded to
+the receiver's 0.5 dB steps. To calibrate, compare one volume with the
+receiver's display and adjust the ends until they agree.
+
 ### No helper: the receiver picks
 
 A room doesn't need an `input_select` and an automation per source. Point the

@@ -61,6 +61,17 @@ async function render(h, v = VIDEO) {
   eq(s.value, "70", "but not while a finger is on it");
 
   await new Promise((r) => setTimeout(r, 20));    // let the live card's own redraw settle
+  console.log("-- decibels --");
+  eq(T.volLabel(42, {}), "42", "percent by default");
+  eq(T.volLabel(50, { volume_display: "db" }), "-32.0 dB", "dB with the default ends (-82 to +18)");
+  eq(T.volLabel(82, { volume_display: "db" }), "0.0 dB", "82% is 0 dB at the defaults");
+  eq(T.volLabel(90, { volume_display: "db" }), "+8.0 dB", "above 0 gets a plus");
+  eq(T.volLabel(0, { volume_display: "db" }), "Min", "the bottom is Min");
+  eq(T.volLabel(50, { volume_display: "db", volume_db_min: -80, volume_db_max: 12 }), "-34.0 dB", "the ends are settable");
+  eq(T.volLabel(33, { volume_display: "db", volume_db_min: -80, volume_db_max: 12 }), "-49.5 dB", "rounded to the receiver's half-dB steps");
+  c = await render(hassWith(0.5, false), { ...VIDEO, volume_display: "db" });
+  ok(c._wrap.querySelector(".vvol").textContent.includes("-32.0 dB"), "the bar shows it");
+  await new Promise((r) => setTimeout(r, 20));
   console.log("-- off --");
   const { volume_bar, ...PLAIN } = VIDEO;
   c = await render(hassWith(0.42, false), PLAIN);

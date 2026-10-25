@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.127.0";
+const VERSION = "5.128.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1788,6 +1788,24 @@ function dropButtons(rows, names) {
     out.push(r);
   }
   return out;
+}
+
+/* What the volume bar's number says. A percent by default; in decibels when
+ * the room asks (video.volume_display: "db"), mapped straight across from
+ * Home Assistant's 0-100 to the receiver's dB at each end - the Onkyo and
+ * Pioneer receivers step in even 0.5 dB, so the scale is linear. The ends
+ * are settable because they depend on the receiver and on its Volume
+ * Resolution; the defaults suit a Pioneer at resolution 200. */
+const VOL_DB_MIN = -82, VOL_DB_MAX = 18;
+function volLabel(pct, v) {
+  if (!v || v.volume_display !== "db") return String(pct);
+  if (pct <= 0) return "Min";
+  const lo = isFinite(Number(v.volume_db_min)) && v.volume_db_min !== "" && v.volume_db_min != null
+    ? Number(v.volume_db_min) : VOL_DB_MIN;
+  const hi = isFinite(Number(v.volume_db_max)) && v.volume_db_max !== "" && v.volume_db_max != null
+    ? Number(v.volume_db_max) : VOL_DB_MAX;
+  const db = Math.round((lo + (hi - lo) * pct / 100) * 2) / 2;   // the receiver's own 0.5 steps
+  return `${db > 0 ? "+" : ""}${db.toFixed(1)} dB`;
 }
 
 /* A remote's own volume and mute buttons, for when the volume bar above it
@@ -6927,6 +6945,10 @@ class CharroVideoCard extends HTMLElement {
     let holding = false;
     slider.addEventListener("pointerdown", () => { holding = true; });
     slider.addEventListener("pointerup", () => { holding = false; });
+    // while dragging, the number says where it will land
+    slider.addEventListener("input", () => {
+      val.textContent = volLabel(Number(slider.value), mp ? this._v : null);
+    });
     slider.addEventListener("change", () => {
       holding = false;
       const n = Number(slider.value);
@@ -6953,7 +6975,7 @@ class CharroVideoCard extends HTMLElement {
         n = st && isFinite(Number(st.state)) ? Number(st.state) : null;
       }
       if (!holding && n != null) slider.value = String(n);
-      val.textContent = n == null ? "" : String(n);
+      val.textContent = n == null ? "" : volLabel(n, mp ? this._v : null);
       const muted = muteId ? !!(h.states[muteId] && h.states[muteId].state === "on")
                            : !!a.is_volume_muted;
       if (mute) {
@@ -13037,6 +13059,27 @@ class CharroRoomsEditor extends HTMLElement {
     });
     vb.append(vbTxt, vbBox);
     box.appendChild(vb);
+    if (v.volume_bar === true) {
+      const fk = this._fields(changed);
+      box.appendChild(fk.sel("Volume shows as", v.volume_display || "",
+        [["", "percent"], ["db", "decibels"]],
+        (x) => { if (x) v.volume_display = x; else delete v.volume_display; },
+        "Decibels are worked out from the percent - set the two ends to match the receiver's display."));
+      if (v.volume_display === "db") {
+        const num = (k) => (x) => {
+          if (x === "" || !isFinite(Number(x))) delete v[k]; else v[k] = Number(x);
+        };
+        box.appendChild(fk.text("dB at 0%", v.volume_db_min == null ? "" : String(v.volume_db_min),
+          num("volume_db_min"), String(VOL_DB_MIN)));
+        box.appendChild(fk.text("dB at 100%", v.volume_db_max == null ? "" : String(v.volume_db_max),
+          num("volume_db_max"), "+" + VOL_DB_MAX));
+        const hp = document.createElement("div");
+        hp.className = "vhelp";
+        hp.textContent = "To check: set a volume, compare the bar with the receiver's display, "
+          + "and nudge these until they agree.";
+        box.appendChild(hp);
+      }
+    }
 
     box.appendChild(this._fields(changed).sel("Show the sources and remotes when",
       v.on_from || "", [["", "the screen is on"], ["receiver", "the receiver is on"],
