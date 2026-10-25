@@ -384,6 +384,21 @@ Volume belongs to the screen, not the box — a matrix sits between them — so
 templates take a `{{volume}}` that the source entry points at the display's
 own media_player.
 
+### A projector that is a screen
+
+When the room's `projector_entity` is one of the screens in its video block,
+like the Theatre's `switch.theatre_projector`, its chip works like a TV's:
+
+- It's **lit** while the projector or the receiver it plays through is on,
+  and grey (but still there) when both are off.
+- It **says what's playing**: the receiver's input, translated to the source's
+  name (SAT → Dish, GAME → Xbox).
+- A **tap opens the screens pop-up** (sources, remotes, On and Off) instead of
+  toggling the projector. Turning off happens with Off in there.
+- The **receiver's chip stands down**, since it's part of the screen.
+
+A projector that isn't a screen keeps its plain toggle chip.
+
 ### No helper: the receiver picks
 
 A room doesn't need an `input_select` and an automation per source. Point the

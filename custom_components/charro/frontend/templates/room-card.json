@@ -340,18 +340,18 @@
             ],
             "projector": [
               {
-                "display": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!!variables.projector_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
+                "display": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!!variables.projector_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  if (c.show === 'always') return 'flex';\n  return (((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).lit : !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
               },
               {
-                "order": "[[[\n  const c = variables.chips.projector || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)) ? 0 : 1000) + (c.order || 0);\n]]]\n"
+                "order": "[[[\n  const c = variables.chips.projector || {};\n  /* lit chips first, then the configured order inside each group */\n  return ((((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).lit : !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) ? 0 : 1000) + (c.order || 0);\n]]]\n"
               }
             ],
             "receiver": [
               {
-                "display": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!!variables.receiver_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  const pj = variables.projector_entity; const pjs = pj && states[pj] && states[pj].state; if (pjs && !['off','unavailable','unknown'].includes(pjs)) return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
+                "display": "[[[\n  const c = variables.chips.receiver || {};\n  if (!(!!variables.receiver_entity)) return 'none';\n  if (c.show === 'never') return 'none';\n  /* part of the projector's screen chip now */\n  if (variables.receiver_in_screen) return 'none';\n  const pj = variables.projector_entity; const pjs = pj && states[pj] && states[pj].state; if (pjs && !['off','unavailable','unknown'].includes(pjs)) return 'none';\n  if (c.show === 'always') return 'flex';\n  return (!['off','unavailable','unknown','standby','idle'].includes(states[variables.receiver_entity]?.state)) ? 'flex' : 'none';\n]]]\n"
               },
               {
                 "align-items": "center"
@@ -1102,10 +1102,11 @@
               "type": "custom:button-card",
               "entity": "[[[ return variables.projector_entity ]]]",
               "show_icon": true,
-              "show_name": false,
+              "show_name": true,
               "icon": "[[[ return variables.chips.projector.icon ]]]",
               "tap_action": {
-                "action": "toggle",
+                "action": "[[[ return (variables.projector_screen && variables.tv_popup) ? 'navigate' : 'toggle' ]]]",
+                "navigation_path": "[[[ return variables.tv_popup || '' ]]]",
                 "entity": "[[[ return variables.projector_entity ]]]"
               },
               "hold_action": {
@@ -1115,7 +1116,7 @@
               "styles": {
                 "card": [
                   {
-                    "padding": "1px 5px"
+                    "padding": "1px 6px"
                   },
                   {
                     "margin": 0
@@ -1127,7 +1128,7 @@
                     "width": "max-content"
                   },
                   {
-                    "background": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
+                    "background": "[[[\n  const c = variables.chips.projector || {};\n  if (!(((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).lit : !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)))) return variables.chips.off.bg;\n  return c.bg;\n]]]\n"
                   }
                 ],
                 "icon": [
@@ -1138,13 +1139,42 @@
                     "--mdc-icon-size": "18px"
                   },
                   {
-                    "color": "[[[\n  const c = variables.chips.projector || {};\n  if (!(!['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
+                    "color": "[[[\n  const c = variables.chips.projector || {};\n  if (!(((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).lit : !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state)))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
+                  }
+                ],
+                "grid": [
+                  {
+                    "grid-template-areas": "\"i n\""
+                  },
+                  {
+                    "grid-template-columns": "[[[ return ((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).label : '') ? '18px auto' : '18px 0px'; ]]]"
+                  },
+                  {
+                    "column-gap": "[[[ return ((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).label : '') ? '4px' : '0px'; ]]]"
+                  },
+                  {
+                    "align-items": "center"
+                  }
+                ],
+                "name": [
+                  {
+                    "font-size": "13px"
+                  },
+                  {
+                    "font-weight": 700
+                  },
+                  {
+                    "white-space": "nowrap"
+                  },
+                  {
+                    "color": "[[[\n  const c = variables.chips.projector || {};\n  if (!((variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).lit : !['off','unavailable','unknown'].includes(states[variables.projector_entity]?.state))) return variables.chips.off.fg;\n  return c.fg;\n]]]\n"
                   }
                 ]
               },
               "card_mod": {
                 "style": "ha-card, ha-card:hover {\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
-              }
+              },
+              "name": "[[[ return (variables.projector_screen && window.charroScreenChip) ? window.charroScreenChip(variables, states).label : ''; ]]]"
             }
           },
           "receiver": {

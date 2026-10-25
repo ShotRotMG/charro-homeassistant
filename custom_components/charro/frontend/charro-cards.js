@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.120.0";
+const VERSION = "5.121.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -431,6 +431,60 @@ const tvHash = (c) => {
   const h = roomHash(c);
   return h && c.video && (c.video.displays || []).length ? `${h}-tv` : "";
 };
+
+/* A projector that is one of the room's screens is the screen, not a
+ * switch: its chip works like a television's - it opens the screens pop-up
+ * (sources, remotes, Off) rather than toggling, it is lit while the screen
+ * or the receiver it plays through is on, and it says what is playing. The
+ * receiver's own chip then has nothing left to say and stands down.
+ *
+ * Everything the tile's template needs is worked out here once and handed
+ * to it as variables; the header calls the same thing. */
+function screenVars(r) {
+  const out = { projector_screen: false, projector_audio: "", screen_src: null,
+                receiver_in_screen: false };
+  const p = r && r.projector_entity;
+  const v = r && r.video;
+  if (!p || !v || !tvHash(r)) return out;
+  const d = (v.displays || []).find((x) => x && (screenPower(x) === p || x.screen === p));
+  if (!d) return out;
+  out.projector_screen = true;
+  const sf = sourceSelect(v, d) || "";
+  const lf = d.live_from || v.live_from || "";
+  const mp = (x) => !!x && String(x).startsWith("media_player.") && x !== p;
+  out.projector_audio = [lf, sf, d.volume, d._volume_room].find(mp) || "";
+  const from = mp(lf) ? lf : mp(sf) ? sf : "";
+  if (from) {
+    const map = {};
+    for (const [k, spec] of Object.entries(v.sources || {})) {
+      if (!spec || spec.hidden) continue;
+      const title = spec.title || k;
+      for (const key of [spec.live_input, spec.input, k])
+        if (key && !(key in map)) map[key] = title;
+    }
+    out.screen_src = { from, map };
+  }
+  out.receiver_in_screen = !!r.receiver_entity && r.receiver_entity === out.projector_audio;
+  return out;
+}
+
+const SCREEN_OFF = ["off", "unavailable", "unknown", "standby"];
+
+/* Lit, and what is on - for the tile's template (variables, states) and
+ * the header alike. */
+function charroScreenChip(v, states) {
+  const on = (id) => { const st = id && states[id]; return !!st && !SCREEN_OFF.includes(st.state); };
+  const lit = on(v.projector_entity) || on(v.projector_audio);
+  let label = "";
+  const sm = v.screen_src;
+  if (lit && sm && sm.from && on(sm.from)) {
+    const src = (states[sm.from].attributes || {}).source || "";
+    label = (sm.map || {})[src] || src;
+  }
+  if (label.length > 12) label = label.slice(0, 12) + "\u2026";
+  return { lit, label };
+}
+if (typeof window !== "undefined") window.charroScreenChip = charroScreenChip;
 
 /* A light may be a plain id or {entity, name, icon, dim}. */
 const lightId = (l) => (typeof l === "string" ? l : l && l.entity);
@@ -3718,9 +3772,10 @@ function roomChips(r, hass) {
     const p = r.projector_entity && hass.states[r.projector_entity];
     return !!p && !["off", "unavailable", "unknown"].includes(p.state);
   })();
+  const sv = screenVars(r);
   for (const key of ["tv_entity", "projector_entity", "receiver_entity"]) {
     const { icon, col, label } = chipLook(key, r);
-    if (key === "receiver_entity" && projLit) continue;
+    if (key === "receiver_entity" && (projLit || sv.receiver_in_screen)) continue;
     const id = key === "tv_entity" ? roomTv(r) : r[key];
     const st = id && hass.states[id];
     /* The projector keeps its chip when it is off, in the off grey, and a
@@ -3728,6 +3783,15 @@ function roomChips(r, hass) {
      * source row waiting behind the room; a projector is a relay with
      * nothing else to press, so a chip that disappears when it is off is a
      * switch you can only ever use to turn something off. */
+    if (key === "projector_entity" && sv.projector_screen) {
+      if (!st) continue;
+      const sc = charroScreenChip({ projector_entity: id, ...sv }, hass.states);
+      out.push({ key, icon, col: sc.lit ? col : CHIP_OFF, text: sc.label,
+                 title: `${r.room_name || label} \u2014 ${sc.lit ? (sc.label || "on") : "off"}. `
+                      + "Tap to open the sources, the remote and Off.",
+                 tap: { kind: "navigate", path: tvHash(r) } });
+      continue;
+    }
     if (key === "projector_entity") {
       if (!st) continue;
       const lit = !["off", "unavailable", "unknown"].includes(st.state);
@@ -4873,6 +4937,9 @@ class RoomPopup {
   _chipTap(tap) {
     if (!tap || !this._hass) return;
     if (tap.kind === "more-info") return this._moreInfo(tap.entity);
+    /* history.pushState is watched (wireRoomHash), so this closes the
+     * room's pop-up and opens the screens one, with Back to return */
+    if (tap.kind === "navigate" && tap.path) { history.pushState(null, "", tap.path); return; }
     if (tap.kind === "off" && (tap.entities || []).length) {
       this._hass.callService(tap.domain, "turn_off", { entity_id: tap.entities });
     }
@@ -5274,6 +5341,8 @@ class CharroRoomCard extends CharroBase {
       tv_popup: tvHash(c),
       projector_entity: c.projector_entity || "",
       receiver_entity: c.receiver_entity || "",
+      // a projector that is one of the screens works like a TV chip
+      ...screenVars(c),
       // the tile's chips read their colours from here, so they cannot drift
       // from the pop-up header's
       pal: CHIP_PAL,
