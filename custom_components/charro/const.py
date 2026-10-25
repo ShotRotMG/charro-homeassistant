@@ -196,3 +196,16 @@ SNAP_DAY = 86400          # then one per day                         -> ~13
 SNAP_KEEP_DAYS = 14
 SNAP_HOUR = 3600          # boundary between the fine and mid tiers
 SNAP_MAX = 30             # belt and braces, whatever the arithmetic does
+
+# Keeping a screen and its receiver on and off together (video.keep_together).
+# A state outside these two sets is "on". Unavailable/unknown say nothing
+# about power, so they never move the partner.
+POWER_OFF_STATES = ("off", "standby")
+POWER_DEAD_STATES = ("unavailable", "unknown", "")
+# A command this integration sends is answered by a state change it must not
+# answer in turn, or the two would chase each other; the partner's changes
+# inside this window are its echo.
+KEEP_QUIET_SECONDS = 15
+# A projector cooling down ignores "on" for a minute or more, so a command
+# that hasn't landed is sent once more after this long, if still wanted.
+KEEP_RETRY_SECONDS = 90

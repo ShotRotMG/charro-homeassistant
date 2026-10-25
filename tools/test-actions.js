@@ -37,6 +37,16 @@ sel.dispatchEvent({ type: "value-changed", detail: { value: [] }, stopPropagatio
 ok(!("do" in ed._room.video.sources.XBOX), "removing the last action clears it");
 eq(sel.value, [], "and the editor shows none");
 
+console.log("-- keep together --");
+const kl = ed._videoBox.querySelectorAll("label").find((l) => /Keep the receiver on and off/.test(l.textContent));
+ok(!!kl, "Media & remotes offers keeping the receiver with the screen");
+const kb = kl && kl.querySelector("input");
+ok(kb && !kb.checked, "off by default");
+kb.checked = true; kb.fire("change");
+eq(ed._room.video.keep_together, true, "ticked, it is saved on the room's video");
+kb.checked = false; kb.fire("change");
+ok(!("keep_together" in ed._room.video), "unticked, the key goes");
+
 console.log("-- the action editor's words --");
 const asked = [];
 const h2 = { ...hass, loadFragmentTranslation: async (f) => { asked.push(f); } };

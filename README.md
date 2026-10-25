@@ -399,6 +399,32 @@ like the Theatre's `switch.theatre_projector`, its chip works like a TV's:
 
 A projector that isn't a screen keeps its plain toggle chip.
 
+### Screen and receiver, on and off together
+
+Tick **Keep the receiver on and off with the screen** in Media & remotes
+(`video.keep_together: true`), and the Charro integration keeps each screen
+in step with the receiver it plays through:
+
+- the screen comes on → the receiver comes on
+- either goes off → the other goes off
+
+It runs on the server, so it holds however they were switched (the card,
+Harmony, the receiver's own remote, a keypad, an automation), with no
+dashboard open. The receiver is the one the card uses: `live_from`, a
+receiver source picker, the screen's `volume`, then the room's receiver.
+
+Rules that keep it from misbehaving:
+
+- **Only real power changes count.** Playing to paused, or a trip through
+  unavailable, moves nothing.
+- **No chasing its own tail.** The partner's state change in the 15 seconds
+  after it's told is taken as the answer, not a new command.
+- **A projector cooling down ignores "on" for a minute or so.** If the partner
+  still doesn't match 90 seconds later, it's told once more.
+
+The Home Assistant log says what it switched and why, e.g. "turn on
+switch.theatre_projector, to match media_player.vsx_lx305".
+
 ### No helper: the receiver picks
 
 A room doesn't need an `input_select` and an automation per source. Point the

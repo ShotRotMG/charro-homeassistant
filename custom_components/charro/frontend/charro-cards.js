@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.121.0";
+const VERSION = "5.122.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -12805,6 +12805,26 @@ class CharroRoomsEditor extends HTMLElement {
     });
     basic.append(basicTxt, basicBox);
     box.appendChild(basic);
+
+    /* Kept in step by the integration, server side, so it holds however
+     * the gear is switched - Harmony, the receiver's own remote, a keypad,
+     * an automation - and with no dashboard open. */
+    const keep = document.createElement("label");
+    keep.className = "vfield";
+    keep.title = "When the screen comes on, so does the receiver it plays through, "
+      + "and when either goes off, so does the other. Done by the Charro "
+      + "integration on the server, so it holds whatever switched them.";
+    const keepTxt = document.createElement("span");
+    keepTxt.textContent = "Keep the receiver on and off with the screen";
+    const keepBox = document.createElement("input");
+    keepBox.type = "checkbox";
+    keepBox.checked = !!v.keep_together;
+    keepBox.addEventListener("change", () => {
+      if (keepBox.checked) v.keep_together = true; else delete v.keep_together;
+      this._renderPreview();
+    });
+    keep.append(keepTxt, keepBox);
+    box.appendChild(keep);
 
     // one screen needs no picker; more than one does
     const many = (v.displays || []).length > 1;

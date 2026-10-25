@@ -41,6 +41,10 @@ import homeassistant.util.dt as dt_util
 
 from .const import (
     BUNDLE,
+    KEEP_QUIET_SECONDS,
+    KEEP_RETRY_SECONDS,
+    POWER_DEAD_STATES,
+    POWER_OFF_STATES,
     DOMAIN,
     LEGACY_PANEL_URLS,
     JOURNAL_FILE,
@@ -1124,6 +1128,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             EVENT_HOMEASSISTANT_STARTED, _rescan_when_up
         )
 
+    # Screens and receivers kept together. Its own subscription, so a room
+    # saved without keep_together costs nothing.
+    keeper = CharroPowerKeeper(hass, _rooms_dir(hass))
+    await keeper.async_rescan()
+    store["keeper"] = keeper
+
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
@@ -1173,6 +1183,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub = store.pop(key, None)
         if unsub:
             unsub()
+    keeper = store.pop("keeper", None)
+    if keeper is not None:
+        keeper.stop()
     notifier = store.pop("notifier", None)
     if notifier is not None:
         if notifier._unsub_watch:
@@ -1399,6 +1412,142 @@ def _write_room(path: str, key: str, config: dict[str, Any]) -> None:
     os.replace(tmp, target)  # so a reader never sees a half-written file
 
 
+# ------------------------------------------------------------ keep together --
+#
+# A screen and the receiver it plays through, on and off as one. The card
+# already turns both on and both off, but only when it is the thing pressed;
+# the Theatre also gets switched by Harmony, the receiver's own remote and
+# the old helper's automations, and every one of those could leave the
+# projector lit with no sound or the receiver playing to a dark screen. So
+# this lives here, server side, where it sees every change whoever made it,
+# with no dashboard open.
+
+def _screen_power(d: dict) -> str:
+    return d.get("power") or d.get("screen") or d.get("media_player") or ""
+
+
+def _power_pairs(rooms: dict) -> list[tuple[str, str, str]]:
+    """(room, screen power, receiver) for each screen in a room that asks.
+
+    The receiver is the one the card reads and plays through: live_from,
+    then a media_player source select, then the screen's volume, then the
+    room's receiver_entity - the same order the card borrows in.
+    """
+    out: list[tuple[str, str, str]] = []
+    for key, r in (rooms or {}).items():
+        if not isinstance(r, dict):
+            continue
+        v = r.get("video")
+        if not isinstance(v, dict) or not v.get("keep_together"):
+            continue
+        for d in v.get("displays") or []:
+            if not isinstance(d, dict):
+                continue
+            p = _screen_power(d)
+            sel = d.get("source_from") or v.get("source_from") or d.get("source") or ""
+            cands = [d.get("live_from"), v.get("live_from"), sel, d.get("volume"),
+                     r.get("receiver_entity")]
+            rx = next((c for c in cands if isinstance(c, str)
+                       and c.startswith("media_player.") and c != p), "")
+            if p and rx:
+                out.append((key, p, rx))
+    return out
+
+
+def _power_is_on(state: str | None) -> bool | None:
+    """True on, False off, None for a state that says nothing about power."""
+    s = (state or "").lower()
+    if s in POWER_DEAD_STATES:
+        return None
+    return s not in POWER_OFF_STATES
+
+
+def _power_follow(leader_state: str | None, partner_state: str | None) -> str | None:
+    """What the partner needs: "turn_on", "turn_off", or None."""
+    lead = _power_is_on(leader_state)
+    part = _power_is_on(partner_state)
+    if lead is None or part is None or lead == part:
+        return None
+    return "turn_on" if lead else "turn_off"
+
+
+class CharroPowerKeeper:
+    """Holds every keep_together pair in step."""
+
+    def __init__(self, hass: HomeAssistant, path: str) -> None:
+        self.hass = hass
+        self.path = path
+        self.partners: dict[str, set[str]] = {}
+        self._quiet: dict[str, float] = {}
+        self._unsub = None
+        self._timers: list = []
+
+    async def async_rescan(self) -> None:
+        data = await self.hass.async_add_executor_job(_read_all, self.path)
+        partners: dict[str, set[str]] = {}
+        for _key, p, rx in _power_pairs(data.get("rooms") or {}):
+            partners.setdefault(p, set()).add(rx)
+            partners.setdefault(rx, set()).add(p)
+        self.partners = partners
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+        if partners:
+            self._unsub = event.async_track_state_change_event(
+                self.hass, sorted(partners), self._on_state)
+        _LOGGER.debug("charro: keeping %s screen/receiver pairs together",
+                      len(partners) // 2)
+
+    def stop(self) -> None:
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+        for cancel in self._timers:
+            cancel()
+        self._timers = []
+
+    @callback
+    def _on_state(self, ev) -> None:
+        old = ev.data.get("old_state")
+        new = ev.data.get("new_state")
+        if old is None or new is None:
+            return
+        was, now = _power_is_on(old.state), _power_is_on(new.state)
+        # only a real on/off - playing to paused, or a trip through
+        # unavailable, is not a reason to move anything
+        if was is None or now is None or was == now:
+            return
+        eid = ev.data["entity_id"]
+        if time.monotonic() < self._quiet.get(eid, 0):
+            return                                   # our own command, landing
+        for other in self.partners.get(eid, ()):
+            st = self.hass.states.get(other)
+            act = _power_follow(new.state, st.state if st else None)
+            if act:
+                self._command(other, act, eid, retry=True)
+
+    def _command(self, eid: str, act: str, leader: str, retry: bool) -> None:
+        self._quiet[eid] = time.monotonic() + KEEP_QUIET_SECONDS
+        domain = eid.split(".")[0]
+        _LOGGER.info("charro: %s %s, to match %s", act.replace("_", " "), eid, leader)
+        self.hass.async_create_task(self.hass.services.async_call(
+            domain, act, {"entity_id": eid}, blocking=False))
+        if not retry:
+            return
+
+        @callback
+        def _check(_now) -> None:
+            lead = self.hass.states.get(leader)
+            part = self.hass.states.get(eid)
+            again = _power_follow(lead.state if lead else None,
+                                  part.state if part else None)
+            if again == act:
+                self._command(eid, act, leader, retry=False)
+
+        self._timers = self._timers[-20:]            # only ever a handful live
+        self._timers.append(event.async_call_later(self.hass, KEEP_RETRY_SECONDS, _check))
+
+
 def _read_all(path: str) -> dict[str, Any]:
     """Every room file, plus the shared remote templates, in one go.
 
@@ -1535,6 +1684,9 @@ async def ws_save_room(hass, connection, msg):
         # a sensor added to a room in the editor is watched from the save,
         # not from the next restart
         hass.async_create_task(notifier.async_rescan())
+    keeper = hass.data.get(DOMAIN, {}).get("keeper")
+    if keeper is not None:
+        hass.async_create_task(keeper.async_rescan())
     connection.send_result(msg["id"], {"path": os.path.join(path, f"{key}.json")})
 
 
