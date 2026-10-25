@@ -172,5 +172,24 @@ ok(!!showSel && /as the room\u2019s Readings chip \(Always\)/.test(showSel.child
 showSel.value = "never"; showSel.fire("change");
 eq(ed._room.readings[0].show, "never", "and Never is saved on that reading");
 
+console.log("-- a card in the pop-up --");
+const rr = room([{ entity: SRV, name: "Server", icon: "mdi:server", show: "never" }, HUM]);
+eq(T.readingCards(rr), [
+  { type: "sensor", entity: SRV, graph: "line", hours_to_show: 24, name: "Server", icon: "mdi:server" },
+  { type: "sensor", entity: HUM, graph: "line", hours_to_show: 24 }],
+  "a sensor card each, with its name and icon - and Never on the chip doesn't hide the card");
+eq(T.blockCards("readings", rr, h), [{ type: "grid", columns: 2, square: false, cards: T.readingCards(rr) }],
+  "two to a row");
+eq(T.blockCards("readings", room([SRV]), h), [T.readingCards(room([SRV]))[0]], "one takes the row");
+eq(T.blockCards("readings", room([]), h), [], "none, nothing");
+ok(T.sectionOrder(room([SRV])).includes("readings"), "a room with no sections list shows them");
+eq(T.sectionOrder(room([SRV], { sections: ["media", "climate", "security"] })),
+  ["media", "music", "climate", "readings", "security"], "a room with its own list gets them after climate");
+eq(T.sectionOrder(room([SRV], { sections: ["lights"] })), ["lights", "readings"], "or last");
+ok(!T.sectionOrder(room([], { sections: ["lights"] })).includes("readings"), "and not at all without readings");
+ok(T.materializeLayout(room([SRV], { sections: ["readings"] })).some((x) => x.block === "readings"),
+  "switching to a custom layout keeps the block");
+eq(T.BLOCK_LABEL.readings, "Readings", "the layout builder can name it");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

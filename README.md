@@ -211,7 +211,14 @@ Readings shows always by default. In Chips, its "When to show" offers
 **Only when out of range**, **Always** and **Never** for the whole room. Each
 reading also has its own **Show** that beats the room's, so the server closet
 can show always, a humidity only when it's out of range, and a battery never.
-Never keeps the reading in the room without drawing a chip. An unavailable sensor shows a
+Never keeps the reading in the room without drawing a chip.
+
+The pop-up also has a **Readings** section: one Home Assistant sensor card per
+reading, with its value and a 24-hour graph (two to a row). It's independent
+of the chip's Show, so a reading set to Never still has its card. A room with
+no layout of its own shows it after Climate. A room that lists its sections
+gets it after `climate`, or last if it has no climate section. A room with a
+custom layout finds **Readings** under Available in the layout builder. An unavailable sensor shows a
 dash rather than vanishing, so a dead battery gets noticed. Hovering a reading
 shows its exact value and the limit it crossed.
 

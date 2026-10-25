@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.115.0";
+const VERSION = "5.116.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -532,7 +532,7 @@ function lightCard(l, noDim, fans) {
 /* Body of a room, shared by the pop-up and the page. Each block appears only
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
-const ROOM_SECTIONS = ["climate", "media", "music", "lights", "water",
+const ROOM_SECTIONS = ["climate", "readings", "media", "music", "lights", "water",
                        "gates", "cameras", "security"];
 
 /* A room's own `sections` list is honoured as written, with two exceptions,
@@ -558,6 +558,14 @@ function sectionOrder(r) {
    * had a music block and shouldn't grow one now. */
   if (namedMedia && !order.includes("music"))
     order.splice(order.indexOf("media") + 1, 0, "music");
+
+  /* 5.116: readings got a section. A room that spells its sections out
+   * predates it, so its readings go just after its climate - or last when
+   * it has none - rather than nowhere. Only when it has readings. */
+  if (!order.includes("readings") && readingList(r).length) {
+    const at = order.indexOf("climate");
+    order.splice(at >= 0 ? at + 1 : order.length, 0, "readings");
+  }
 
   return order;
 }
@@ -2112,6 +2120,14 @@ function blockCards(name, r, hass) {
 
   if (name === "climate" && r.climate_entity) push(climateCard(r, hass));
 
+  /* One sensor card per reading: the value and a day of it as a line. Two
+   * to a row, or the row to itself when there is only one. */
+  if (name === "readings") {
+    const cards = readingCards(r);
+    if (cards.length === 1) push(cards[0]);
+    else if (cards.length) push({ type: "grid", columns: 2, square: false, cards });
+  }
+
   /* Audio and video want sorting separately — a player you glance at all day
    * rarely belongs in the same run as a TV remote. */
   if (name === "gates" && (r.gates || []).length) {
@@ -3438,6 +3454,19 @@ function readingChipsFrom(list, hass, look, iconOver) {
                entity: id, mood, title, tap: { kind: "more-info", entity: id } });
   }
   return out;
+}
+
+/* The pop-up's half: Home Assistant's own sensor card, with the reading's
+ * name and icon when it has them. Independent of the chip's Show - "never"
+ * hides the chip, not the reading. */
+function readingCards(r) {
+  return readingList(r).map((e) => {
+    const o = typeof e === "object" && e ? e : {};
+    const c = { type: "sensor", entity: readingId(e), graph: "line", hours_to_show: 24 };
+    if (o.name) c.name = o.name;
+    if (o.icon) c.icon = o.icon;
+    return c;
+  });
 }
 
 /* The tile's half. button-card hands its templates `variables` and the
@@ -8615,6 +8644,7 @@ const BLOCK_LABEL = {
   music: "Music (every zone)", player: "Media player",
   water: "Pool & spa", gates: "Gates", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
+  readings: "Readings",
 };
 
 /* The core cards worth offering, with a starting config each so picking one
@@ -8914,6 +8944,7 @@ const LayoutUI = {
       water: () => !!(r.pool_switch || r.spa_switch || (r.water_actions || []).length),
       gates: () => (r.gates || []).length,
       lights: () => LIGHT_GROUPS.some(([, k]) => (r[k] || []).length),
+      readings: () => readingList(r).length,
     };
     const blocks = Object.keys(BLOCK_LABEL)
       .filter((b) => !usedBlocks.has(b))
@@ -12267,7 +12298,9 @@ class CharroRoomsEditor extends HTMLElement {
     note.className = "vnote";
     note.textContent = "Each reading is a chip on the tile and in the pop-up header, "
       + "with its value: grey in range, red above, blue below. To show only the ones "
-      + "out of range, set Readings to \u201cOnly when it is on\u201d in Chips.";
+      + "out of range, set a reading\u2019s Show, or Readings in Chips. Each reading "
+      + "is also a card with a day\u2019s graph in the pop-up\u2019s Readings section \u2014 "
+      + "in a room with its own layout, drag Readings in from Available.";
     box.appendChild(note);
   }
 
