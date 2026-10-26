@@ -123,16 +123,16 @@
     "custom_fields": {
       "chips": [
         {
-          "display": "flex"
+          "display": "grid"
         },
         {
-          "justify-content": "center"
+          "grid-template-columns": "minmax(0, 1fr)"
         },
         {
-          "align-items": "center"
+          "place-items": "stretch"
         },
         {
-          "align-self": "center"
+          "align-self": "stretch"
         },
         {
           "justify-self": "stretch"
@@ -243,10 +243,16 @@
               "background": "none"
             },
             {
-              "width": "max-content"
+              "width": "100%"
+            },
+            {
+              "height": "100%"
             },
             {
               "max-width": "100%"
+            },
+            {
+              "box-sizing": "border-box"
             }
           ],
           "custom_fields": {
@@ -421,7 +427,7 @@
           }
         },
         "card_mod": {
-          "style": "#container {\n  display: flex !important;\n  flex-direction: row !important;\n  flex-wrap: nowrap !important;\n  justify-content: center !important;\n  align-items: center !important;\n  gap: 4px !important;\n  width: auto !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  grid-template-areas: none !important;\n  grid-template-columns: none !important;\n}\n#container > * { grid-area: auto !important; }\nha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: max-content !important;\n  max-width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
+          "style": "#container {\n  display: flex !important;\n  flex-direction: row !important;\n  flex-wrap: nowrap !important;\n  justify-content: center !important;\n  align-items: center !important;\n  gap: 4px !important;\n  width: 100% !important;\n  height: 100% !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  grid-template-areas: none !important;\n  grid-template-columns: none !important;\n}\n#container > * { grid-area: auto !important; }\nha-card, ha-card:hover {\n  background: none !important;\n  background-color: transparent !important;\n  backdrop-filter: none !important;\n  -webkit-backdrop-filter: none !important;\n  box-shadow: none !important;\n  border: none !important;\n  padding: 0 !important;\n  width: 100% !important;\n  height: 100% !important;\n  box-sizing: border-box !important;\n  max-width: 100% !important;\n}\nha-card::before, ha-card::after { display: none !important; }\n"
         },
         "custom_fields": {
           "lights": {
