@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.136.0";
+const VERSION = "5.137.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8827,6 +8827,9 @@ function clCaps(st) {
     color: modes.some((m) => CL_COLOR_MODES.includes(m)),
     temp: modes.includes("color_temp"),
     effects: (a.effect_list || []).filter((e) => !CL_EFFECT_SKIP.includes(String(e).toLowerCase())),
+    /* The light's own way to end an effect, put at the top of the list. */
+    stop: ["stop_effect", "stop_hue_effect", "finish_effect"]
+      .find((k) => (a.effect_list || []).includes(k)) || null,
     minK: a.min_color_temp_kelvin || 2000, maxK: a.max_color_temp_kelvin || 6500,
   };
 }
@@ -9102,8 +9105,9 @@ class CharroColorLightCard extends HTMLElement {
     /* Scenes and effects as dropdowns of our own: a native <select> list
      * is drawn by the browser, light grey with near-invisible text on a
      * dark theme. This one opens in place under its button, in the card's
-     * own colours, scrolls past eight rows, and closes on a pick; the
-     * light's current effect carries a tick. */
+     * own colours, scrolls past eight rows, and closes on a pick. No tick
+     * for the current effect: Zigbee2MQTT never says one has ended, so the
+     * light's `effect` is just the last one sent. */
     const drops = [];
     const drop = (icon, label, items, onPick, current) => {
       if (!items.length) return null;
@@ -9145,9 +9149,9 @@ class CharroColorLightCard extends HTMLElement {
     drop("mdi:palette-swatch", "Scenes", clScenes(this._hass, this._config.entity),
       (it) => this._hass.callService("scene", "turn_on", {}, { entity_id: it.id }));
     drop("mdi:auto-fix", "Effects",
-      caps.effects.map((e) => ({ id: e, name: String(e).replace(/_/g, " ") })),
-      (it) => this._call("turn_on", { effect: it.id }),
-      () => { const st = this._hass.states[this._config.entity]; return st && st.attributes.effect; });
+      (caps.effects.length && caps.stop ? [{ id: caps.stop, name: "Stop effect" }] : [])
+        .concat(caps.effects.map((e) => ({ id: e, name: String(e).replace(/_/g, " ") }))),
+      (it) => this._call("turn_on", { effect: it.id }));
     this._drops = drops;
     pop.addEventListener("click", () => { for (const d of drops) d.shut(); });
 
@@ -9189,7 +9193,8 @@ class CharroColorLightCard extends HTMLElement {
     else {
       bits.push(pct != null ? `${pct}%` : "On");
       if (a.color_mode === "color_temp" && a.color_temp_kelvin) bits.push(`${a.color_temp_kelvin}K`);
-      if (a.effect && !["none", "off"].includes(String(a.effect).toLowerCase())) bits.push(a.effect);
+      /* no effect here: Zigbee2MQTT keeps the last one sent as `effect`
+       * long after a colorloop has stopped, so it would only mislead */
     }
     const said = bits.join(" · ");
     this._st.textContent = said;

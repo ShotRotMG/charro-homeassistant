@@ -1364,7 +1364,7 @@ brightness.
 
 Tap the name for the **details pop-up**: power, all three sliders, nine colour
 swatches plus a free colour picker, and **Scenes** and **Effects** dropdowns
-(colorloop, candle, fireplace… with one-shot effects like blink left out).
+(colorloop, candle, fireplace… with one-shot effects like blink left out, and **Stop effect** at the top). The state line leaves the effect out: Zigbee2MQTT never reports one ending, so it would show the last one sent forever.
 
 ```yaml
 type: custom:charro-color-light-card

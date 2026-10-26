@@ -30,8 +30,9 @@ const card = (h, entity = L) => {
 const sr = (c) => c.shadowRoot;
 
 console.log("-- one line --");
-let h = mk({ brightness: 158, hs_color: [210, 80], rgb_color: [40, 110, 255], color_mode: "xy" });
+let h = mk({ brightness: 158, hs_color: [210, 80], rgb_color: [40, 110, 255], color_mode: "xy", effect: "colorloop" });
 let c = card(h);
+eq(c._st.textContent, "62%", "the last effect sent isn't shown: Zigbee2MQTT never says it ended");
 const md = sr(c).querySelector(".md").children;
 eq(md.map((b) => b.title), ["Brightness", "White", "Colour"], "a button each for brightness, white and colour");
 ok(sr(c).querySelector(".sl").hidden && !sr(c).querySelector(".tx").hidden, "the name shows until one is pressed");
@@ -64,7 +65,7 @@ setTimeout(() => {
   eq(pop.querySelector(".sw").querySelectorAll("button").length, 9, "the swatches");
   const dds = c._drops;
   eq(dds.map((d) => [d.btn.querySelector("span").textContent].concat(d.list.children.map((o) => o.firstChild.textContent))),
-    [["Scenes", "Movie", "Read"], ["Effects", "colorloop", "candle"]],
+    [["Scenes", "Movie", "Read"], ["Effects", "Stop effect", "colorloop", "candle"]],
     "scenes and effects as dropdowns, its own Zigbee2MQTT scenes only");
   ok(dds.every((d) => d.list.style.display === "none"), "both start closed");
   dds[0].btn.click();
@@ -75,7 +76,7 @@ setTimeout(() => {
   ok(dds[1].list.style.display === "none", "tapping it again closes it");
   dds[0].btn.click(); dds[0].list.children[1].click();
   ok(dds[0].list.style.display === "none", "a pick closes the list");
-  dds[1].btn.click(); dds[1].list.children[1].click();
+  dds[1].btn.click(); dds[1].list.children[2].click();
   setTimeout(() => {
     eq(h.calls.map((x) => [x[0], x[1], x[2], x[3].entity_id]), [
       ["scene", "turn_on", {}, "scene.javon_lamps_read"], ["light", "turn_on", { effect: "candle" }, L]],
