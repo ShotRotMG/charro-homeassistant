@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.138.0";
+const VERSION = "5.139.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8867,7 +8867,7 @@ ha-card{ padding:8px 10px; }
 .nm{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .st{ font-size:12.5px; color:var(--secondary-text-color); white-space:nowrap; }
 .sl{ flex:1; min-width:0; display:flex; align-items:center; }
-.sl[hidden], .tx[hidden]{ display:none; }
+.sl[hidden], .tx[hidden], .md[hidden]{ display:none; }
 .md{ display:flex; gap:4px; flex:none; }
 .md button{ width:32px; height:32px; border-radius:50%; border:none; cursor:pointer; padding:0;
   background:rgba(127,127,127,.14); color:var(--secondary-text-color);
@@ -9013,6 +9013,7 @@ class CharroColorLightCard extends HTMLElement {
 
     const md = document.createElement("div");
     md.className = "md";
+    this._md = md;
     this._modeBtns = {};
     for (const [k, icon, title] of [["bri", "mdi:brightness-6", "Brightness"],
       ["temp", "mdi:white-balance-sunny", "White"], ["hue", "mdi:palette", "Colour"]]) {
@@ -9186,6 +9187,10 @@ class CharroColorLightCard extends HTMLElement {
     this._icon.icon = this._config.icon || a.icon || (on ? "mdi:lightbulb" : "mdi:lightbulb-outline");
     this._icon.style.color = col;
     this._ic.classList.toggle("on", on);
+    /* The slider buttons only while it's on: the bulb is what turns it on,
+     * and an off light gives its name the room instead. */
+    this._md.hidden = !on;
+    if (!on && this._mode) this._setMode(null);
     const name = this._config.name || a.friendly_name || this._config.entity;
     this._nm.textContent = name;
     /* A tip on every part, and one on the card itself so its padding and

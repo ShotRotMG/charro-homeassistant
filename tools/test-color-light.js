@@ -91,6 +91,16 @@ setTimeout(() => {
     c._closeDetails();
     ok(!c._pop, "and it closes");
 
+    console.log("-- off --");
+    {
+      const o = card(mk({}, "off"));
+      ok(o._md.hidden, "an off light hides its slider buttons");
+      const h2 = mk({ brightness: 100 }); const c2 = card(h2);
+      c2._modeBtns.bri.click();
+      h2.states[L] = { ...h2.states[L], state: "off" }; c2.hass = h2;
+      ok(c2._md.hidden && !c2._tx.hidden && c2._sl.hidden, "turning off puts the name back and hides the buttons");
+    }
+
     console.log("-- a plain dimmer --");
     const d = card(mk({}), D);
     eq(sr(d).querySelector(".md").children.map((b) => b.title), ["Brightness"], "a dimmer gets only brightness");
