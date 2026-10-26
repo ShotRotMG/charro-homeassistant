@@ -32,6 +32,13 @@ const sr = (c) => c.shadowRoot;
 console.log("-- one line --");
 let h = mk({ brightness: 158, hs_color: [210, 80], rgb_color: [40, 110, 255], color_mode: "xy", effect: "colorloop" });
 let c = card(h);
+{
+  const kinds = [c._card, c._ic, c._tx, ...sr(c).querySelector(".md").children, c._sliders.bri]
+    .map((n) => T.tipKind(n, {}));
+  ok(kinds.every((k) => k === "plain"), "every part has a hover tip, the card's own edges included  got " + kinds);
+  eq(T.tipPlain(c._ic, h, Date.now())[0].t, "Javon Lamps", "the bulb's tip names the light");
+  ok(c._ic.dataset.tipDo === "Tap: turn it off", "and says what a tap does");
+}
 eq(c._st.textContent, "62%", "the last effect sent isn't shown: Zigbee2MQTT never says it ended");
 const md = sr(c).querySelector(".md").children;
 eq(md.map((b) => b.title), ["Brightness", "White", "Colour"], "a button each for brightness, white and colour");

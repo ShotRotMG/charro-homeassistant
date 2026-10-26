@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.137.0";
+const VERSION = "5.138.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9019,6 +9019,8 @@ class CharroColorLightCard extends HTMLElement {
       if (!sliders[k]) continue;
       const b = document.createElement("button");
       b.title = title;
+      b.dataset.tip = title;
+      b.dataset.tipDo = `Tap: the ${title.toLowerCase()} slider, again to go back`;
       b.innerHTML = `<ha-icon icon="${icon}"></ha-icon>`;
       b.addEventListener("click", () => this._setMode(this._mode === k ? null : k));
       md.appendChild(b);
@@ -9186,6 +9188,19 @@ class CharroColorLightCard extends HTMLElement {
     this._ic.classList.toggle("on", on);
     const name = this._config.name || a.friendly_name || this._config.entity;
     this._nm.textContent = name;
+    /* A tip on every part, and one on the card itself so its padding and
+     * the gaps between the buttons say something too - only a few parts
+     * had one, so the edges of the card were silent. */
+    const ent = this._config.entity;
+    const tip = (el, head, doing) => {
+      el.dataset.tip = head; el.dataset.tipEnt = ent;
+      if (doing) el.dataset.tipDo = doing; else delete el.dataset.tipDo;
+    };
+    tip(this._card, name, "Tap the name: brightness, colours, scenes and effects");
+    tip(this._ic, name, `Tap: turn it ${on ? "off" : "on"}`);
+    tip(this._tx, name, "Tap: brightness, colours, scenes and effects");
+    for (const [k, label] of [["bri", "Brightness"], ["temp", "White"], ["hue", "Colour"]])
+      if (this._sliders[k]) { this._sliders[k].dataset.tip = label; this._sliders[k].dataset.tipEnt = ent; }
     const pct = a.brightness != null ? Math.max(1, Math.round(a.brightness / 2.55)) : null;
     const bits = [];
     if (st.state === "unavailable") bits.push("Unavailable");

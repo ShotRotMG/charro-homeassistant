@@ -20,7 +20,7 @@ class El {
   constructor(tag) {
     this.tagName = String(tag || "div").toUpperCase();
     this.style = { setProperty(k, v) { this[k] = v; }, removeProperty(k) { delete this[k]; } };
-    this.dataset = {}; this.attributes = {};
+    this.dataset = {}; this.attributes = {}; this.nodeType = 1;
     this.children = []; this.parentNode = null; this.shadowRoot = null;
     this[EV] = {};
     this._text = ""; this._html = "";
