@@ -27,6 +27,16 @@ eq(T.alertKind("cover.garage", S), "garage", "a cover is a garage");
 eq(T.alertKind("sensor.unknown_thing", S), "door", "and anything else is a door, as before");
 eq(T.charroAlertIcon("sensor.elkm1_zone_14", S), "mdi:motion-sensor", "the tile's glyph follows");
 
+console.log("-- the guard holds back garages only --");
+{
+  const G = { "cover.door_1": st("opening"), "binary_sensor.entry": st("on", { device_class: "door" }),
+              "binary_sensor.guard": st("off") };
+  const v = { alert_sensors: ["cover.door_1", "binary_sensor.entry"], confirm_sensor: "binary_sensor.guard" };
+  eq(T.charroOpenAlerts(v, G), ["binary_sensor.entry"], "guard shut: the entry door still shows, the garage's Opening doesn't");
+  eq(T.charroOpenAlerts(v, { ...G, "binary_sensor.guard": st("on") }), ["cover.door_1", "binary_sensor.entry"],
+    "guard open: both show");
+}
+
 console.log("-- the pop-up header --");
 const head = (sensors, states) => {
   const p = new T.RoomPopup("#t", { room_name: "Theatre", alert_sensors: sensors },

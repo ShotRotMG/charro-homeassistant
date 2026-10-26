@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.135.0";
+const VERSION = "5.136.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -1559,12 +1559,17 @@ function isGarage(entry, hass) {
  * live. Three copies of the filter would be three chances to drift. */
 function charroOpenAlerts(v, states) {
   const open = (st) => st === "Violated" || st === "on" || st === "open";
+  /* The guard sensor is there to catch a ratgdo's false "Opening", so it
+   * only holds back garage doors. It used to silence the whole list, and
+   * Garage West's entry door could stand open with nothing on the tile
+   * while the pop-up, which guards only the garages, showed it red. */
   const cs = v && v.confirm_sensor;
-  if (cs && !open(states[cs] && states[cs].state)) return [];
+  const guarded = !!cs && !open(states[cs] && states[cs].state);
   return ((v && v.alert_sensors) || []).filter((e) => {
     const st = states[e] && states[e].state;
     if (!st) return false;
-    return e.startsWith("cover.") ? st !== "closed" : open(st);
+    if (e.startsWith("cover.")) return !guarded && st !== "closed";
+    return open(st);
   });
 }
 if (typeof window !== "undefined") window.charroOpenAlerts = charroOpenAlerts;
