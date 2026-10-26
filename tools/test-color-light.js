@@ -117,6 +117,13 @@ setTimeout(() => {
       ok(n._modeBtns.hue.classList.contains("sel"), "and the wide buttons stay in step");
     }
 
+    console.log("-- the name keeps its room --");
+    {
+      const css = sr(card(mk({}))).querySelector("style").textContent;
+      ok(/\.tx\{[^}]*min-width:70px/.test(css), "the name never gets narrower than 70px");
+      ok(/@container[^{]*\{[\s\S]*-webkit-line-clamp:2/.test(css), "and wraps to two lines on a narrow card");
+    }
+
     console.log("-- a plain dimmer --");
     const d = card(mk({}), D);
     eq(sr(d).querySelector(".md").children.filter((b) => !String(b.className).split(" ").includes("one")).map((b) => b.title), ["Brightness"], "a dimmer gets only brightness");

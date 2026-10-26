@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.140.0";
+const VERSION = "5.141.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8863,7 +8863,7 @@ ha-card{ padding:8px 10px; }
   border:none; color:inherit; padding:0; }
 .ic.on{ background:var(--cl-glow, rgba(255,193,7,.25)); }
 .ic ha-icon{ --mdc-icon-size:22px; }
-.tx{ flex:1; min-width:0; cursor:pointer; }
+.tx{ flex:1; min-width:70px; cursor:pointer; }
 .nm{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .st{ font-size:12.5px; color:var(--secondary-text-color); white-space:nowrap; }
 .sl{ flex:1; min-width:0; display:flex; align-items:center; }
@@ -8879,6 +8879,10 @@ ${"" /* half width: the three buttons fold into one that steps through them */}
 @container (max-width: 259px){
   .md button{ display:none; }
   .md button.one{ display:flex; }
+  ${"" /* a long name wraps onto a second line rather than becoming "L…" */}
+  .nm{ white-space:normal; display:-webkit-box; -webkit-box-orient:vertical;
+    -webkit-line-clamp:2; line-height:1.2; overflow-wrap:anywhere; }
+  .ln{ gap:8px; }
 }
 ${"" /* the sliders, shared with the details pop-up */}
 input[type=range]{ width:100%; margin:0; accent-color:var(--cl-col, var(--primary-color)); }
