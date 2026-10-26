@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.139.0";
+const VERSION = "5.140.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -8855,7 +8855,7 @@ const clRgb = (hex) => {
 };
 
 const CL_CSS = `
-:host{ display:block; }
+:host{ display:block; container-type:inline-size; }
 ha-card{ padding:8px 10px; }
 .ln{ display:flex; align-items:center; gap:10px; min-height:44px; }
 .ic{ width:38px; height:38px; border-radius:50%; display:flex; align-items:center;
@@ -8874,6 +8874,12 @@ ha-card{ padding:8px 10px; }
   display:flex; align-items:center; justify-content:center; }
 .md button ha-icon{ --mdc-icon-size:18px; }
 .md button.sel{ background:var(--cl-glow, rgba(255,193,7,.25)); color:var(--cl-col, #ffc107); }
+${"" /* half width: the three buttons fold into one that steps through them */}
+.md button.one{ display:none; }
+@container (max-width: 259px){
+  .md button{ display:none; }
+  .md button.one{ display:flex; }
+}
 ${"" /* the sliders, shared with the details pop-up */}
 input[type=range]{ width:100%; margin:0; accent-color:var(--cl-col, var(--primary-color)); }
 input.temp, input.hue{ -webkit-appearance:none; appearance:none; height:8px; border-radius:4px; }
@@ -9027,10 +9033,35 @@ class CharroColorLightCard extends HTMLElement {
       md.appendChild(b);
       this._modeBtns[k] = b;
     }
+    /* The one button a narrow card shows instead of the three: it opens
+     * the slider used last, steps on to the next while one is showing,
+     * goes back to the name after the last, and a long-press closes it. */
+    const order = Object.keys(this._modeBtns);
+    const one = document.createElement("button");
+    one.className = "one";
+    one.appendChild(document.createElement("ha-icon"));
+    this._one = one; this._order = order;
+    this._last = this._last && order.includes(this._last) ? this._last : order[0];
+    let press = null, long = false;
+    one.addEventListener("pointerdown", () => {
+      long = false;
+      press = setTimeout(() => { long = true; this._setMode(null); }, 500);
+    });
+    const unpress = () => { clearTimeout(press); press = null; };
+    one.addEventListener("pointerup", unpress);
+    one.addEventListener("pointerleave", unpress);
+    one.addEventListener("click", () => {
+      if (long) { long = false; return; }
+      if (!this._mode) return this._setMode(this._last);
+      const next = order[order.indexOf(this._mode) + 1] || null;
+      this._setMode(next);
+    });
+    if (order.length) md.appendChild(one);
     ln.append(this._ic, this._tx, this._sl, md);
     card.appendChild(ln);
     this._card = card;
     root.append(style, card);
+    this._oneLook();
     this._update();
   }
 
@@ -9041,6 +9072,23 @@ class CharroColorLightCard extends HTMLElement {
     this._sl.hidden = !k;
     this._tx.hidden = !!k;
     for (const [m, b] of Object.entries(this._modeBtns)) b.classList.toggle("sel", m === k);
+    if (k) this._last = k;
+    this._oneLook();
+  }
+
+  _oneLook() {
+    const one = this._one;
+    if (!one) return;
+    const NAMES = { bri: "Brightness", temp: "White", hue: "Colour" };
+    const ICONS = { bri: "mdi:brightness-6", temp: "mdi:white-balance-sunny", hue: "mdi:palette" };
+    const k = this._mode || this._last;
+    one.firstChild.setAttribute("icon", ICONS[k] || "mdi:tune-variant");
+    one.classList.toggle("sel", !!this._mode);
+    const next = this._mode ? this._order[this._order.indexOf(this._mode) + 1] : this._last;
+    one.title = NAMES[k] || "";
+    one.dataset.tip = this._mode ? `${NAMES[this._mode]} slider` : "Sliders";
+    one.dataset.tipDo = next ? `Tap: the ${NAMES[next].toLowerCase()} slider` + (this._mode ? " · hold: close" : "")
+                             : "Tap: back to the name";
   }
 
   _openDetails() {

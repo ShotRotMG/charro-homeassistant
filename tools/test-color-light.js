@@ -40,7 +40,7 @@ let c = card(h);
   ok(c._ic.dataset.tipDo === "Tap: turn it off", "and says what a tap does");
 }
 eq(c._st.textContent, "62%", "the last effect sent isn't shown: Zigbee2MQTT never says it ended");
-const md = sr(c).querySelector(".md").children;
+const md = sr(c).querySelector(".md").children.filter((b) => b.className !== "one" && !(b.className || "").startsWith("one "));
 eq(md.map((b) => b.title), ["Brightness", "White", "Colour"], "a button each for brightness, white and colour");
 ok(sr(c).querySelector(".sl").hidden && !sr(c).querySelector(".tx").hidden, "the name shows until one is pressed");
 md[0].click();
@@ -101,9 +101,25 @@ setTimeout(() => {
       ok(c2._md.hidden && !c2._tx.hidden && c2._sl.hidden, "turning off puts the name back and hides the buttons");
     }
 
+    console.log("-- half width: one button --");
+    {
+      const h3 = mk({ brightness: 100, color_mode: "xy", rgb_color: [255, 0, 0], hs_color: [0, 100] });
+      const n = card(h3); const one = n._one;
+      const cur = () => n._mode;
+      eq(one.firstChild.getAttribute("icon"), "mdi:brightness-6", "it shows brightness to start");
+      one.click(); eq(cur(), "bri", "tap: brightness");
+      one.click(); eq(cur(), "temp", "tap again: white");
+      one.click(); eq(cur(), "hue", "then colour");
+      eq(one.dataset.tipDo, "Tap: back to the name", "the tip says what's next");
+      one.click(); eq(cur(), null, "and after the last, back to the name");
+      eq(one.firstChild.getAttribute("icon"), "mdi:palette", "remembering colour was used last");
+      one.click(); eq(cur(), "hue", "so it opens colour next time");
+      ok(n._modeBtns.hue.classList.contains("sel"), "and the wide buttons stay in step");
+    }
+
     console.log("-- a plain dimmer --");
     const d = card(mk({}), D);
-    eq(sr(d).querySelector(".md").children.map((b) => b.title), ["Brightness"], "a dimmer gets only brightness");
+    eq(sr(d).querySelector(".md").children.filter((b) => !String(b.className).split(" ").includes("one")).map((b) => b.title), ["Brightness"], "a dimmer gets only brightness");
 
     console.log("-- in a room --");
     ok(!!T.RENDER_KINDS.color, "the layout builder offers it as a way to draw a light");
