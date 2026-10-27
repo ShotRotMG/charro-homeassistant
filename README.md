@@ -1381,6 +1381,26 @@ its own, so a group light shows the group's scenes. If none appear, check
 the scene exists in Zigbee2MQTT (Groups or Devices → Scene) and that Home
 Assistant discovery is on there.
 
+## `charro-music-assistant-card`
+
+Music Assistant's own web app inside the dashboard. It talks straight to the
+Music Assistant server, so browsing, search and the queue are as quick as
+the app itself.
+
+```yaml
+type: custom:charro-music-assistant-card
+```
+
+Set the address once for the house in **Charro Config → Settings → Music
+Assistant**; a card can still name its own. Options, all in the card editor:
+**Title**, **Icon**, **Height** (blank 640px; `80vh` works) and **Show the
+title bar**, which holds reload and open-in-a-tab.
+
+The address has to be **https**: a browser won't show a plain-http page
+inside an https dashboard. If the card stays blank, the server is refusing
+to be framed (an `X-Frame-Options` or `frame-ancestors` header on the proxy)
+— the open-in-a-tab button still works.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —

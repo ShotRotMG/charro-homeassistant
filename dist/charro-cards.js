@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.142.0";
+const VERSION = "5.143.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9293,6 +9293,144 @@ defCard("charro-color-light-card", CharroColorLightCard, { name: "Charro Colour 
   inRoom: true,
   seed: { type: "custom:charro-color-light-card", entity: "" } });
 
+/* ============================================ MUSIC ASSISTANT CARD ===== */
+/* Music Assistant's own web app, inside the dashboard. It talks straight to
+ * the Music Assistant server, so browsing, search and the queue are as
+ * quick as the app itself - a card rebuilding them through Home Assistant
+ * service calls can't be.
+ *
+ *   type: custom:charro-music-assistant-card
+ *   url: https://music.example.com    # blank: the house's address
+ *
+ * The address must be https on an https dashboard (a browser won't show a
+ * plain-http page inside one), and the server must allow being framed. The
+ * open button is always there for when it won't. */
+const MA_CSS = `
+:host{ display:block; }
+ha-card{ overflow:hidden; display:flex; flex-direction:column; }
+.hd{ display:flex; align-items:center; gap:8px; padding:8px 10px 8px 14px; }
+.hd .t{ flex:1; font-weight:600; font-size:15px; display:flex; align-items:center; gap:8px; }
+.hd .t ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); }
+.hd button{ width:34px; height:34px; border-radius:50%; border:none; cursor:pointer; padding:0;
+  background:rgba(127,127,127,.14); color:var(--primary-text-color);
+  display:flex; align-items:center; justify-content:center; }
+.hd button ha-icon{ --mdc-icon-size:18px; }
+iframe{ border:0; width:100%; display:block; background:transparent; }
+.none{ padding:16px; color:var(--secondary-text-color); line-height:1.5; }
+`;
+
+/* The address to show: the card's own, else the house's. */
+function maUrl(cfg, house) {
+  const u = String((cfg && cfg.url) || (house && house.music_url) || "").trim();
+  if (!u) return "";
+  return /^https?:\/\//i.test(u) ? u : "https://" + u;
+}
+
+class CharroMusicAssistantCard extends HTMLElement {
+  static getConfigElement() { return document.createElement("charro-music-assistant-card-editor"); }
+  static getStubConfig() { return { type: "custom:charro-music-assistant-card" }; }
+  setConfig(config) {
+    this._config = config || {};
+    this._house = this._house || null;
+    if (this._built) this._render();
+  }
+  set hass(h) {
+    const first = !this._hass;
+    this._hass = h;
+    tipBoot(h);
+    /* Built once: the iframe is a whole app and must not be rebuilt on
+     * every state change in the house, which would reload it. */
+    if (first) loadHouse(h).then((house) => { this._house = house; this._render(); });
+  }
+  getCardSize() { return 8; }
+  getGridOptions() { return { columns: "full", rows: "auto" }; }
+
+  _render() {
+    this._built = true;
+    const c = this._config || {};
+    const url = maUrl(c, this._house);
+    if (this._shown === url + "|" + JSON.stringify(c)) return;
+    this._shown = url + "|" + JSON.stringify(c);
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = MA_CSS;
+    const card = document.createElement("ha-card");
+    if (c.header !== false) {
+      const hd = document.createElement("div");
+      hd.className = "hd";
+      const t = document.createElement("div");
+      t.className = "t";
+      const ic = document.createElement("ha-icon");
+      ic.setAttribute("icon", c.icon || "mdi:music");
+      const tt = document.createElement("span");
+      tt.textContent = c.title || "Music Assistant";
+      t.append(ic, tt);
+      hd.appendChild(t);
+      const btn = (icon, tip, fn) => {
+        const b = document.createElement("button");
+        b.title = tip; b.dataset.tip = tip;
+        const i = document.createElement("ha-icon");
+        i.setAttribute("icon", icon);
+        b.appendChild(i);
+        b.addEventListener("click", fn);
+        hd.appendChild(b);
+        return b;
+      };
+      if (url) {
+        this._reload = btn("mdi:refresh", "Reload Music Assistant", () => {
+          if (this._frame) this._frame.src = url;
+        });
+        this._open = btn("mdi:open-in-new", "Open Music Assistant in its own tab",
+          () => window.open(url, "_blank", "noopener"));
+      }
+      card.appendChild(hd);
+    }
+    if (url) {
+      const f = document.createElement("iframe");
+      f.src = url;
+      f.title = c.title || "Music Assistant";
+      f.setAttribute("allow", "autoplay; clipboard-read; clipboard-write; fullscreen");
+      f.setAttribute("referrerpolicy", "no-referrer");
+      const h = String(c.height || "").trim();
+      f.style.height = !h ? "640px" : /^\d+$/.test(h) ? h + "px" : h;
+      card.appendChild(f);
+      this._frame = f;
+    } else {
+      const n = document.createElement("div");
+      n.className = "none";
+      n.textContent = "No Music Assistant address yet. Set one for the whole house in "
+        + "Charro Config → Settings, or on this card.";
+      card.appendChild(n);
+      this._frame = null;
+    }
+    root.append(style, card);
+  }
+}
+defCard("charro-music-assistant-card", CharroMusicAssistantCard, { name: "Charro Music Assistant",
+  description: "Music Assistant's own app in the dashboard: browse, search and queue at full speed.",
+  inRoom: true,
+  seed: { type: "custom:charro-music-assistant-card" } });
+
+makeEditor("charro-music-assistant-card-editor", [
+  { name: "url", selector: { text: {} } },
+  { name: "title", selector: { text: {} } },
+  { name: "icon", selector: { icon: {} } },
+  { name: "height", selector: { text: {} } },
+  { name: "header", selector: { boolean: {} } },
+], {
+  url: "Music Assistant address",
+  title: "Title",
+  icon: "Icon",
+  height: "Height",
+  header: "Show the title bar",
+}, {
+  url: "Blank uses the house's address from Charro Config → Settings. Must be https.",
+  title: "Blank: Music Assistant.",
+  height: "Blank: 640px. A number is pixels; 80vh and the like work too.",
+  header: "The title bar holds the reload and open-in-a-tab buttons.",
+});
+
 defCard("charro-lights-card", CharroLightsCard, { name: "Charro Lights Card",
   description: "One room of lights \u2014 equal rows, dim by dragging the row.",
   inRoom: true,
@@ -15308,6 +15446,22 @@ class CharroHouseEditor extends HTMLElement {
       : `living_room → ${pagePath(this._cfg.page_base, "living_room")}`;
     box.appendChild(eg);
     root.appendChild(box);
+
+    /* Music Assistant's address, for every Music Assistant card that
+     * doesn't name its own. */
+    const capM = document.createElement("div");
+    capM.className = "vcap"; capM.textContent = "Music Assistant";
+    root.appendChild(capM);
+    const mb = document.createElement("div"); mb.className = "vrowbox";
+    mb.appendChild(f.text("Music Assistant address", this._cfg.music_url || "",
+      set("music_url"), "https://music.example.com"));
+    const mh = document.createElement("div");
+    mh.className = "vhelp";
+    mh.textContent = "Where the Music Assistant cards open its app. It has to be "
+      + "https, since the dashboard is, and reachable from wherever the dashboard "
+      + "is opened. A card with its own address set is unaffected.";
+    mb.appendChild(mh);
+    root.appendChild(mb);
 
     /* Hover tips. Stored only when they differ from the built-in, the same
      * as every other setting here: no file means on, after 0.4 s. */
