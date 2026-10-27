@@ -286,16 +286,18 @@ T.tipHide();
   e._paint();
   const sw = () => e._body.querySelector("ha-switch");
   ok(sw() && sw().checked === true, "the switch reads on with no setting saved");
-  ok(e._body.querySelectorAll("select").length === 1, "and the delay is offered");
+  // the delay's own select, told from the Music Assistant one by its options
+  const delays = () => e._body.querySelectorAll("select").filter((s) => s.children.some((o) => o.value === "800"));
+  ok(delays().length === 1, "and the delay is offered");
   sw().checked = false; sw().fire("change");
   eq(e._cfg.tooltips, false, "off is saved as tooltips:false");
-  eq(e._body.querySelectorAll("select").length, 0, "and the delay is hidden while off");
+  eq(delays().length, 0, "and the delay is hidden while off");
   sw().checked = true; sw().fire("change");
   ok(!("tooltips" in e._cfg), "back on removes the key - on is the built-in");
-  const sel = e._body.querySelector("select");
+  const sel = delays()[0];
   sel.value = "800"; sel.fire("change");
   eq(e._cfg.tooltip_delay, 800, "a delay is saved as a number");
-  sel.value = ""; e._body.querySelector("select").fire("change");
+  sel.value = ""; delays()[0].fire("change");
 
   console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
   process.exit(fails ? 1 : 0);

@@ -1391,8 +1391,13 @@ the app itself.
 type: custom:charro-music-assistant-card
 ```
 
-Set the address once for the house in **Charro Config → Settings → Music
-Assistant**; a card can still name its own. Options, all in the card editor:
+For an admin it opens the **Music Assistant add-on** straight through Home
+Assistant, the way the sidebar does: no second login, and nothing for a
+proxy to refuse to frame. Home Assistant only lets admins open add-ons, so
+everyone else gets the **address**, set once for the house in **Charro
+Config → Settings → Music Assistant** (a card can still name its own).
+**Show** picks Automatic, the add-on, or the address, house-wide or per
+card. Options, all in the card editor:
 **Title**, **Icon**, **Height** (blank 640px; `80vh` works) and **Show the
 title bar**, which holds reload and open-in-a-tab.
 

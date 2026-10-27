@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.143.0";
+const VERSION = "5.144.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9319,6 +9319,44 @@ iframe{ border:0; width:100%; display:block; background:transparent; }
 .none{ padding:16px; color:var(--secondary-text-color); line-height:1.5; }
 `;
 
+/* The Music Assistant add-on, opened the way Home Assistant's own sidebar
+ * opens it: an ingress session cookie, then the add-on's ingress path on
+ * this same origin. No second login, nothing for a proxy to refuse to
+ * frame. Home Assistant only lets admins at add-ons, so for anyone else
+ * this fails and the card falls back to the address. */
+const MA_SOURCES = [["", "Automatic (the add-on for admins, else the address)"],
+  ["addon", "The Music Assistant add-on"], ["url", "The address"]];
+let _maIngress = null;
+function maIngress(hass) {
+  if (_maIngress) return _maIngress;
+  const api = (endpoint, method, data) => hass.callWS(Object.assign(
+    { type: "supervisor/api", endpoint, method }, data ? { data } : {}));
+  let session = "";
+  const fresh = () => api("/ingress/session", "post").then((r) => {
+    session = r.session;
+    document.cookie = `ingress_session=${session};path=/api/hassio_ingress/;SameSite=Strict`
+      + (location.protocol === "https:" ? ";Secure" : "");
+  });
+  _maIngress = api("/addons", "get").then((list) => {
+    const addons = (list && list.addons) || [];
+    const ma = addons.find((a) => /music_assistant/.test(a.slug) && a.state === "started")
+            || addons.find((a) => /music_assistant/.test(a.slug));
+    if (!ma) throw new Error("no Music Assistant add-on");
+    return api(`/addons/${ma.slug}/info`, "get");
+  }).then((info) => {
+    if (!info || !info.ingress_url) throw new Error("the add-on has no ingress");
+    return fresh().then(() => {
+      /* Kept alive the way the sidebar keeps it: checked every minute,
+       * replaced when it has lapsed. One small websocket call a minute. */
+      setInterval(() => {
+        api("/ingress/validate_session", "post", { session }).catch(() => fresh().catch(() => {}));
+      }, 60000);
+      return info.ingress_url;
+    });
+  }).catch((err) => { _maIngress = null; throw err; });
+  return _maIngress;
+}
+
 /* The address to show: the card's own, else the house's. */
 function maUrl(cfg, house) {
   const u = String((cfg && cfg.url) || (house && house.music_url) || "").trim();
@@ -9340,7 +9378,15 @@ class CharroMusicAssistantCard extends HTMLElement {
     tipBoot(h);
     /* Built once: the iframe is a whole app and must not be rebuilt on
      * every state change in the house, which would reload it. */
-    if (first) loadHouse(h).then((house) => { this._house = house; this._render(); });
+    if (first) loadHouse(h).then((house) => {
+      this._house = house;
+      const src = (this._config && this._config.source) || house.music_source || "";
+      this._ingress = "";
+      if (src === "url" || !(h.user && h.user.is_admin)) return this._render();
+      return maIngress(h).then((u) => { this._ingress = u; }, (err) => {
+        if (src === "addon") console.warn("charro: Music Assistant add-on:", err.message || err);
+      }).then(() => this._render());
+    });
   }
   getCardSize() { return 8; }
   getGridOptions() { return { columns: "full", rows: "auto" }; }
@@ -9348,7 +9394,7 @@ class CharroMusicAssistantCard extends HTMLElement {
   _render() {
     this._built = true;
     const c = this._config || {};
-    const url = maUrl(c, this._house);
+    const url = this._ingress || maUrl(c, this._house);
     if (this._shown === url + "|" + JSON.stringify(c)) return;
     this._shown = url + "|" + JSON.stringify(c);
     const root = this.shadowRoot || this.attachShadow({ mode: "open" });
@@ -9381,8 +9427,11 @@ class CharroMusicAssistantCard extends HTMLElement {
         this._reload = btn("mdi:refresh", "Reload Music Assistant", () => {
           if (this._frame) this._frame.src = url;
         });
+        /* the ingress path alone has no session in a new tab, so the tab
+         * gets the address when there is one */
+        const tabUrl = this._ingress ? (maUrl(c, this._house) || url) : url;
         this._open = btn("mdi:open-in-new", "Open Music Assistant in its own tab",
-          () => window.open(url, "_blank", "noopener"));
+          () => window.open(tabUrl, "_blank", "noopener"));
       }
       card.appendChild(hd);
     }
@@ -9391,7 +9440,7 @@ class CharroMusicAssistantCard extends HTMLElement {
       f.src = url;
       f.title = c.title || "Music Assistant";
       f.setAttribute("allow", "autoplay; clipboard-read; clipboard-write; fullscreen");
-      f.setAttribute("referrerpolicy", "no-referrer");
+      if (!this._ingress) f.setAttribute("referrerpolicy", "no-referrer");
       const h = String(c.height || "").trim();
       f.style.height = !h ? "640px" : /^\d+$/.test(h) ? h + "px" : h;
       card.appendChild(f);
@@ -9399,8 +9448,9 @@ class CharroMusicAssistantCard extends HTMLElement {
     } else {
       const n = document.createElement("div");
       n.className = "none";
-      n.textContent = "No Music Assistant address yet. Set one for the whole house in "
-        + "Charro Config → Settings, or on this card.";
+      n.textContent = "No Music Assistant to show. Admins see the add-on; for everyone "
+        + "else set an address for the whole house in Charro Config → Settings, "
+        + "or on this card.";
       card.appendChild(n);
       this._frame = null;
     }
@@ -9413,18 +9463,23 @@ defCard("charro-music-assistant-card", CharroMusicAssistantCard, { name: "Charro
   seed: { type: "custom:charro-music-assistant-card" } });
 
 makeEditor("charro-music-assistant-card-editor", [
+  { name: "source", selector: { select: { mode: "dropdown",
+    options: MA_SOURCES.map(([value, label]) => ({ value, label })) } } },
   { name: "url", selector: { text: {} } },
   { name: "title", selector: { text: {} } },
   { name: "icon", selector: { icon: {} } },
   { name: "height", selector: { text: {} } },
   { name: "header", selector: { boolean: {} } },
 ], {
+  source: "Show",
   url: "Music Assistant address",
   title: "Title",
   icon: "Icon",
   height: "Height",
   header: "Show the title bar",
 }, {
+  source: "Blank follows Charro Config → Settings. The add-on needs no second login, "
+    + "but Home Assistant only lets admins open add-ons.",
   url: "Blank uses the house's address from Charro Config → Settings. Must be https.",
   title: "Blank: Music Assistant.",
   height: "Blank: 640px. A number is pixels; 80vh and the like work too.",
@@ -15453,13 +15508,15 @@ class CharroHouseEditor extends HTMLElement {
     capM.className = "vcap"; capM.textContent = "Music Assistant";
     root.appendChild(capM);
     const mb = document.createElement("div"); mb.className = "vrowbox";
+    mb.appendChild(f.sel("Show", this._cfg.music_source || "", MA_SOURCES, set("music_source")));
     mb.appendChild(f.text("Music Assistant address", this._cfg.music_url || "",
       set("music_url"), "https://music.example.com"));
     const mh = document.createElement("div");
     mh.className = "vhelp";
-    mh.textContent = "Where the Music Assistant cards open its app. It has to be "
-      + "https, since the dashboard is, and reachable from wherever the dashboard "
-      + "is opened. A card with its own address set is unaffected.";
+    mh.textContent = "Admins can see the Music Assistant add-on straight through Home "
+      + "Assistant, with no second login. Everyone else, and any card set to the address, "
+      + "opens the address: it has to be https and reachable from wherever the dashboard "
+      + "is opened. A card with its own settings is unaffected.";
     mb.appendChild(mh);
     root.appendChild(mb);
 
