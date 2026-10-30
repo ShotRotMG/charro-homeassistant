@@ -127,6 +127,23 @@ console.log("-- chips --");
   ok(!!card(mk()).shadowRoot.querySelector(".vchips"), "the chips are on the small card too");
 }
 
+console.log("-- where it is --");
+{
+  const e1 = T.vehEntities({ device: "car1" }, mk());
+  eq(T.vehWhere(mk(), e1, {}), "Home", "at home: Home");
+  const zs = mk({ [`device_tracker.${V}_tracker`]: st("Office"), "zone.office": { entity_id: "zone.office", state: "0", attributes: { friendly_name: "Office" } } });
+  eq(T.vehWhere(zs, e1, {}), "Office", "in a zone: the zone");
+  const away = mk({ [`device_tracker.${V}_tracker`]: st("not_home", { latitude: 32.9, longitude: -117.2 }) });
+  eq(T.vehWhere(away, e1, { hide_address: true }), "Away", "addresses off: Away");
+  const kept = {};
+  localStorage.getItem = (k) => (k in kept ? kept[k] : null);
+  localStorage.setItem = (k, v) => { kept[k] = String(v); };
+  localStorage.setItem("charro-addr:32.9000,-117.2000", "123 Via Example, Solana Beach");
+  eq(T.vehWhere(away, e1, {}), "123 Via Example, Solana Beach", "otherwise the address, asked once and kept");
+  eq(T.vehAddrFormat({ address: { house_number: "1", road: "Main St", city: "Del Mar" } }), "1 Main St, Del Mar",
+    "number, street and town");
+}
+
 console.log("-- the details pop-up --");
 {
   const hp = mk({

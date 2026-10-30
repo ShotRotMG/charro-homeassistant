@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.151.0";
+const VERSION = "5.152.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9675,7 +9675,9 @@ ha-card{ padding:12px 14px 12px; text-align:center; cursor:pointer; }
 .nm{ font-size:17px; font-weight:700; }
 .sub{ display:flex; justify-content:center; gap:14px; margin-top:2px; font-size:12.5px;
   color:var(--secondary-text-color); }
-.sub span{ display:inline-flex; align-items:center; gap:4px; }
+.sub span{ display:inline-flex; align-items:center; gap:4px; min-width:0; }
+.sub .loc{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; max-width:100%; }
+.sub .loc ha-icon{ vertical-align:-3px; margin-right:3px; }
 .sub ha-icon{ --mdc-icon-size:15px; }
 .car{ height:96px; margin:6px auto 4px; display:flex; align-items:center; justify-content:center; }
 .car img, .car svg{ max-height:96px; max-width:100%; object-fit:contain; }
@@ -9824,6 +9826,63 @@ ${p}.vchip{ display:inline-flex; align-items:center; gap:4px; padding:3px 9px; b
   background:color-mix(in srgb, var(--c) 18%, transparent); }
 ${p}.vchip ha-icon{ --mdc-icon-size:17px; }`; }
 
+/* Where the car is, in words: Home, the zone it's in, or - away from every
+ * zone - a street address. Home Assistant has no reverse geocoding, so the
+ * address comes from OpenStreetMap's Nominatim, asked from this browser:
+ * that sends the car's coordinates to OpenStreetMap, which is why a card
+ * can turn it off (hide_address). Each spot is asked once (to about 10 m)
+ * and kept, and requests go one at a time, a second apart, as Nominatim's
+ * usage policy asks. */
+const NOMINATIM = "https://nominatim.openstreetmap.org/reverse";
+const _vehAddr = new Map();
+let _vehAddrQ = Promise.resolve();
+const vehAddrKey = (lat, lon) => `${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`;
+function vehAddrFormat(j) {
+  const a = (j && j.address) || {};
+  const street = [a.house_number, a.road || a.pedestrian || a.footway].filter(Boolean).join(" ");
+  const place = a.city || a.town || a.village || a.hamlet || a.suburb || a.county || "";
+  return [street || a.amenity || a.building || "", place].filter(Boolean).join(", ")
+    || String((j && j.display_name) || "").split(",").slice(0, 2).join(",").trim();
+}
+function vehAddress(lat, lon, onReady) {
+  if (lat == null || lon == null || !isFinite(lat) || !isFinite(lon)) return "";
+  const key = vehAddrKey(lat, lon);
+  if (_vehAddr.has(key)) { const v = _vehAddr.get(key); return typeof v === "string" ? v : ""; }
+  try {
+    const kept = localStorage.getItem("charro-addr:" + key);
+    if (kept) { _vehAddr.set(key, kept); return kept; }
+  } catch (err) { /* private window: just ask */ }
+  if (typeof fetch !== "function") return "";
+  const p = _vehAddrQ = _vehAddrQ.then(() => fetch(
+    NOMINATIM + "?format=jsonv2&zoom=18&addressdetails=1&lat=" + encodeURIComponent(lat)
+      + "&lon=" + encodeURIComponent(lon),
+    { headers: { Accept: "application/json" } })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      const v = j ? vehAddrFormat(j) : "";
+      _vehAddr.set(key, v);
+      if (v) { try { localStorage.setItem("charro-addr:" + key, v); } catch (err) { /* fine */ } }
+      if (v && onReady) onReady(v);
+    })
+    .catch(() => { _vehAddr.delete(key); })
+    .then(() => new Promise((r) => setTimeout(r, 1100))));
+  _vehAddr.set(key, p);
+  return "";
+}
+function vehWhere(h, e, cfg, onReady) {
+  const st = vehState(h, e.tracker);
+  if (!st) return null;
+  if (st.state === "home") return "Home";
+  if (st.state !== "not_home") {
+    const z = Object.values(h.states || {}).find((x) => x && x.entity_id && x.entity_id.startsWith("zone.")
+      && (x.attributes || {}).friendly_name === st.state);
+    return (z && z.attributes.friendly_name) || st.state;
+  }
+  const a = st.attributes || {};
+  const addr = cfg && cfg.hide_address ? "" : vehAddress(a.latitude, a.longitude, onReady);
+  return addr || "Away";
+}
+
 /* What goes after the percentage: how fast and how long, or plugged in. */
 function vehChargeNote(ch) {
   if (ch.charging) return [vehWatts(ch.w), vehLeft(ch.end)].filter(Boolean).join(" \u00b7 ") || "Charging";
@@ -9875,7 +9934,9 @@ class CharroVehicleCard extends HTMLElement {
     const odo = vehMiles(h, e.odometer);
     const where = vehState(h, e.tracker);
     if (where) {
-      const s = el("span"); s.append(icon("mdi:map-marker"), document.createTextNode(vehWord(where.state === "not_home" ? "Away" : where.state)));
+      const s = el("span", "loc");
+      s.append(icon("mdi:map-marker"), document.createTextNode(
+        vehWhere(h, e, this._config, () => { this._sig = null; this._render(); })));
       s.dataset.tip = "Where it is"; s.dataset.tipEnt = e.tracker;
       sub.appendChild(s);
     }
@@ -9927,6 +9988,7 @@ makeEditor("charro-vehicle-card-editor", [
   { name: "name", selector: { text: {} } },
   { name: "image", selector: { text: {} } },
   { name: "color", selector: { text: {} } },
+  { name: "hide_address", selector: { boolean: {} } },
   { name: "entities", type: "expandable", flatten: true, title: "Entities (found from the device)",
     schema: VEH_KEYS.map((key) => ({ name: key, selector: { entity: {} } })) },
 ], Object.assign({
@@ -9935,11 +9997,14 @@ makeEditor("charro-vehicle-card-editor", [
   name: "Name",
   image: "Picture of the car",
   color: "Colour of the drawn car",
+  hide_address: "Don't look up street addresses",
 }, VEH_LABELS), {
   device: "Pick the car's device and every entity below is found from it.",
   make: "Automatic tells Ford from Tesla by the device's integration (FordPass; "
     + "Tesla Fleet, Teslemetry or Tessie). Set it if a car is read wrong.",
   name: "Blank: the device's name.",
+  hide_address: "Away from your zones the card shows a street address from OpenStreetMap, "
+    + "which means sending it the car's position. On keeps it to Away.",
   image: "A web address for a photo of the car - a transparent PNG looks best. "
     + "Blank draws a plain one.",
   color: "For the drawn car, e.g. #3fa9f5.",
@@ -9962,9 +10027,13 @@ const VEH_POP_CSS = `
   display:flex; align-items:center; justify-content:center; }
 .charro-veh-pop .car{ height:130px; display:flex; align-items:center; justify-content:center; margin:6px 0; }
 .charro-veh-pop .car img, .charro-veh-pop .car svg{ max-height:130px; max-width:100%; object-fit:contain; }
-.charro-veh-pop .where{ display:flex; align-items:center; justify-content:center; gap:6px;
-  color:var(--secondary-text-color); font-size:13px; margin-bottom:10px; }
-.charro-veh-pop .where ha-icon{ --mdc-icon-size:16px; }
+.charro-veh-pop .where{ display:flex; align-items:center; justify-content:center; gap:6px; margin:0 auto 8px;
+  color:var(--secondary-text-color); font:inherit; font-size:13px; background:none; border:none; cursor:pointer;
+  max-width:100%; }
+.charro-veh-pop .where span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.charro-veh-pop .where ha-icon{ --mdc-icon-size:16px; flex:none; }
+.charro-veh-pop .map{ height:220px; border-radius:14px; overflow:hidden; margin:0 0 10px; }
+.charro-veh-pop .map > *{ height:100%; display:block; }
 .charro-veh-pop .grid{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px 8px; margin:8px 0 14px; }
 .charro-veh-pop .st{ display:flex; gap:8px; align-items:center; min-width:0; }
 .charro-veh-pop .st ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
@@ -10038,6 +10107,27 @@ Object.assign(CharroVehicleCard.prototype, {
     this._paintPop();
   },
 
+  /* Home Assistant's own map card, built once and kept across repaints so
+   * the map doesn't reload every time the car reports in. */
+  _mapCard(tracker) {
+    const box = this._mapBox || (this._mapBox = document.createElement("div"));
+    box.className = "map";
+    if (this._mapFor !== tracker) {
+      this._mapFor = tracker;
+      box.innerHTML = "";
+      const cfg = { type: "map", entities: [tracker], default_zoom: 16, hours_to_show: 0, theme_mode: "auto" };
+      if (typeof window !== "undefined" && window.loadCardHelpers) {
+        window.loadCardHelpers().then((helpers) => {
+          const m = helpers.createCardElement(cfg);
+          m.hass = this._hass;
+          box.appendChild(m);
+          this._mapEl = m;
+        }).catch(() => { box.textContent = "The map couldn\u2019t load."; });
+      }
+    } else if (this._mapEl) this._mapEl.hass = this._hass;
+    return box;
+  },
+
   _close() {
     if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
     for (const n of [this._pop, this._back]) if (n) { try { n.remove(); } catch (err) {} }
@@ -10076,11 +10166,15 @@ Object.assign(CharroVehicleCard.prototype, {
 
     const where = vehState(h, e.tracker);
     if (where) {
-      const w = el("div", "where");
+      const w = el("button", "where");
       w.append(icon("mdi:map-marker"), el("span", "",
-        where.state === "not_home" ? "Away from home" : vehWord(where.state)));
+        vehWhere(h, e, c, () => { if (this._pop) this._paintPop(); })),
+        icon(this._mapOpen ? "mdi:chevron-up" : "mdi:map-outline"));
       w.dataset.tip = "Where it is"; w.dataset.tipEnt = e.tracker;
+      w.dataset.tipDo = this._mapOpen ? "Tap: hide the map" : "Tap: show it on a map";
+      w.addEventListener("click", (ev) => { ev.stopPropagation(); this._mapOpen = !this._mapOpen; this._paintPop(); });
       pop.appendChild(w);
+      if (this._mapOpen) pop.appendChild(this._mapCard(e.tracker));
     }
 
     const ch = vehCharge(h, e);
@@ -14356,6 +14450,8 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(f.text("Name", v.name, set("name"), v.device ? devName(v.device) : "Mach-E"));
       row.appendChild(f.text("Picture", v.image, set("image"), "/local/mache.png"));
       row.appendChild(f.text("Colour of the drawn car", v.color, set("color"), "#3fa9f5"));
+      row.appendChild(f.bool("Don\u2019t look up street addresses", !!v.hide_address,
+        (x) => { if (x) v.hide_address = true; else delete v.hide_address; }));
       const x = document.createElement("button");
       x.className = "vdel";
       x.textContent = "Remove car";

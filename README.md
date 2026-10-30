@@ -1418,6 +1418,12 @@ there's something to say: plugged in / charging, unlocked, a door open, a
 window open, the alarm armed, remote start or climate running, and a
 Tesla's sentry, trunk and frunk.
 
+**Where it is** reads Home, the zone it's in, or away from every zone a
+street address. Home Assistant has no reverse geocoding, so the address is
+asked of OpenStreetMap from your browser — that sends it the car's
+position. Each spot is asked once and remembered; **Don't look up street
+addresses** keeps it to "Away". In the pop-up, tap the location for a map.
+
 ```yaml
 type: custom:charro-vehicle-card
 ```
