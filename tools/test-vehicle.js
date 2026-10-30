@@ -125,5 +125,45 @@ console.log("-- the details pop-up --");
   ok(!p._pop, "and closes");
 }
 
+console.log("-- controls --");
+{
+  const calls = [];
+  const hc = mk({ [`button.${V}_hafshort`]: st("unknown"), [`switch.${V}_ignition`]: st("off") });
+  hc.callService = async (...a) => { calls.push([a[0], a[1], a[2], a[3].entity_id]); };
+  const p = card(hc);
+  p._open();
+  const tiles = () => p._pop.querySelector(".ctl").children;
+  const byK = (k) => tiles().find((b) => b.querySelector(".k").textContent === k);
+  eq(tiles().map((b) => b.querySelector(".k").textContent), ["Locked", "Remote start", "Honk & flash"],
+    "lock, remote start and honk, from what the car has");
+  byK("Locked").click();
+  eq(calls.length, 0, "one tap on a locked car only arms the unlock");
+  ok(byK("Locked").className.includes("arm") && /Tap again/.test(byK("Locked").querySelector(".v").textContent),
+    "and says to tap again");
+  byK("Locked").click();
+  eq(calls.pop(), ["lock", "unlock", {}, `lock.${V}_doorlock`], "the second tap unlocks");
+  byK("Honk & flash").click(); eq(calls.length, 0, "honking asks first too");
+  byK("Honk & flash").click(); eq(calls.pop(), ["button", "press", {}, `button.${V}_hafshort`], "then honks");
+  const chips = p._pop.querySelectorAll(".opts")[0].children;
+  eq(chips.map((b) => b.textContent), ["80%", "90%", "95%", "100%"], "the target charge choices");
+  ok(chips[2].className === "sel", "95% picked");
+  chips[1].click();
+  eq(calls.pop(), ["select", "select_option", { option: "90" }, `select.${V}_elvehtargetcharge`], "picking 90% sets it");
+  p._close();
+
+  const tcalls = [];
+  const ts = { "number.t_charge_limit": st("80"), "lock.t_lock": st("unlocked") };
+  const th = { states: ts, entities: { "number.t_charge_limit": { device_id: "t", platform: "teslemetry" },
+    "lock.t_lock": { device_id: "t", platform: "teslemetry" } }, devices: {},
+    callService: async (...a) => { tcalls.push([a[0], a[1], a[2]]); } };
+  const tp = card(th, { device: "t" });
+  tp._open();
+  tp._pop.querySelector(".ctl").children[0].click();
+  eq(tcalls.pop(), ["lock", "lock", {}], "locking takes one tap");
+  tp._pop.querySelectorAll(".opts")[0].children[3].click();
+  eq(tcalls.pop(), ["number", "set_value", { value: 80 }], "a Tesla's limit is a number");
+  tp._close();
+}
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

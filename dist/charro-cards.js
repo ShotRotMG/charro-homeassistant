@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.146.0";
+const VERSION = "5.147.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10028,9 +10028,171 @@ Object.assign(CharroVehicleCard.prototype, {
       pop.appendChild(t);
     }
 
+    this._paintControls(pop);
+
     const last = vehState(h, e.last_refresh);
     const when = last ? Date.parse(last.state) : NaN;
     if (isFinite(when)) pop.appendChild(el("div", "note", `Last heard from ${tipAgo(last.state)}`));
+  },
+});
+
+/* The pop-up's controls. Anything that moves the car, unlocks it or makes
+ * noise asks for a second tap within four seconds - a tap meant for the
+ * pop-up's edge shouldn't open the garage's worth of car to the street. */
+const VEH_CTRL_CSS = `
+.charro-veh-pop .ctl{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
+.charro-veh-pop .tile{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:14px;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:rgba(127,127,127,.08);
+  cursor:pointer; text-align:left; font:inherit; color:inherit; min-width:0; }
+.charro-veh-pop .tile ha-icon{ --mdc-icon-size:22px; flex:none; color:var(--secondary-text-color); }
+.charro-veh-pop .tile .k{ font-size:13.5px; font-weight:600; }
+.charro-veh-pop .tile .v{ font-size:12px; color:var(--secondary-text-color); }
+.charro-veh-pop .tile.on ha-icon{ color:var(--success-color, #43a047); }
+.charro-veh-pop .tile.bad ha-icon{ color:var(--error-color, #e53935); }
+.charro-veh-pop .tile.arm{ border-color:var(--warning-color, #ffa000); background:rgba(255,160,0,.14); }
+.charro-veh-pop .tile.arm .v{ color:var(--warning-color, #ffa000); }
+.charro-veh-pop .opts{ display:flex; flex-wrap:wrap; gap:6px; }
+.charro-veh-pop .opts button{ border:1px solid var(--divider-color, rgba(255,255,255,.12)); border-radius:999px;
+  padding:5px 11px; background:none; color:inherit; font:inherit; font-size:13px; cursor:pointer; }
+.charro-veh-pop .opts button.sel{ background:var(--primary-color); border-color:var(--primary-color); color:#fff; }
+.charro-veh-pop .orow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+.charro-veh-pop .orow > ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
+`;
+const VEH_ARM_MS = 4000;
+const VEH_LIMITS = ["50", "60", "70", "80", "90", "100"];
+
+Object.assign(CharroVehicleCard.prototype, {
+  _svc(domain, service, id, data) {
+    return Promise.resolve(this._hass.callService(domain, service, data || {}, { entity_id: id }))
+      .catch((err) => console.error("charro-vehicle-card:", domain, service, err));
+  },
+
+  /* First tap arms, second does it. The armed tile survives a repaint. */
+  _armed(key, run) {
+    const a = this._arm;
+    if (a && a.key === key && Date.now() - a.t < VEH_ARM_MS) {
+      this._arm = null; clearTimeout(this._armT); run();
+    } else {
+      this._arm = { key, t: Date.now() };
+      clearTimeout(this._armT);
+      this._armT = setTimeout(() => { this._arm = null; if (this._pop) this._paintPop(); }, VEH_ARM_MS);
+    }
+    if (this._pop) this._paintPop();
+  },
+
+  _paintControls(pop) {
+    const h = this._hass, e = this._ents || {};
+    const host = popupHost();
+    if (!host.__charroVehCtlCss) {
+      const s = document.createElement("style");
+      s.textContent = VEH_CTRL_CSS;
+      host.appendChild(s);
+      host.__charroVehCtlCss = true;
+    }
+    const el = (tag, cls, txt) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (txt != null) n.textContent = txt;
+      return n;
+    };
+    const icon = (ic) => { const i = document.createElement("ha-icon"); i.setAttribute("icon", ic); return i; };
+    const armedNow = (key) => this._arm && this._arm.key === key && Date.now() - this._arm.t < VEH_ARM_MS;
+    const grid = el("div", "ctl");
+    const tile = (key, ic, k, v, tone, act, confirm) => {
+      const b = el("button", "tile" + (tone ? " " + tone : "") + (armedNow(key) ? " arm" : ""));
+      const tx = el("div");
+      tx.append(el("div", "k", k), el("div", "v", armedNow(key) ? `Tap again to ${confirm}` : v));
+      b.append(icon(ic), tx);
+      b.dataset.tip = k;
+      b.dataset.tipDo = confirm ? `Tap twice: ${confirm}` : `Tap: ${v.toLowerCase()}`;
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (confirm) this._armed(key, act); else act();
+      });
+      grid.appendChild(b);
+    };
+
+    const lock = vehState(h, e.lock);
+    if (lock) {
+      const locked = lock.state === "locked";
+      tile("lock", locked ? "mdi:lock" : "mdi:lock-open-variant", locked ? "Locked" : "Unlocked",
+        locked ? "Unlock" : "Lock", locked ? "on" : "bad",
+        () => this._svc("lock", locked ? "unlock" : "lock", e.lock), locked ? "unlock" : null);
+    }
+    const rem = vehState(h, e.remote);
+    if (rem) {
+      const on = rem.state === "on";
+      tile("remote", "mdi:car-key", on ? "Running" : "Remote start", on ? "Stop" : "Start", on ? "on" : "",
+        () => this._svc("switch", on ? "turn_off" : "turn_on", e.remote), on ? null : "start the car");
+    }
+    const cl = vehState(h, e.climate);
+    if (cl) {
+      const on = cl.state !== "off";
+      tile("climate", "mdi:fan", on ? "Climate on" : "Climate", on ? "Turn off" : "Turn on", on ? "on" : "",
+        () => this._svc("climate", on ? "turn_off" : "turn_on", e.climate));
+    }
+    const cp = vehState(h, e.charge_pause);
+    if (cp) {
+      const on = cp.state === "on";
+      tile("charge", "mdi:ev-station", entLabel(e.charge_pause, h) || "Charging", on ? "On - tap to turn off" : "Off - tap to turn on",
+        on ? "on" : "", () => this._svc("switch", on ? "turn_off" : "turn_on", e.charge_pause));
+    }
+    const sen = vehState(h, e.sentry);
+    if (sen) {
+      const on = sen.state === "on";
+      tile("sentry", "mdi:shield-car", "Sentry mode", on ? "On" : "Off", on ? "on" : "",
+        () => this._svc("switch", on ? "turn_off" : "turn_on", e.sentry));
+    }
+    for (const [key, ic, label] of [["trunk", "mdi:car-back", "Trunk"], ["frunk", "mdi:car-select", "Frunk"]]) {
+      const s = vehState(h, e[key]);
+      if (!s) continue;
+      const open = s.state === "open";
+      tile(key, ic, label, open ? "Open - close it" : "Closed - open it", open ? "bad" : "",
+        () => this._svc("cover", open ? "close_cover" : "open_cover", e[key]), `${open ? "close" : "open"} the ${label.toLowerCase()}`);
+    }
+    if (e.honk && h.states[e.honk])
+      tile("honk", "mdi:bullhorn", "Honk & flash", "Find the car", "",
+        () => this._svc("button", "press", e.honk), "honk and flash");
+    if (e.refresh && h.states[e.refresh])
+      tile("refresh", "mdi:refresh", "Refresh", "Ask the car for news", "",
+        () => this._svc("button", "press", e.refresh));
+    if (grid.children.length) {
+      pop.appendChild(el("div", "cap", "Controls"));
+      pop.appendChild(grid);
+    }
+
+    /* Choices: the target charge, and the climate temperature. */
+    const choose = (ic, tip, ent, opts, cur, pick) => {
+      const r = el("div", "orow");
+      r.appendChild(icon(ic));
+      const o = el("div", "opts");
+      for (const v of opts) {
+        const b = el("button", String(v) === String(cur) ? "sel" : "", vehWord(v));
+        b.addEventListener("click", (ev) => { ev.stopPropagation(); pick(v); });
+        o.appendChild(b);
+      }
+      r.appendChild(o);
+      r.dataset.tip = tip; r.dataset.tipEnt = ent;
+      pop.appendChild(r);
+    };
+    const tgt = vehState(h, e.target);
+    if (tgt) {
+      const sel = e.target.startsWith("select.");
+      const opts = sel ? (tgt.attributes.options || []) : VEH_LIMITS;
+      const cur = sel ? tgt.state : String(Math.round(parseFloat(tgt.state)));
+      pop.appendChild(el("div", "cap", "Charge to"));
+      choose("mdi:battery-charging-high", "Target charge", e.target, opts, cur,
+        (v) => sel ? this._svc("select", "select_option", e.target, { option: v })
+                   : this._svc("number", "set_value", e.target, { value: Number(v) }));
+      const row = pop.lastChild;
+      for (const b of row.querySelector(".opts").children) b.textContent = /^\d+$/.test(b.textContent) ? b.textContent + "%" : b.textContent;
+    }
+    const ct = vehState(h, e.climate_temp);
+    if (ct && (ct.attributes.options || []).length) {
+      pop.appendChild(el("div", "cap", "Climate temperature"));
+      choose("mdi:thermometer", "Remote start temperature", e.climate_temp, ct.attributes.options, ct.state,
+        (v) => this._svc("select", "select_option", e.climate_temp, { option: v }));
+    }
   },
 });
 

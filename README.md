@@ -1431,6 +1431,13 @@ reading the car has — charge port, charging power and time left, doors
 outside temperature, 12V battery, odometer, remote start — the four tyres
 with a low one in red, and when the car was last heard from.
 
+Under that, **controls** for whatever the car offers: lock / unlock, remote
+start (Ford) or climate (Tesla), charging on/off, sentry, trunk and frunk,
+honk & flash and refresh, then the **target charge** and the remote-start
+**temperature** as tap-to-pick choices. Unlocking, starting, opening and
+honking take a second tap within four seconds. A Tesla's refresh wakes the
+car, which counts against its Fleet API allowance.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —
