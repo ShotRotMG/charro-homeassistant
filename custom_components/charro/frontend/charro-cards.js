@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.155.0";
+const VERSION = "5.156.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10325,6 +10325,22 @@ const VEH_CTRL_CSS = `
 .charro-veh-pop .opts button{ border:1px solid var(--divider-color, rgba(255,255,255,.12)); border-radius:999px;
   padding:5px 11px; background:none; color:inherit; font:inherit; font-size:13px; cursor:pointer; }
 .charro-veh-pop .opts button.sel{ background:var(--primary-color); border-color:var(--primary-color); color:#fff; }
+.charro-veh-pop .vdrop{ margin-top:10px; }
+.charro-veh-pop .vdd{ width:100%; display:flex; align-items:center; gap:10px; cursor:pointer; font:inherit;
+  color:inherit; text-align:left; padding:10px 12px; border-radius:14px;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:rgba(127,127,127,.08); }
+.charro-veh-pop .vdd ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
+.charro-veh-pop .vdd .l{ flex:1; font-size:13.5px; font-weight:600; }
+.charro-veh-pop .vdd .c{ font-size:13.5px; color:var(--secondary-text-color); }
+.charro-veh-pop .vdrop.open .vdd{ border-color:var(--primary-color); }
+.charro-veh-pop .vdl{ margin-top:6px; max-height:220px; overflow:auto; padding:4px; border-radius:12px;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:rgba(127,127,127,.08); }
+.charro-veh-pop .vdi{ width:100%; display:flex; align-items:center; cursor:pointer; font:inherit; font-size:14px;
+  color:inherit; background:none; border:none; border-radius:8px; padding:8px 10px; text-align:left; }
+.charro-veh-pop .vdi span{ flex:1; }
+.charro-veh-pop .vdi ha-icon{ --mdc-icon-size:16px; visibility:hidden; color:var(--primary-color); }
+.charro-veh-pop .vdi.cur ha-icon{ visibility:visible; }
+.charro-veh-pop .vdi:hover{ background:rgba(127,127,127,.18); }
 .charro-veh-pop .orow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
 .charro-veh-pop .orow > ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
 `;
@@ -10348,6 +10364,46 @@ Object.assign(CharroVehicleCard.prototype, {
       this._armT = setTimeout(() => { this._arm = null; if (this._pop) this._paintPop(); }, VEH_ARM_MS);
     }
     if (this._pop) this._paintPop();
+  },
+
+  /* A dropdown of our own (a native one is drawn light on a dark theme):
+   * a button saying the label and the choice, opening a list in place.
+   * Which one is open survives the car reporting in. */
+  _drop(key, ic, label, ent, opts, cur, pick) {
+    const el = (tag, cls, txt) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (txt != null) n.textContent = txt;
+      return n;
+    };
+    const icon = (x) => { const i = document.createElement("ha-icon"); i.setAttribute("icon", x); return i; };
+    const w = el("div", "vdrop" + (this._dropOpen === key ? " open" : ""));
+    const b = el("button", "vdd");
+    const now = (opts.find(([v]) => String(v) === String(cur)) || [cur, String(cur)])[1];
+    b.append(icon(ic), el("span", "l", label), el("span", "c", now), icon("mdi:chevron-down"));
+    b.dataset.tip = label; if (ent) b.dataset.tipEnt = ent;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this._dropOpen = this._dropOpen === key ? null : key;
+      this._paintPop();
+    });
+    w.appendChild(b);
+    if (this._dropOpen === key) {
+      const list = el("div", "vdl");
+      for (const [v, text] of opts) {
+        const o = el("button", "vdi" + (String(v) === String(cur) ? " cur" : ""));
+        o.append(el("span", "", text), icon("mdi:check"));
+        o.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this._dropOpen = null;
+          pick(v);
+          this._paintPop();
+        });
+        list.appendChild(o);
+      }
+      w.appendChild(list);
+    }
+    return w;
   },
 
   _paintControls(pop) {
@@ -10450,12 +10506,11 @@ Object.assign(CharroVehicleCard.prototype, {
       const sel = e.target.startsWith("select.");
       const opts = sel ? (tgt.attributes.options || []) : VEH_LIMITS;
       const cur = sel ? tgt.state : String(Math.round(parseFloat(tgt.state)));
-      pop.appendChild(el("div", "cap", "Charge to"));
-      choose("mdi:battery-charging-high", "Target charge", e.target, opts, cur,
+      const pct = (v) => (/^\d+$/.test(String(v)) ? `${v}%` : vehWord(v));
+      pop.appendChild(this._drop("target", "mdi:battery-charging-high", "Charge to", e.target,
+        opts.map((v) => [v, pct(v)]), cur,
         (v) => sel ? this._svc("select", "select_option", e.target, { option: v })
-                   : this._svc("number", "set_value", e.target, { value: Number(v) }));
-      const row = pop.lastChild;
-      for (const b of row.querySelector(".opts").children) b.textContent = /^\d+$/.test(b.textContent) ? b.textContent + "%" : b.textContent;
+                   : this._svc("number", "set_value", e.target, { value: Number(v) })));
     }
     const ct = vehState(h, e.climate_temp);
     if (ct && (ct.attributes.options || []).length) {
