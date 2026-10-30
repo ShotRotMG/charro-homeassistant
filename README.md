@@ -1441,8 +1441,8 @@ drawn car**. It only redraws when one of the car's own entities changes.
 **Tap it** for the details pop-up: the charge bar with range, then each
 reading the car has — doors (Open, Unlocked or Locked, as one reading),
 windows (Open or Closed), trunk / frunk, alarm or sentry, cabin and
-outside temperature, 12V battery, odometer, remote start — the four tyres
-with a low one in red, and when the car was last heard from.
+outside temperature, 12V battery, odometer, remote start — the four tires
+with a low one in red (in psi, or kPa or bar as set), and when the car was last heard from.
 
 Under that, **controls** for whatever the car offers: lock / unlock, remote
 start (Ford) or climate (Tesla), charging on/off, sentry, trunk and frunk,

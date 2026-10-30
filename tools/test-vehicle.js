@@ -171,8 +171,13 @@ console.log("-- the details pop-up --");
   ok(chipTips[0] === "Charging" && chipTips.some((t) => /^1 open: Tailgate/.test(t)) && chipTips.includes("Alarm armed"),
     "chips for charging, the open door and the armed alarm  got " + JSON.stringify(chipTips));
   eq(T.vehTyres(hp, T.vehEntities({ device: "car1" }, hp)).map((r) => [r[0], r[1], r[2]]),
-    [["Front left", "38 psi", false], ["Front right", "39 psi", false], ["Rear left", "29 psi", true], ["Rear right", "38 psi", false]],
-    "the four tyres, the low one flagged");
+    [["Front left", "38", false], ["Front right", "39", false], ["Rear left", "29", true], ["Rear right", "38", false]],
+    "the four tires, the low one flagged");
+  eq(["279.0 kPa", "269.0 kPa"].map((v) => T.vehPressure(v, "", "psi")), ["40", "39"], "FordPass's kPa reads as psi");
+  eq(T.vehPressure("2.8", "bar", "psi"), "41", "bar too");
+  eq(T.vehPressure("279.0 kPa", "", "kPa"), "279", "and kPa stays kPa when asked");
+  eq(T.vehTireUnit({}, { config: { unit_system: { length: "mi" } } }), "psi", "psi in a house that counts miles");
+  ok(p._pop.querySelectorAll(".cap").some((c) => c.textContent === "Tires (psi)"), "titled Tires (psi)");
   eq(T.vehLeft("2026-10-30T09:00:00Z", Date.parse("2026-10-30T07:40:00Z")), "1 h 20 min left", "time left on the charge");
   p.hass = { ...hp, states: { ...hp.states, [`sensor.${V}_soc`]: { ...st("55"), last_updated: "t2" } } };
   eq(p._pop.querySelector(".socrow").children[0].textContent, "55%", "it stays live while open");

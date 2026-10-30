@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.154.0";
+const VERSION = "5.155.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9529,9 +9529,9 @@ const VEH_LABELS = {
   power: "Charging power", odometer: "Odometer", lock: "Doors (lock)",
   tracker: "Location", alarm: "Alarm", sentry: "Sentry mode", cabin: "Cabin",
   outside: "Outside", doors: "Doors", windows: "Windows", trunk: "Trunk",
-  frunk: "Frunk", charge_port: "Charge port", tires: "Tyres",
-  tire_fl: "Tyre front left", tire_fr: "Tyre front right",
-  tire_rl: "Tyre rear left", tire_rr: "Tyre rear right",
+  frunk: "Frunk", charge_port: "Charge port", tires: "Tires",
+  tire_fl: "Tire front left", tire_fr: "Tire front right",
+  tire_rl: "Tire rear left", tire_rr: "Tire rear right",
   battery12: "12V battery", remote: "Remote start", remote_status: "Remote start status",
   climate: "Climate", charge_pause: "Charging on/off", target: "Target charge",
   climate_temp: "Climate temperature", honk: "Honk & flash", refresh: "Refresh",
@@ -9580,6 +9580,8 @@ const VEH_PROFILES = {
     refresh: ["button", /_wake$/, ["wake"]],
   } },
 };
+const VEH_TIRE_UNITS = [["", "Follow Home Assistant (psi in miles, kPa in kilometres)"],
+  ["psi", "psi"], ["kPa", "kPa"], ["bar", "bar"]];
 const VEH_MAKES = [["", "Automatic (from the device)"],
   ...Object.entries(VEH_PROFILES).map(([k, p]) => [k, p.name])];
 
@@ -9995,6 +9997,8 @@ makeEditor("charro-vehicle-card-editor", [
   { name: "image", selector: { text: {} } },
   { name: "color", selector: { text: {} } },
   { name: "hide_address", selector: { boolean: {} } },
+  { name: "tire_unit", selector: { select: { mode: "dropdown",
+    options: VEH_TIRE_UNITS.map(([value, label]) => ({ value, label })) } } },
   { name: "entities", type: "expandable", flatten: true, title: "Entities (found from the device)",
     schema: VEH_KEYS.map((key) => ({ name: key, selector: { entity: {} } })) },
 ], Object.assign({
@@ -10004,6 +10008,7 @@ makeEditor("charro-vehicle-card-editor", [
   image: "Picture of the car",
   color: "Colour of the drawn car",
   hide_address: "Don't look up street addresses",
+  tire_unit: "Tire pressure in",
 }, VEH_LABELS), {
   device: "Pick the car's device and every entity below is found from it.",
   make: "Automatic tells Ford from Tesla by the device's integration (FordPass; "
@@ -10078,21 +10083,44 @@ function vehLeft(end, now) {
   return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min left` : `${m} min left`;
 }
 
-/* The four tyres, from FordPass's one sensor (attributes per corner) or
+/* A tire pressure in the unit wanted: psi, kPa or bar, read from a number
+ * with or without its unit (FordPass gives "279.0 kPa"). A bare number is
+ * judged by size - a car's tires are 25-50 psi, 170-350 kPa, 1.7-3.5 bar. */
+function vehPressure(v, unit, want) {
+  const n = parseFloat(String(v));
+  if (!isFinite(n)) return null;
+  let u = String(unit || (/[a-z]+\s*$/i.exec(String(v)) || [""])[0]).trim().toLowerCase();
+  if (!/^(psi|kpa|bar)$/.test(u)) u = n > 100 ? "kpa" : n < 10 ? "bar" : "psi";
+  const psi = u === "kpa" ? n / 6.89476 : u === "bar" ? n * 14.5038 : n;
+  const w = String(want || "").toLowerCase();
+  if (w === "kpa") return String(Math.round(psi * 6.89476));
+  if (w === "bar") return (psi / 14.5038).toFixed(1);
+  return String(Math.round(psi));
+}
+function vehTireUnit(cfg, hass) {
+  const w = cfg && cfg.tire_unit;
+  if (w) return w;
+  const us = hass && hass.config && hass.config.unit_system;
+  return us && us.length === "km" ? "kPa" : "psi";
+}
+
+/* The four tires, from FordPass's one sensor (attributes per corner) or
  * from four separate ones. Each: [label, reading, low?]. */
-function vehTyres(hass, e) {
+function vehTyres(hass, e, want) {
   const out = [];
   const corners = [["Front left", "frontLeft", "tire_fl"], ["Front right", "frontRight", "tire_fr"],
     ["Rear left", "rearLeft", "tire_rl"], ["Rear right", "rearRight", "tire_rr"]];
   const one = vehState(hass, e.tires);
+  const u = want || "psi";
   for (const [label, attr, key] of corners) {
     const own = vehState(hass, e[key]);
     if (own) {
-      const u = (own.attributes || {}).unit_of_measurement || "";
-      out.push([label, `${Math.round(parseFloat(own.state) * 10) / 10}${u ? " " + u : ""}`, false]);
+      const v = vehPressure(own.state, (own.attributes || {}).unit_of_measurement, u);
+      if (v != null) out.push([label, v, /low|alert|warn/i.test(String((own.attributes || {}).state || ""))]);
     } else if (one && one.attributes && one.attributes[attr] != null) {
       const a = one.attributes;
-      out.push([label, String(a[attr]), /low|alert|warn/i.test(String(a[attr + "_state"] || ""))]);
+      const v = vehPressure(a[attr], "", u);
+      out.push([label, v == null ? String(a[attr]) : v, /low|alert|warn/i.test(String(a[attr + "_state"] || ""))]);
     }
   }
   return out;
@@ -10248,9 +10276,10 @@ Object.assign(CharroVehicleCard.prototype, {
     if (rs) stat("mdi:car-key", "Remote start", vehWord(rs.state), e.remote_status);
     pop.appendChild(grid);
 
-    const tyres = vehTyres(h, e);
+    const tu = vehTireUnit(c, h);
+    const tyres = vehTyres(h, e, tu);
     if (tyres.length) {
-      pop.appendChild(el("div", "cap", "Tyres"));
+      pop.appendChild(el("div", "cap", `Tires (${tu})`));
       const t = el("div", "tyres");
       for (const [label, v, low] of tyres) {
         const d = el("div", low ? "bad" : "");
@@ -14472,6 +14501,7 @@ class CharroRoomsEditor extends HTMLElement {
       row.appendChild(f.text("Name", v.name, set("name"), v.device ? devName(v.device) : "Mach-E"));
       row.appendChild(f.text("Picture", v.image, set("image"), "/local/mache.png"));
       row.appendChild(f.text("Colour of the drawn car", v.color, set("color"), "#3fa9f5"));
+      row.appendChild(f.sel("Tire pressure in", v.tire_unit || "", VEH_TIRE_UNITS, set("tire_unit")));
       row.appendChild(f.bool("Don\u2019t look up street addresses", !!v.hide_address,
         (x) => { if (x) v.hide_address = true; else delete v.hide_address; }));
       const x = document.createElement("button");
