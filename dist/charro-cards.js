@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.147.0";
+const VERSION = "5.148.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -626,7 +626,7 @@ function lightCard(l, noDim, fans) {
  * if the room actually defines those entities, so no room needs its own
  * layout. `cards` drops raw Lovelace into a named slot for the one-offs. */
 const ROOM_SECTIONS = ["climate", "readings", "media", "music", "lights", "water",
-                       "gates", "cameras", "security"];
+                       "gates", "cameras", "security", "vehicles"];
 
 /* A room's own `sections` list is honoured as written, with two exceptions,
  * both from blocks that have moved. `music` was carved out of `media` in
@@ -660,7 +660,22 @@ function sectionOrder(r) {
     order.splice(at >= 0 ? at + 1 : order.length, 0, "readings");
   }
 
+  /* 5.148: vehicles got a section, last for a room that spells its
+   * sections out - only once it has a car. */
+  if (!order.includes("vehicles") && roomVehicles(r).length) order.push("vehicles");
+
   return order;
+}
+
+/* A room's cars: each an entry for the vehicle card, at least a device. */
+function roomVehicles(r) {
+  return (r && Array.isArray(r.vehicles) ? r.vehicles : [])
+    .filter((v) => v && typeof v === "object" && (v.device || v.soc || v.lock));
+}
+function vehicleCard(v) {
+  const card = { type: "custom:charro-vehicle-card" };
+  for (const [k, x] of Object.entries(v || {})) if (x !== "" && x != null) card[k] = x;
+  return card;
 }
 
 /* Music Assistant players get the richer card. hass.entities carries the
@@ -2276,6 +2291,13 @@ function blockCards(name, r, hass) {
 
   /* One sensor card per reading: the value and a day of it as a line. Two
    * to a row, or the row to itself when there is only one. */
+  /* Each car its own vehicle card, two to a row. */
+  if (name === "vehicles") {
+    const cards = roomVehicles(r).map(vehicleCard);
+    if (cards.length === 1) push(cards[0]);
+    else if (cards.length) push({ type: "grid", columns: 2, square: false, cards });
+  }
+
   if (name === "readings") {
     const cards = readingCards(r);
     if (cards.length === 1) push(cards[0]);
@@ -10457,7 +10479,7 @@ const BLOCK_LABEL = {
   music: "Music (every zone)", player: "Media player",
   water: "Pool & spa", gates: "Gates", cameras: "Cameras",
   security: "Door / motion alert", lights: "All lights",
-  readings: "Readings",
+  readings: "Readings", vehicles: "Vehicles",
 };
 
 /* The core cards worth offering, with a starting config each so picking one
@@ -10761,6 +10783,7 @@ const LayoutUI = {
       gates: () => (r.gates || []).length,
       lights: () => LIGHT_GROUPS.some(([, k]) => (r[k] || []).length),
       readings: () => readingList(r).length,
+      vehicles: () => roomVehicles(r).length,
     };
     const blocks = Object.keys(BLOCK_LABEL)
       .filter((b) => !usedBlocks.has(b))
@@ -11557,7 +11580,7 @@ function itemWhere(it) {
  * fields the form has no row for. */
 const FIELD_WHERE = {
   climate_entity: "Climate", climate_card: "Climate", climate_modes: "Climate",
-  temp_sensor: "Climate", readings: "Readings", scene_skip: "Scenes",
+  temp_sensor: "Climate", readings: "Readings", scene_skip: "Scenes", vehicles: "Vehicles",
   tv_entity: "Media & remotes", projector_entity: "Media & remotes",
   receiver_entity: "Media & remotes",
   media_player: "Music", media_card: "Advanced", music_player: "Music",
@@ -11785,17 +11808,18 @@ const PANEL_USED = {
   cams:  (r) => !!(r.cameras || []).length,
   chips: (r) => !!(r.chips && Object.keys(r.chips).length),
   readings: (r) => !!readingList(r).length,
+  vehicles: (r) => !!roomVehicles(r).length || !!(r.vehicles || []).length,
   scenes: (r) => !!((r.scene_skip || []).length || (r.scenes && Object.keys(r.scenes).length)),
   adv:   (r) => !!(r.sections || r.cards || r.media_card || r.camera_card),
 };
 const PANEL_ADD = { video: "Media & remotes", music: "Music", water: "Pool & water",
   doors: "Door / motion alert", gates: "Gates", cams: "Cameras",
-  chips: "Chips", readings: "Readings", scenes: "Scenes", adv: "Advanced" };
+  chips: "Chips", readings: "Readings", vehicles: "Vehicles", scenes: "Scenes", adv: "Advanced" };
 /* Which expansion-panel flag each one reads, so revealing a panel can open
  * it rather than leaving a shut panel the button appeared to do nothing to. */
 const PANEL_OPEN = { video: "_videoOpen", music: "_zoneOpen", water: "_waterOpen",
   doors: "_doorsOpen", gates: "_gatesOpen", cams: "_camsOpen",
-  chips: "_chipsOpen", readings: "_readOpen", scenes: "_scenesOpen", adv: "_advOpen" };
+  chips: "_chipsOpen", readings: "_readOpen", vehicles: "_vehOpen", scenes: "_scenesOpen", adv: "_advOpen" };
 
 /* Returns how many it actually added, so the editor can say so. */
 function areaApply(r, key, ids) {
@@ -13535,6 +13559,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._gatesBox = document.createElement("div");
     this._camsBox = document.createElement("div");
     this._readBox = document.createElement("div");
+    this._vehBox = document.createElement("div");
     this._scenesBox = document.createElement("div");
 
     const videoHost = this._panel("Media & remotes",
@@ -13558,6 +13583,9 @@ class CharroRoomsEditor extends HTMLElement {
     const readHost = this._panel("Readings",
       "Extra sensors shown as chips \u2014 a closet\u2019s temperature, a humidity",
       "mdi:thermometer", "_readOpen", this._readBox);
+    const vehHost = this._panel("Vehicles",
+      "The cars kept here \u2014 charge, range, doors, and the controls",
+      "mdi:car-electric", "_vehOpen", this._vehBox);
     const scenesHost = this._panel("Scenes",
       "Lights and the rest that no scene should ever touch", "mdi:palette-outline",
       "_scenesOpen", this._scenesBox);
@@ -13642,7 +13670,7 @@ class CharroRoomsEditor extends HTMLElement {
 
     const hosts = [["video", videoHost], ["music", zoneHost], ["water", waterHost],
                    ["doors", doorsHost], ["gates", gatesHost], ["cams", camsHost],
-                   ["readings", readHost], ["scenes", scenesHost], ["chips", chipsHost],
+                   ["readings", readHost], ["vehicles", vehHost], ["scenes", scenesHost], ["chips", chipsHost],
                    ["adv", advanced]];
     const simple = this._simpleOn();
     this._shownPanels = this._shownPanels || {};
@@ -13685,6 +13713,7 @@ class CharroRoomsEditor extends HTMLElement {
     this._renderGates();
     this._renderCams();
     this._renderReadings();
+    this._renderVehicles();
     this._renderScenes();
     this._renderChipsPanel();
     this._lbEnsure();
@@ -14188,6 +14217,62 @@ class CharroRoomsEditor extends HTMLElement {
       + "out of range, set a reading\u2019s Show, or Readings in Chips. Each reading "
       + "is also a card with a day\u2019s graph in the pop-up\u2019s Readings section \u2014 "
       + "in a room with its own layout, drag Readings in from Available.";
+    box.appendChild(note);
+  }
+
+  /* The room's cars. Each is a vehicle card: pick the car's device and the
+   * card finds its entities; the rest is how it looks. */
+  _renderVehicles() {
+    const box = this._vehBox;
+    if (!box) return;
+    box.innerHTML = "";
+    const r = this._room;
+    const redraw = () => { this._renderVehicles(); this._renderPreview(); };
+    const f = this._fields(redraw);
+    const h = this._hass || {};
+    const ents = h.entities || {};
+    const devs = h.devices || {};
+    /* Devices that look like cars: the ones whose entities come from an
+     * integration the vehicle card knows. */
+    const plats = new Set(Object.values(VEH_PROFILES).flatMap((p) => p.platforms));
+    const carDevs = [...new Set(Object.values(ents)
+      .filter((x) => x && x.device_id && plats.has(x.platform)).map((x) => x.device_id))];
+    const devName = (id) => devs[id] ? (devs[id].name_by_user || devs[id].name || id) : id;
+    (r.vehicles || []).forEach((vRaw, i) => {
+      const v = vRaw && typeof vRaw === "object" ? vRaw : {};
+      r.vehicles[i] = v;
+      const set = (k) => (x) => { if (x) v[k] = x; else delete v[k]; };
+      const row = f.rowBox();
+      const opts = [["", carDevs.length ? "\u2014 pick the car \u2014" : "\u2014 no FordPass or Tesla device found \u2014"]]
+        .concat(carDevs.map((id) => [id, devName(id)]));
+      if (v.device && !carDevs.includes(v.device)) opts.push([v.device, devName(v.device)]);
+      row.appendChild(f.sel("Car", v.device || "", opts, set("device"),
+        "Every entity is found from the car's device."));
+      row.appendChild(f.sel("Make", v.make || "", VEH_MAKES, set("make"),
+        "Automatic reads the device's integration."));
+      row.appendChild(f.text("Name", v.name, set("name"), v.device ? devName(v.device) : "Mach-E"));
+      row.appendChild(f.text("Picture", v.image, set("image"), "/local/mache.png"));
+      row.appendChild(f.text("Colour of the drawn car", v.color, set("color"), "#3fa9f5"));
+      const x = document.createElement("button");
+      x.className = "vdel";
+      x.textContent = "Remove car";
+      x.addEventListener("click", () => {
+        r.vehicles.splice(i, 1);
+        if (!r.vehicles.length) delete r.vehicles;
+        redraw();
+      });
+      row.appendChild(x);
+      box.appendChild(row);
+    });
+    box.appendChild(f.add("+ Car", () => {
+      (r.vehicles = r.vehicles || []).push({});
+    }));
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "Each car is a card in the pop-up\u2019s Vehicles section, two to a "
+      + "row, and opens into everything about it. Picture takes a web address \u2014 a "
+      + "transparent PNG in /config/www is /local/name.png. A single car\u2019s entities "
+      + "can be swapped on the vehicle card itself, in a dashboard.";
     box.appendChild(note);
   }
 

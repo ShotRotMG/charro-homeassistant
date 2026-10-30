@@ -30,6 +30,7 @@ const room = {
   alert_sensors: ["binary_sensor.d"],
   cameras: [{ entity: "camera.c" }],
   readings: [{ entity: "sensor.srv", name: "Server" }],
+  vehicles: [{ device: "car1", name: "Mach-E" }],
   scene_skip: ["light.b"],
   gates: [{ name: "West", press: "script.gate_west" }],
   remotes: [{ name: "Apple TV" }],

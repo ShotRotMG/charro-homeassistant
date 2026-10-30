@@ -1438,6 +1438,12 @@ honk & flash and refresh, then the **target charge** and the remote-start
 honking take a second tap within four seconds. A Tesla's refresh wakes the
 car, which counts against its Fleet API allowance.
 
+**In a room:** the room editor has a **Vehicles** panel — **+ Car**, pick the
+car from the FordPass and Tesla devices it finds, and optionally a name,
+picture, colour and make. As many cars as you like; they appear in the
+pop-up's **Vehicles** section, two to a row, and a custom layout can drag
+Vehicles in from Available.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —

@@ -165,5 +165,33 @@ console.log("-- controls --");
   tp._close();
 }
 
+console.log("-- a room's Vehicles section --");
+{
+  const r = { room: "garage_west", vehicles: [{ device: "car1", name: "Mach-E" }, { device: "tes", make: "tesla", image: "" }] };
+  const cards = T.blockCards("vehicles", r, mk());
+  eq(cards.length, 1, "one grid");
+  eq(cards[0].cards, [{ type: "custom:charro-vehicle-card", device: "car1", name: "Mach-E" },
+    { type: "custom:charro-vehicle-card", device: "tes", make: "tesla" }], "a vehicle card per car, blanks left out");
+  eq(T.blockCards("vehicles", { vehicles: [{ device: "car1" }] }, mk())[0].type, "custom:charro-vehicle-card",
+    "one car is a card on its own");
+  ok(T.sectionOrder({ sections: ["lights"], vehicles: [{ device: "car1" }] }).includes("vehicles"),
+    "a room with its own section order still gets its cars");
+  ok(!T.sectionOrder({ sections: ["lights"] }).includes("vehicles"), "and a room without cars doesn't");
+  eq(T.roomVehicles({ vehicles: [{}, { device: "car1" }] }).length, 1, "a car not picked yet draws nothing");
+
+  const ed = Object.create(T.CharroRoomsEditor.prototype);
+  ed._room = { room: "garage_west" }; ed._hass = mk(); ed._vehBox = T.el("div");
+  ed._renderPreview = () => {};
+  ed._renderVehicles();
+  const addBtn = ed._vehBox.querySelectorAll("button").find((b) => /\+ Car/.test(b.textContent));
+  ok(!!addBtn, "the editor offers + Car");
+  addBtn.click();
+  eq(ed._room.vehicles, [{}], "which adds a car to fill in");
+  const sel = ed._vehBox.querySelector("select");
+  ok(sel.children.some((o) => o.value === "car1" && o.textContent === "Mustang Mach-E"), "listing the FordPass car by name");
+  sel.value = "car1"; sel.fire("change");
+  eq(ed._room.vehicles[0].device, "car1", "and picking it sets the device");
+}
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);
