@@ -109,6 +109,9 @@ console.log("-- the details pop-up --");
   const p = card(hp);
   p.shadowRoot.querySelector("ha-card").click();
   ok(!!p._pop, "tapping the card opens the details");
+  ok(!p._pop.classList.contains("charro-pop") && p._pop.classList.contains("charro-veh-pop"),
+    "without the room pop-up's class, whose sheet hides it below the screen");
+  ok(!!T.tipAnchor([p._pop.querySelector(".grid").children[0], p._pop]), "and hover tips still work in it");
   const labels = p._pop.querySelector(".grid").children.map((d) => d.querySelector(".k").textContent);
   for (const k of ["Charge port", "Charging", "Charge time", "Doors", "Alarm", "Cabin", "12V battery", "Odometer"])
     ok(labels.includes(k), `it shows ${k}`);

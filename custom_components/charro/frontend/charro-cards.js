@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.148.0";
+const VERSION = "5.149.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4330,7 +4330,8 @@ function tipAnchor(path) {
     const n = path[i];
     if (!n || n.nodeType !== 1) continue;
     if (TIP_SCOPE.has(n.localName)
-        || (n.classList && n.classList.contains("charro-pop"))) { scope = i; break; }
+        || (n.classList && (n.classList.contains("charro-pop")
+                            || n.classList.contains("charro-tip-scope")))) { scope = i; break; }
   }
   if (scope < 0) return null;
   const ctx = { tile: _tipTile(path.slice(0, scope + 1)) };
@@ -9910,7 +9911,10 @@ Object.assign(CharroVehicleCard.prototype, {
     const back = document.createElement("div");
     back.className = "charro-veh-back";
     const pop = document.createElement("div");
-    pop.className = "charro-veh-pop charro-pop";
+    /* Not "charro-pop": that is the room pop-up's class, and its sheet parks
+     * anything wearing it off the bottom of the screen until it slides in.
+     * charro-tip-scope gives it hover tips without the rest. */
+    pop.classList.add("charro-veh-pop", "charro-tip-scope");
     back.addEventListener("click", () => this._close());
     this._key = (ev) => { if (ev.key === "Escape") this._close(); };
     window.addEventListener("keydown", this._key);
