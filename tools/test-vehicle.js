@@ -246,5 +246,13 @@ console.log("-- a room's Vehicles section --");
   eq(ed._room.vehicles[0].device, "car1", "and picking it sets the device");
 }
 
+console.log("-- fits a phone --");
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../dist/charro-cards.js"), "utf8");
+  const css = src.slice(src.indexOf("const VEH_POP_CSS"), src.indexOf("`;", src.indexOf("const VEH_POP_CSS")));
+  ok(/max-height:calc\(100dvh/.test(css), "sized to what the phone actually shows (dvh), not 100vh");
+  ok(/\.charro-veh-pop \.hd\{[^}]*position:sticky/.test(css), "the header, with close, stays at the top while it scrolls");
+}
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

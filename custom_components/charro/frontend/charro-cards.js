@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.152.0";
+const VERSION = "5.153.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -10014,19 +10014,29 @@ makeEditor("charro-vehicle-card-editor", [
 const VEH_POP_CSS = `
 .charro-veh-back{ position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.5); }
 .charro-veh-pop{ position:fixed; z-index:41; left:50%; top:50%; transform:translate(-50%,-50%);
-  width:min(440px, calc(100vw - 24px)); max-height:calc(100vh - 32px); overflow:auto;
-  box-sizing:border-box; padding:16px; border-radius:20px;
+  width:min(440px, calc(100vw - 24px));
+  ${"" /* 100vh is taller than what a phone shows under its toolbars, which
+         pushed the close button off the top; dvh is what's visible */}
+  max-height:calc(100vh - 32px);
+  max-height:calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow:auto; overscroll-behavior:contain;
+  box-sizing:border-box; padding:0 14px 14px; border-radius:20px;
   background:linear-gradient(var(--card-background-color,#1c1c1c),var(--card-background-color,#1c1c1c)),
     var(--primary-background-color,#111);
   color:var(--primary-text-color); box-shadow:0 12px 40px rgba(0,0,0,.55);
   font-family:var(--paper-font-body1_-_font-family, system-ui, sans-serif); }
-.charro-veh-pop .hd{ display:flex; align-items:center; gap:10px; }
+.charro-veh-pop .hd{ display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:2;
+  padding:12px 0 6px; background:var(--card-background-color, #1c1c1c); }
 .charro-veh-pop .hd .t{ flex:1; font-size:19px; font-weight:700; }
 .charro-veh-pop button.x{ width:36px; height:36px; border-radius:50%; border:none; cursor:pointer; padding:0;
   background:rgba(127,127,127,.16); color:var(--primary-text-color);
   display:flex; align-items:center; justify-content:center; }
-.charro-veh-pop .car{ height:130px; display:flex; align-items:center; justify-content:center; margin:6px 0; }
-.charro-veh-pop .car img, .charro-veh-pop .car svg{ max-height:130px; max-width:100%; object-fit:contain; }
+.charro-veh-pop .car{ height:100px; display:flex; align-items:center; justify-content:center; margin:0 0 4px; }
+.charro-veh-pop .car img, .charro-veh-pop .car svg{ max-height:100px; max-width:100%; object-fit:contain; }
+@media (max-height:700px){
+  .charro-veh-pop .car{ height:72px; }
+  .charro-veh-pop .car img, .charro-veh-pop .car svg{ max-height:72px; }
+}
 .charro-veh-pop .where{ display:flex; align-items:center; justify-content:center; gap:6px; margin:0 auto 8px;
   color:var(--secondary-text-color); font:inherit; font-size:13px; background:none; border:none; cursor:pointer;
   max-width:100%; }
@@ -10034,7 +10044,7 @@ const VEH_POP_CSS = `
 .charro-veh-pop .where ha-icon{ --mdc-icon-size:16px; flex:none; }
 .charro-veh-pop .map{ height:220px; border-radius:14px; overflow:hidden; margin:0 0 10px; }
 .charro-veh-pop .map > *{ height:100%; display:block; }
-.charro-veh-pop .grid{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px 8px; margin:8px 0 14px; }
+.charro-veh-pop .grid{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:9px 8px; margin:10px 0 6px; }
 .charro-veh-pop .st{ display:flex; gap:8px; align-items:center; min-width:0; }
 .charro-veh-pop .st ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
 .charro-veh-pop .st .k{ font-size:11.5px; color:var(--secondary-text-color); }
@@ -10046,7 +10056,7 @@ ${vehBarCss(".charro-veh-pop ")}
 ${vehChipsCss(".charro-veh-pop ")}
 .charro-veh-pop .cnote{ text-align:center; font-size:12.5px; color:var(--secondary-text-color); margin-top:2px; }
 .charro-veh-pop .cap{ font-size:12px; font-weight:600; color:var(--secondary-text-color);
-  text-transform:uppercase; letter-spacing:.06em; margin:16px 0 8px; }
+  text-transform:uppercase; letter-spacing:.06em; margin:12px 0 6px; }
 .charro-veh-pop .tyres{ display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; font-size:14px; }
 .charro-veh-pop .tyres div{ display:flex; justify-content:space-between; }
 .charro-veh-pop .tyres .bad{ color:var(--error-color, #e53935); font-weight:600; }
