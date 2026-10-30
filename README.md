@@ -1406,6 +1406,25 @@ inside an https dashboard. If the card stays blank, the server is refusing
 to be framed (an `X-Frame-Options` or `frame-ancestors` header on the proxy)
 — the open-in-a-tab button still works.
 
+## `charro-vehicle-card`
+
+A car at a glance: its name, miles and where it is, the car itself, plug /
+charging / charging power, a charge bar with the target charge marked (it
+moves while charging), and range.
+
+```yaml
+type: custom:charro-vehicle-card
+```
+
+Pick the car's **device** in the editor and the card finds its entities
+from it. **Make** tells it how: Automatic reads the device's integration —
+**Ford** for FordPass (`<vin>_soc`, `_elveh`, `_elvehplug`, …), **Tesla** for
+Tesla Fleet, Teslemetry or Tessie (by translation key, so a renamed entity
+is still found). Every one can be swapped under **Entities**. **Picture of
+the car** takes a web address (a transparent PNG looks best); blank draws a
+plain car in **Colour of the
+drawn car**. It only redraws when one of the car's own entities changes.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —

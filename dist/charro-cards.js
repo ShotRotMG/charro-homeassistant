@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.144.0";
+const VERSION = "5.145.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9484,6 +9484,321 @@ makeEditor("charro-music-assistant-card-editor", [
   title: "Blank: Music Assistant.",
   height: "Blank: 640px. A number is pixels; 80vh and the like work too.",
   header: "The title bar holds the reload and open-in-a-tab buttons.",
+});
+
+/* ======================================================== VEHICLE CARD == */
+/* A car at a glance - name, miles, the car, plug / charging / power, a
+ * charge bar with the target marked, and range - read from the car's own
+ * device. Pick the device and the card finds the rest by what each entity
+ * is called (FordPass names them <vin>_soc, _elveh, _elvehplug, ...); any
+ * one can be swapped in the editor.
+ *
+ *   type: custom:charro-vehicle-card
+ *   device: <the car's device>
+ */
+/* Where each thing lives, make by make. A slot is found by the entity's
+ * translation key where the integration has one (Tesla's do, and those
+ * survive an entity being renamed), else by how its id ends. FordPass ids
+ * are <vin>_soc, _elveh, _elvehplug, ...; Tesla Fleet, Teslemetry and
+ * Tessie share their naming. Any slot can be set by hand in the editor. */
+const VEH_LABELS = {
+  soc: "Charge", range: "Range", plug: "Plug", charging: "Charging",
+  power: "Charging power", odometer: "Odometer", lock: "Doors (lock)",
+  tracker: "Location", alarm: "Alarm", sentry: "Sentry mode", cabin: "Cabin",
+  outside: "Outside", doors: "Doors", windows: "Windows", trunk: "Trunk",
+  frunk: "Frunk", charge_port: "Charge port", tires: "Tyres",
+  tire_fl: "Tyre front left", tire_fr: "Tyre front right",
+  tire_rl: "Tyre rear left", tire_rr: "Tyre rear right",
+  battery12: "12V battery", remote: "Remote start", remote_status: "Remote start status",
+  climate: "Climate", charge_pause: "Charging on/off", target: "Target charge",
+  climate_temp: "Climate temperature", honk: "Honk & flash", refresh: "Refresh",
+  last_refresh: "Last update",
+};
+const VEH_KEYS = Object.keys(VEH_LABELS);
+const VEH_PROFILES = {
+  ford: { name: "Ford (FordPass)", platforms: ["fordpass"], slots: {
+    soc: ["sensor", /_soc$/], range: ["sensor", /_elveh$/], plug: ["sensor", /_elvehplug$/],
+    charging: ["sensor", /_elvehcharging$/], power: ["sensor", /_elvehchargingpower$/],
+    odometer: ["sensor", /_odometer$/], lock: ["lock", /_doorlock$/],
+    tracker: ["device_tracker", /_tracker$/], alarm: ["sensor", /_alarm$/],
+    cabin: ["sensor", /_cabintemperature$/], outside: ["sensor", /_outsidetemp$/],
+    doors: ["sensor", /_doorstatus$/], windows: ["sensor", /_windowposition$/],
+    tires: ["sensor", /_tirepressure$/], battery12: ["sensor", /_battery$/],
+    remote: ["switch", /_ignition$/], remote_status: ["sensor", /_remotestartstatus$/],
+    charge_pause: ["switch", /_elvehcharge$/], target: ["select", /_elvehtargetcharge$/],
+    climate_temp: ["select", /_rcctemperature$/], honk: ["button", /_hafshort$/],
+    refresh: ["button", /_request_refresh$/], last_refresh: ["sensor", /_lastrefresh$/],
+  } },
+  tesla: { name: "Tesla (Tesla Fleet, Teslemetry or Tessie)",
+    platforms: ["tesla_fleet", "teslemetry", "tessie", "tesla_custom"], slots: {
+    soc: ["sensor", /_battery_level$/, ["charge_state_battery_level", "battery_level"]],
+    range: ["sensor", /(_battery_range|_range|_est_battery_range)$/, ["charge_state_battery_range", "battery_range"]],
+    plug: ["binary_sensor", /_charge_cable$/, ["charge_state_conn_charge_cable", "charge_cable"]],
+    charging: ["sensor", /_charging$/, ["charge_state_charging_state", "charging_state"]],
+    power: ["sensor", /_charger_power$/, ["charge_state_charger_power", "charger_power"]],
+    odometer: ["sensor", /_odometer$/, ["vehicle_state_odometer", "odometer"]],
+    lock: ["lock", /_lock$/, ["vehicle_state_locked", "lock"]],
+    tracker: ["device_tracker", /_location$/, ["location"]],
+    sentry: ["switch", /_sentry_mode$/, ["vehicle_state_sentry_mode", "sentry_mode"]],
+    cabin: ["sensor", /_inside_temperature$/, ["climate_state_inside_temp", "inside_temp"]],
+    outside: ["sensor", /_outside_temperature$/, ["climate_state_outside_temp", "outside_temp"]],
+    windows: ["cover", /_windows$/, ["windows"]],
+    trunk: ["cover", /_trunk$/, ["vehicle_state_rt", "trunk"]],
+    frunk: ["cover", /_frunk$/, ["vehicle_state_ft", "frunk"]],
+    charge_port: ["cover", /_charge_port_door$/, ["charge_state_charge_port_door_open", "charge_port_door"]],
+    tire_fl: ["sensor", /_tire_pressure_front_left$/, ["vehicle_state_tpms_pressure_fl"]],
+    tire_fr: ["sensor", /_tire_pressure_front_right$/, ["vehicle_state_tpms_pressure_fr"]],
+    tire_rl: ["sensor", /_tire_pressure_rear_left$/, ["vehicle_state_tpms_pressure_rl"]],
+    tire_rr: ["sensor", /_tire_pressure_rear_right$/, ["vehicle_state_tpms_pressure_rr"]],
+    climate: ["climate", /_climate$/, ["driver_temp", "climate"]],
+    charge_pause: ["switch", /_charge$/, ["charge_state_user_charge_enable_request", "charge"]],
+    target: ["number", /_charge_limit$/, ["charge_state_charge_limit_soc", "charge_limit"]],
+    honk: ["button", /_honk_horn$/, ["honk"]],
+    refresh: ["button", /_wake$/, ["wake"]],
+  } },
+};
+const VEH_MAKES = [["", "Automatic (from the device)"],
+  ...Object.entries(VEH_PROFILES).map(([k, p]) => [k, p.name])];
+
+/* Which make a device is, from the integration its entities come from. */
+function vehMake(cfg, ents, mine) {
+  if (cfg && VEH_PROFILES[cfg.make]) return cfg.make;
+  for (const [k, p] of Object.entries(VEH_PROFILES))
+    if (mine.some((e) => p.platforms.includes((ents[e] || {}).platform))) return k;
+  for (const [k, p] of Object.entries(VEH_PROFILES))
+    if (mine.some((e) => p.platforms.some((pl) => e.includes("." + pl + "_")))) return k;
+  return "";
+}
+
+/* The car's entities, slot by slot: the editor's choice where there is
+ * one, otherwise the device's entity that fits its make's description. */
+function vehEntities(cfg, hass) {
+  const c = cfg || {};
+  const ents = (hass && hass.entities) || {};
+  let dev = c.device;
+  if (!dev) for (const k of VEH_KEYS) if (c[k] && ents[c[k]]) { dev = ents[c[k]].device_id; break; }
+  const mine = dev ? Object.keys(ents).filter((e) => ents[e].device_id === dev && !ents[e].hidden_by) : [];
+  const make = vehMake(c, ents, mine);
+  const slots = (VEH_PROFILES[make] || {}).slots || {};
+  const out = {};
+  Object.defineProperty(out, "_make", { value: make });
+  for (const key of VEH_KEYS) {
+    if (c[key]) { out[key] = c[key]; continue; }
+    const s = slots[key];
+    if (!s) continue;
+    const [dom, re, tks] = s;
+    const fits = mine.filter((e) => e.startsWith(dom + "."));
+    const hit = (tks && fits.find((e) => tks.includes((ents[e] || {}).translation_key)))
+             || fits.find((e) => re.test(e));
+    if (hit) out[key] = hit;
+  }
+  return out;
+}
+
+const vehNum = (hass, id) => {
+  const st = id && hass.states[id];
+  const n = st ? parseFloat(st.state) : NaN;
+  return isFinite(n) ? n : null;
+};
+const vehState = (hass, id) => {
+  const st = id && hass.states[id];
+  return st && !["unknown", "unavailable"].includes(st.state) ? st : null;
+};
+const vehWord = (s) => String(s || "").replace(/_/g, " ").toLowerCase()
+  .replace(/^\w/, (m) => m.toUpperCase());
+function vehMiles(hass, id) {
+  const st = vehState(hass, id);
+  const n = vehNum(hass, id);
+  if (n == null) return "";
+  const u = (st.attributes || {}).unit_of_measurement || "";
+  return `${Math.round(n).toLocaleString()}${u ? " " + u : ""}`;
+}
+
+/* What the car is doing on the charger, read from whichever of its
+ * entities say so: plugged in or not, charging or not, and how fast. */
+function vehCharge(hass, e) {
+  const plug = vehState(hass, e.plug);
+  const ch = vehState(hass, e.charging);
+  const plugged = !!plug && /connect|plugged|^on$|true/i.test(plug.state) && !/disconnect|unplug/i.test(plug.state);
+  const word = ch ? String(ch.state) : "";
+  const charging = /^charging$|in_progress|^on$/i.test(word) || /charging/i.test(((ch || {}).attributes || {}).chargingStatus || "") && !/complete|stopped|not/i.test(word);
+  const kw = vehNum(hass, e.power);
+  const pu = e.power && hass.states[e.power] ? (hass.states[e.power].attributes || {}).unit_of_measurement || "" : "";
+  const w = kw == null ? null : /^w$/i.test(pu) ? kw : kw * 1000;
+  return { plugged, charging: charging || (w != null && w > 50 && plugged), word, w,
+           end: ch && ch.attributes && ch.attributes.estimatedEndTime };
+}
+const vehWatts = (w) => w == null ? "" : w >= 1000 ? `${(w / 1000).toFixed(1)} kW` : `${Math.round(w)} W`;
+
+/* A plain crossover, drawn here rather than borrowed: the card's own
+ * stand-in until the editor is given a photo of the actual car. */
+function vehSilhouette(col) {
+  const c = col || "#3fa9f5";
+  return `<svg viewBox="0 0 320 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<ellipse cx="160" cy="108" rx="140" ry="8" fill="rgba(0,0,0,.35)"/>
+<path d="M22 84c0-10 4-18 14-21l38-8c12-14 30-25 52-27 30-3 64 0 86 9 14 6 30 18 42 26l30 5c10 2 16 9 16 18v8c0 4-3 7-7 7H29c-4 0-7-3-7-7z" fill="${c}"/>
+<path d="M88 55c10-10 24-18 40-20 22-2 46 0 64 5l-6 18H96z" fill="rgba(10,20,30,.55)"/>
+<path d="M200 41c12 4 26 12 36 20l-44-1z" fill="rgba(10,20,30,.55)"/>
+<path d="M150 37v23" stroke="${c}" stroke-width="5"/>
+<circle cx="80" cy="96" r="17" fill="#15181c"/><circle cx="80" cy="96" r="9" fill="#9aa3ad"/>
+<circle cx="246" cy="96" r="17" fill="#15181c"/><circle cx="246" cy="96" r="9" fill="#9aa3ad"/>
+<path d="M290 68l14 3" stroke="#ff5252" stroke-width="4" stroke-linecap="round"/>
+<path d="M30 70l16-3" stroke="#e6f4ff" stroke-width="4" stroke-linecap="round"/></svg>`;
+}
+
+const VEH_CSS = `
+:host{ display:block; }
+ha-card{ padding:12px 14px 12px; text-align:center; }
+.nm{ font-size:17px; font-weight:700; }
+.sub{ display:flex; justify-content:center; gap:14px; margin-top:2px; font-size:12.5px;
+  color:var(--secondary-text-color); }
+.sub span{ display:inline-flex; align-items:center; gap:4px; }
+.sub ha-icon{ --mdc-icon-size:15px; }
+.car{ height:96px; margin:6px auto 4px; display:flex; align-items:center; justify-content:center; }
+.car img, .car svg{ max-height:96px; max-width:100%; object-fit:contain; }
+.chips{ display:flex; justify-content:center; gap:18px; margin:2px 0 8px; font-size:12.5px; }
+.chip{ display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--secondary-text-color); }
+.chip ha-icon{ --mdc-icon-size:20px; }
+.chip.on{ color:var(--success-color, #4caf50); }
+.bar{ position:relative; height:12px; border-radius:6px; background:rgba(127,127,127,.28); overflow:hidden; }
+.fill{ height:100%; border-radius:6px; background:var(--veh-col, #4caf50); transition:width .4s; }
+.fill.go{ background-image:repeating-linear-gradient(-45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px);
+  background-size:22px 22px; animation:veh-go 1s linear infinite; }
+@keyframes veh-go{ to{ background-position:22px 0; } }
+.tgt{ position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.85); }
+.foot{ display:flex; justify-content:space-between; margin-top:5px; font-size:13.5px; font-weight:700; }
+`;
+
+function vehBarCol(soc) {
+  return soc == null ? "rgba(127,127,127,.5)" : soc < 20 ? "#e53935" : soc < 40 ? "#fb8c00" : "#43a047";
+}
+
+class CharroVehicleCard extends HTMLElement {
+  static getConfigElement() { return document.createElement("charro-vehicle-card-editor"); }
+  static getStubConfig() { return { type: "custom:charro-vehicle-card" }; }
+  setConfig(config) { this._config = config || {}; this._sig = null; if (this._hass) this._render(); }
+  set hass(h) { this._hass = h; tipBoot(h); this._render(); }
+  getCardSize() { return 4; }
+  getGridOptions() { return { columns: 6, rows: "auto", min_columns: 4 }; }
+
+  /* Redrawn only when one of the car's own entities changed - not on every
+   * light switched somewhere else in the house. */
+  _render() {
+    const h = this._hass;
+    if (!h || !this._config) return;
+    const e = this._ents = vehEntities(this._config, h);
+    const sig = JSON.stringify(this._config) + Object.values(e).map((id) => {
+      const st = h.states[id]; return st ? st.last_updated + st.state : "-";
+    }).join("|");
+    if (sig === this._sig) return;
+    this._sig = sig;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = VEH_CSS;
+    const card = document.createElement("ha-card");
+    const el = (tag, cls, txt) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (txt != null) n.textContent = txt;
+      return n;
+    };
+    const icon = (ic) => { const i = document.createElement("ha-icon"); i.setAttribute("icon", ic); return i; };
+    const c = this._config;
+    const devName = c.device && h.devices && h.devices[c.device]
+      ? (h.devices[c.device].name_by_user || h.devices[c.device].name) : "";
+    const name = c.name || devName || "Car";
+    card.appendChild(el("div", "nm", name));
+
+    const sub = el("div", "sub");
+    const odo = vehMiles(h, e.odometer);
+    const where = vehState(h, e.tracker);
+    if (where) {
+      const s = el("span"); s.append(icon("mdi:map-marker"), document.createTextNode(vehWord(where.state === "not_home" ? "Away" : where.state)));
+      s.dataset.tip = "Where it is"; s.dataset.tipEnt = e.tracker;
+      sub.appendChild(s);
+    }
+    if (odo) {
+      const s = el("span"); s.append(icon("mdi:speedometer"), document.createTextNode(odo));
+      s.dataset.tip = "Odometer"; s.dataset.tipEnt = e.odometer;
+      sub.appendChild(s);
+    }
+    card.appendChild(sub);
+
+    const car = el("div", "car");
+    if (c.image) {
+      const img = document.createElement("img");
+      img.src = c.image; img.alt = name;
+      car.appendChild(img);
+    } else car.innerHTML = vehSilhouette(c.color);
+    card.appendChild(car);
+
+    const ch = vehCharge(h, e);
+    const chips = el("div", "chips");
+    const chip = (ic, txt, on, tip, ent) => {
+      const d = el("div", "chip" + (on ? " on" : ""));
+      d.append(icon(ic), el("span", "", txt));
+      d.dataset.tip = tip; if (ent) d.dataset.tipEnt = ent;
+      chips.appendChild(d);
+    };
+    if (e.plug) chip(ch.plugged ? "mdi:power-plug" : "mdi:power-plug-off-outline",
+      ch.plugged ? "Connected" : "Unplugged", ch.plugged, "Charge cable", e.plug);
+    if (e.charging) chip(ch.charging ? "mdi:ev-station" : "mdi:ev-station",
+      ch.charging ? "Charging" : vehWord(ch.word) || "Not charging", ch.charging, "Charging", e.charging);
+    if (e.power && ch.charging) chip("mdi:flash", vehWatts(ch.w), false, "Charging power", e.power);
+    if (chips.children.length) card.appendChild(chips);
+
+    const soc = vehNum(h, e.soc);
+    const tgt = vehNum(h, e.target);
+    const bar = el("div", "bar");
+    bar.style.setProperty("--veh-col", vehBarCol(soc));
+    const fill = el("div", "fill" + (ch.charging ? " go" : ""));
+    fill.style.width = `${Math.max(0, Math.min(100, soc || 0))}%`;
+    bar.appendChild(fill);
+    if (tgt != null && tgt > 0 && tgt <= 100) {
+      const t = el("div", "tgt"); t.style.left = `calc(${tgt}% - 1px)`;
+      bar.appendChild(t);
+      bar.dataset.tip = `Charges to ${tgt}%`; bar.dataset.tipEnt = e.target;
+    }
+    card.appendChild(bar);
+    const foot = el("div", "foot");
+    foot.append(el("span", "", soc == null ? "—" : `${Math.round(soc)}%${ch.charging ? " Charging" : ""}`),
+      el("span", "", e.range && vehMiles(h, e.range) ? `Range: ${vehMiles(h, e.range)}` : ""));
+    card.appendChild(foot);
+
+    card.dataset.tip = name;
+    root.append(style, card);
+    this._card = card;
+  }
+}
+defCard("charro-vehicle-card", CharroVehicleCard, { name: "Charro Vehicle",
+  description: "A car at a glance: charge, range, plug and charging, and its doors and miles.",
+  inRoom: true,
+  seed: { type: "custom:charro-vehicle-card" } });
+
+makeEditor("charro-vehicle-card-editor", [
+  { name: "device", selector: { device: {} } },
+  { name: "make", selector: { select: { mode: "dropdown",
+    options: VEH_MAKES.map(([value, label]) => ({ value, label })) } } },
+  { name: "name", selector: { text: {} } },
+  { name: "image", selector: { text: {} } },
+  { name: "color", selector: { text: {} } },
+  { name: "entities", type: "expandable", flatten: true, title: "Entities (found from the device)",
+    schema: VEH_KEYS.map((key) => ({ name: key, selector: { entity: {} } })) },
+], Object.assign({
+  device: "The car",
+  make: "Make",
+  name: "Name",
+  image: "Picture of the car",
+  color: "Colour of the drawn car",
+}, VEH_LABELS), {
+  device: "Pick the car's device and every entity below is found from it.",
+  make: "Automatic tells Ford from Tesla by the device's integration (FordPass; "
+    + "Tesla Fleet, Teslemetry or Tessie). Set it if a car is read wrong.",
+  name: "Blank: the device's name.",
+  image: "A web address for a photo of the car - a transparent PNG looks best. "
+    + "Blank draws a plain one.",
+  color: "For the drawn car, e.g. #3fa9f5.",
 });
 
 defCard("charro-lights-card", CharroLightsCard, { name: "Charro Lights Card",
