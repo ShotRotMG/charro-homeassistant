@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.150.0";
+const VERSION = "5.151.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9679,10 +9679,7 @@ ha-card{ padding:12px 14px 12px; text-align:center; cursor:pointer; }
 .sub ha-icon{ --mdc-icon-size:15px; }
 .car{ height:96px; margin:6px auto 4px; display:flex; align-items:center; justify-content:center; }
 .car img, .car svg{ max-height:96px; max-width:100%; object-fit:contain; }
-.chips{ display:flex; justify-content:center; gap:18px; margin:2px 0 8px; font-size:12.5px; }
-.chip{ display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--secondary-text-color); }
-.chip ha-icon{ --mdc-icon-size:20px; }
-.chip.on{ color:var(--success-color, #4caf50); }
+${vehChipsCss("")}
 ${vehBarCss("")}
 .foot{ display:flex; justify-content:space-between; gap:8px; margin-top:5px; font-size:13.5px; font-weight:700; }
 .foot .n{ font-weight:400; color:var(--secondary-text-color); }
@@ -9740,6 +9737,93 @@ function vehBarDom(h, e, ch, el, icon) {
   if (e.soc) w.dataset.tipEnt = e.soc;
   return w;
 }
+/* Which doors and windows are open, from FordPass's per-door attributes
+ * (or the state itself when there are none). */
+function vehOpenParts(st) {
+  if (!st) return [];
+  const a = st.attributes || {};
+  const parts = Object.entries(a).filter(([k, v]) => !/friendly|icon|unit|device_class/.test(k)
+    && /open|ajar|vent/i.test(String(v)) && !/clos/i.test(String(v))).map(([k]) => k);
+  if (!parts.length && /open|ajar|vent/i.test(st.state) && !/clos/i.test(st.state)) return [st.state];
+  return parts;
+}
+/* One reading each for the doors and the windows. */
+function vehDoors(h, e) {
+  const open = vehOpenParts(vehState(h, e.doors));
+  const lock = vehState(h, e.lock);
+  if (open.length) return { v: open.length > 1 ? `${open.length} open` : "Open", tone: "bad", icon: "mdi:car-door", n: open.length };
+  if (!lock) return e.doors && vehState(h, e.doors) ? { v: "Closed", tone: "", icon: "mdi:car-door", n: 0 } : null;
+  return lock.state === "locked" ? { v: "Locked", tone: "good", icon: "mdi:lock", n: 0 }
+    : { v: vehWord(lock.state === "unlocked" ? "Unlocked" : lock.state), tone: "bad", icon: "mdi:lock-open-variant", n: 0 };
+}
+function vehWindows(h, e) {
+  const st = vehState(h, e.windows);
+  if (!st) return null;
+  const open = e.windows.startsWith("cover.") ? (st.state === "open" ? ["windows"] : []) : vehOpenParts(st);
+  return open.length ? { v: open.length > 1 ? `${open.length} open` : "Open", tone: "bad", n: open.length }
+                     : { v: "Closed", tone: "", n: 0 };
+}
+
+/* The car's chips, like a room's: each only when there is something to
+ * say - plugged in, unlocked, a door or window open, the alarm armed,
+ * remote start running, and a Tesla's sentry, trunk and frunk. */
+const VEH_COL = { green: "#43a047", red: "#e53935", amber: "#fb8c00", blue: "#1e88e5", grey: "#9e9e9e" };
+function vehChips(h, e) {
+  const out = [];
+  const ch = vehCharge(h, e);
+  if (ch.plugged || ch.charging)
+    out.push({ key: "charge", icon: ch.charging ? "mdi:ev-station" : "mdi:power-plug", col: ch.charging ? VEH_COL.green : VEH_COL.blue,
+      text: ch.charging ? vehWatts(ch.w) : "", tip: ch.charging ? "Charging" : "Plugged in", ent: e.charging || e.plug });
+  const lock = vehState(h, e.lock);
+  if (lock && lock.state !== "locked")
+    out.push({ key: "lock", icon: "mdi:lock-open-variant", col: VEH_COL.red, text: "", tip: vehWord(lock.state), ent: e.lock });
+  const doors = vehOpenParts(vehState(h, e.doors));
+  if (doors.length)
+    out.push({ key: "doors", icon: "mdi:car-door", col: VEH_COL.red, text: doors.length > 1 ? String(doors.length) : "",
+      tip: `${doors.length} open: ${doors.map(vehWord).join(", ")}`, ent: e.doors });
+  const win = vehWindows(h, e);
+  if (win && win.n)
+    out.push({ key: "windows", icon: "mdi:window-open-variant", col: VEH_COL.amber, text: win.n > 1 ? String(win.n) : "",
+      tip: "Window open", ent: e.windows });
+  for (const [key, ic, label] of [["trunk", "mdi:car-back", "Trunk open"], ["frunk", "mdi:car-select", "Frunk open"]]) {
+    const st = vehState(h, e[key]);
+    if (st && st.state === "open") out.push({ key, icon: ic, col: VEH_COL.red, text: "", tip: label, ent: e[key] });
+  }
+  const alarm = vehState(h, e.alarm);
+  if (alarm && /^armed|^set$/i.test(alarm.state) && !/disarm/i.test(alarm.state))
+    out.push({ key: "alarm", icon: "mdi:shield-car", col: VEH_COL.blue, text: "", tip: "Alarm armed", ent: e.alarm });
+  if (/trigger|panic|alarm/i.test((alarm || {}).state || ""))
+    out.push({ key: "alarm", icon: "mdi:alarm-light", col: VEH_COL.red, text: "", tip: vehWord(alarm.state), ent: e.alarm });
+  const sentry = vehState(h, e.sentry);
+  if (sentry && sentry.state === "on")
+    out.push({ key: "sentry", icon: "mdi:cctv", col: VEH_COL.blue, text: "", tip: "Sentry mode on", ent: e.sentry });
+  const rs = vehState(h, e.remote), rss = vehState(h, e.remote_status);
+  if ((rs && rs.state === "on") || (rss && /^active|running|^on$/i.test(rss.state)))
+    out.push({ key: "remote", icon: "mdi:car-key", col: VEH_COL.green, text: "", tip: "Remote start running", ent: e.remote || e.remote_status });
+  const cl = vehState(h, e.climate);
+  if (cl && cl.state !== "off")
+    out.push({ key: "climate", icon: "mdi:fan", col: VEH_COL.green, text: "", tip: "Climate on", ent: e.climate });
+  return out;
+}
+function vehChipsDom(chips, el, icon) {
+  const row = el("div", "vchips");
+  for (const c of chips) {
+    const d = el("div", "vchip");
+    d.style.setProperty("--c", c.col);
+    d.appendChild(icon(c.icon));
+    if (c.text) d.appendChild(el("span", "", c.text));
+    d.dataset.tip = c.tip; if (c.ent) d.dataset.tipEnt = c.ent;
+    row.appendChild(d);
+  }
+  return row;
+}
+function vehChipsCss(p) { return `
+${p}.vchips{ display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin:2px 0 8px; min-height:0; }
+${p}.vchip{ display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:999px;
+  font-size:13px; font-weight:700; color:var(--c);
+  background:color-mix(in srgb, var(--c) 18%, transparent); }
+${p}.vchip ha-icon{ --mdc-icon-size:17px; }`; }
+
 /* What goes after the percentage: how fast and how long, or plugged in. */
 function vehChargeNote(ch) {
   if (ch.charging) return [vehWatts(ch.w), vehLeft(ch.end)].filter(Boolean).join(" \u00b7 ") || "Charging";
@@ -9812,6 +9896,8 @@ class CharroVehicleCard extends HTMLElement {
 
     const ch = vehCharge(h, e);
     const soc = vehNum(h, e.soc);
+    const vc = vehChips(h, e);
+    if (vc.length) card.appendChild(vehChipsDom(vc, el, icon));
     card.appendChild(vehBarDom(h, e, ch, el, icon));
     const foot = el("div", "foot");
     const left = el("span", "", soc == null ? "\u2014" : `${Math.round(soc)}%`);
@@ -9888,6 +9974,7 @@ const VEH_POP_CSS = `
 .charro-veh-pop .st.good ha-icon{ color:var(--success-color, #43a047); }
 .charro-veh-pop .socrow{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:14px; }
 ${vehBarCss(".charro-veh-pop ")}
+${vehChipsCss(".charro-veh-pop ")}
 .charro-veh-pop .cnote{ text-align:center; font-size:12.5px; color:var(--secondary-text-color); margin-top:2px; }
 .charro-veh-pop .cap{ font-size:12px; font-weight:600; color:var(--secondary-text-color);
   text-transform:uppercase; letter-spacing:.06em; margin:16px 0 8px; }
@@ -9998,6 +10085,8 @@ Object.assign(CharroVehicleCard.prototype, {
 
     const ch = vehCharge(h, e);
     const soc = vehNum(h, e.soc), tgt = vehNum(h, e.target);
+    const vc = vehChips(h, e);
+    if (vc.length) pop.appendChild(vehChipsDom(vc, el, icon));
     const row = el("div", "socrow");
     row.appendChild(el("span", "", soc == null ? "\u2014" : `${Math.round(soc)}%`));
     const bw = vehBarDom(h, e, ch, el, icon);
@@ -10027,19 +10116,11 @@ Object.assign(CharroVehicleCard.prototype, {
       return isFinite(n) && u ? `${Math.round(n * 10) / 10} ${u}` : vehWord(st.state);
     };
     /* plugged in / charging / how long are on the charge bar now */
-    const lock = vehState(h, e.lock);
-    if (lock) stat(lock.state === "locked" ? "mdi:lock" : "mdi:lock-open-variant", "Doors",
-      lock.state === "locked" ? "Locked" : vehWord(lock.state), e.lock, lock.state === "locked" ? "good" : "bad");
-    const doors = vehState(h, e.doors);
-    if (doors) {
-      const open = Object.entries(doors.attributes || {})
-        .filter(([k, v]) => !/friendly|icon/.test(k) && /open|ajar/i.test(String(v))).map(([k]) => k);
-      stat("mdi:car-door", "Doors", open.length ? `${open.length} open` : vehWord(doors.state), e.doors,
-        open.length || /open|ajar/i.test(doors.state) ? "bad" : "");
-    }
-    const win = vehState(h, e.windows);
-    if (win) stat("mdi:car-windshield-outline", "Windows", vehWord(win.state), e.windows,
-      /open|vent/i.test(win.state) ? "bad" : "");
+    /* Doors: open beats unlocked beats locked - one reading, not two. */
+    const dr = vehDoors(h, e);
+    if (dr) stat(dr.icon, "Doors", dr.v, dr.n ? e.doors : (e.lock || e.doors), dr.tone);
+    const wn = vehWindows(h, e);
+    if (wn) stat(wn.n ? "mdi:window-open-variant" : "mdi:window-closed-variant", "Windows", wn.v, e.windows, wn.tone);
     for (const [key, ic, label] of [["trunk", "mdi:car-back", "Trunk"], ["frunk", "mdi:car-select", "Frunk"],
       ["charge_port", "mdi:ev-plug-type2", "Charge port door"]]) {
       const s = vehState(h, e[key]);

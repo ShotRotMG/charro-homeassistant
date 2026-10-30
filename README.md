@@ -1413,6 +1413,11 @@ charge bar with the target charge marked. A plug on the bar means plugged
 in; a bolt means charging, with the stretch up to the target loading and
 the power and time left beside the percentage. Range on the right.
 
+**Chips**, on the card and in its pop-up, like a room's — each only when
+there's something to say: plugged in / charging, unlocked, a door open, a
+window open, the alarm armed, remote start or climate running, and a
+Tesla's sentry, trunk and frunk.
+
 ```yaml
 type: custom:charro-vehicle-card
 ```
@@ -1427,8 +1432,8 @@ plain car in **Colour of the
 drawn car**. It only redraws when one of the car's own entities changes.
 
 **Tap it** for the details pop-up: the charge bar with range, then each
-reading the car has — charge port, charging power and time left, doors
-(and how many are open), windows, trunk / frunk, alarm or sentry, cabin and
+reading the car has — doors (Open, Unlocked or Locked, as one reading),
+windows (Open or Closed), trunk / frunk, alarm or sentry, cabin and
 outside temperature, 12V battery, odometer, remote start — the four tyres
 with a low one in red, and when the car was last heard from.
 

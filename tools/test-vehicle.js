@@ -111,6 +111,22 @@ const pic = card(h, { device: "car1", image: "/local/mache.png", name: "Mach-E" 
 eq(pic.shadowRoot.querySelector("img").src, "/local/mache.png", "a picture when one is given");
 eq(pic.shadowRoot.querySelector(".nm").textContent, "Mach-E", "and its own name");
 
+console.log("-- chips --");
+{
+  const keys = (over) => T.vehChips(mk(over), T.vehEntities({ device: "car1" }, mk(over))).map((c) => c.key);
+  eq(keys({ [`sensor.${V}_elvehplug`]: st("DISCONNECTED"), [`sensor.${V}_elvehcharging`]: st("NOT_READY"),
+    [`sensor.${V}_elvehchargingpower`]: st("0", { unit_of_measurement: "kW" }) }), [], "unplugged and locked: no chips");
+  eq(keys({ [`lock.${V}_doorlock`]: st("unlocked"), [`sensor.${V}_windowposition`]: st("Open", { driver: "OPEN", passenger: "CLOSED" }),
+    [`sensor.${V}_alarm`]: st("ARMED"), [`sensor.${V}_remotestartstatus`]: st("Active") }),
+    ["charge", "lock", "windows", "alarm", "remote"], "charging, unlocked, a window, the alarm and remote start");
+  eq(keys({ [`sensor.${V}_alarm`]: st("DISARMED") }), ["charge"], "a disarmed alarm is no chip");
+  const d = T.vehDoors(mk({ [`lock.${V}_doorlock`]: st("unlocked") }), T.vehEntities({ device: "car1" }, mk()));
+  eq(d.v, "Unlocked", "shut but unlocked reads Unlocked");
+  eq(T.vehWindows(mk({ [`sensor.${V}_windowposition`]: st("Closed", { driver: "FULLY_CLOSED" }) }),
+    T.vehEntities({ device: "car1" }, mk({ [`sensor.${V}_windowposition`]: st("Closed") }))).v, "Closed", "windows: closed");
+  ok(!!card(mk()).shadowRoot.querySelector(".vchips"), "the chips are on the small card too");
+}
+
 console.log("-- the details pop-up --");
 {
   const hp = mk({
@@ -131,7 +147,10 @@ console.log("-- the details pop-up --");
     ok(labels.includes(k), `it shows ${k}`);
   const doorRow = p._pop.querySelector(".grid").children.filter((d) => d.querySelector(".k").textContent === "Doors")
     .map((d) => d.querySelector(".v").textContent);
-  ok(doorRow.includes("1 open"), "the open tailgate counts as a door open  got " + doorRow);
+  eq(doorRow, ["Open"], "one Doors reading, and the open tailgate beats Locked");
+  const chipTips = p._pop.querySelector(".vchips").children.map((c) => c.dataset.tip);
+  ok(chipTips[0] === "Charging" && chipTips.some((t) => /^1 open: Tailgate/.test(t)) && chipTips.includes("Alarm armed"),
+    "chips for charging, the open door and the armed alarm  got " + JSON.stringify(chipTips));
   eq(T.vehTyres(hp, T.vehEntities({ device: "car1" }, hp)).map((r) => [r[0], r[1], r[2]]),
     [["Front left", "38 psi", false], ["Front right", "39 psi", false], ["Rear left", "29 psi", true], ["Rear right", "38 psi", false]],
     "the four tyres, the low one flagged");
