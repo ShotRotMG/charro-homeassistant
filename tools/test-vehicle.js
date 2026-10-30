@@ -81,12 +81,26 @@ const card = (hh, cfg) => {
 const c = card(h);
 const sr = c.shadowRoot;
 eq(sr.querySelector(".nm").textContent, "Mustang Mach-E", "named after the device");
-eq(sr.querySelector(".chips").children.map((d) => d.querySelector("span").textContent),
-  ["Connected", "Charging", "6.4 kW"], "plug, charging and power");
+ok(!sr.querySelector(".chips"), "no Connected / Charging words: the bar says it");
 eq(sr.querySelector(".fill").style.width, "40%", "the bar at 40%");
-ok(sr.querySelector(".fill").className.includes("go"), "moving while it charges");
+const ld = sr.querySelector(".load");
+ok(!!ld && ld.style.left === "40%" && ld.style.width === "55%", "the stretch up to 95% loads while it charges");
+eq(sr.querySelector(".badge").querySelector("ha-icon").getAttribute("icon"), "mdi:lightning-bolt", "with a bolt on the bar");
 eq(sr.querySelector(".tgt").style.left, "calc(95% - 1px)", "the target marked at 95%");
-eq(sr.querySelector(".foot").children.map((s) => s.textContent), ["40% Charging", "Range: 118 mi"], "charge and range under it");
+const foot = sr.querySelector(".foot").children;
+ok(/^40% · 6\.4 kW/.test(foot[0].textContent), "40%, then how fast  got " + foot[0].textContent);
+eq(foot[1].textContent, "Range: 118 mi", "range on the right");
+{
+  const hp = mk({ [`sensor.${V}_elvehcharging`]: st("COMPLETED"), [`sensor.${V}_elvehchargingpower`]: st("0", { unit_of_measurement: "kW" }) });
+  const pc = card(hp).shadowRoot;
+  ok(!pc.querySelector(".load"), "plugged in but done: nothing loading");
+  eq(pc.querySelector(".badge").querySelector("ha-icon").getAttribute("icon"), "mdi:power-plug", "a plug on the bar");
+  ok(/Plugged in/.test(pc.querySelector(".foot").children[0].textContent), "and it says plugged in");
+  const hu = mk({ [`sensor.${V}_elvehplug`]: st("DISCONNECTED"), [`sensor.${V}_elvehcharging`]: st("NOT_READY"),
+    [`sensor.${V}_elvehchargingpower`]: st("0", { unit_of_measurement: "kW" }) });
+  const uc = card(hu).shadowRoot;
+  ok(!uc.querySelector(".badge") && !uc.querySelector(".load"), "unplugged: just the bar");
+}
 ok(!!sr.querySelector("svg") || /svg/.test(sr.querySelector(".car").innerHTML), "a drawn car until a picture is given");
 const before = sr.querySelector("ha-card");
 c.hass = { ...h, states: { ...h.states, "light.kitchen": st("on") } };
@@ -113,7 +127,7 @@ console.log("-- the details pop-up --");
     "without the room pop-up's class, whose sheet hides it below the screen");
   ok(!!T.tipAnchor([p._pop.querySelector(".grid").children[0], p._pop]), "and hover tips still work in it");
   const labels = p._pop.querySelector(".grid").children.map((d) => d.querySelector(".k").textContent);
-  for (const k of ["Charge port", "Charging", "Charge time", "Doors", "Alarm", "Cabin", "12V battery", "Odometer"])
+  for (const k of ["Doors", "Alarm", "Cabin", "12V battery", "Odometer"])
     ok(labels.includes(k), `it shows ${k}`);
   const doorRow = p._pop.querySelector(".grid").children.filter((d) => d.querySelector(".k").textContent === "Doors")
     .map((d) => d.querySelector(".v").textContent);

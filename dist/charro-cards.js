@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.149.0";
+const VERSION = "5.150.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9683,14 +9683,68 @@ ha-card{ padding:12px 14px 12px; text-align:center; cursor:pointer; }
 .chip{ display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--secondary-text-color); }
 .chip ha-icon{ --mdc-icon-size:20px; }
 .chip.on{ color:var(--success-color, #4caf50); }
-.bar{ position:relative; height:12px; border-radius:6px; background:rgba(127,127,127,.28); overflow:hidden; }
-.fill{ height:100%; border-radius:6px; background:var(--veh-col, #4caf50); transition:width .4s; }
-.fill.go{ background-image:repeating-linear-gradient(-45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px);
-  background-size:22px 22px; animation:veh-go 1s linear infinite; }
-@keyframes veh-go{ to{ background-position:22px 0; } }
-.tgt{ position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.85); }
-.foot{ display:flex; justify-content:space-between; margin-top:5px; font-size:13.5px; font-weight:700; }
+${vehBarCss("")}
+.foot{ display:flex; justify-content:space-between; gap:8px; margin-top:5px; font-size:13.5px; font-weight:700; }
+.foot .n{ font-weight:400; color:var(--secondary-text-color); }
 `;
+
+/* The charge bar, for the card and the pop-up alike. The fill is the
+ * charge; while charging, the stretch up to the target "loads" in stripes;
+ * a badge on the fill's edge says plugged in (a plug) or charging (a bolt). */
+function vehBarCss(p) {
+  return `
+${p}.barw{ position:relative; margin:4px 0; }
+${p}.bar{ position:relative; height:12px; border-radius:6px; background:rgba(127,127,127,.28); overflow:hidden; }
+${p}.fill{ position:absolute; left:0; top:0; bottom:0; border-radius:6px; background:var(--veh-col, #43a047); transition:width .4s; }
+${p}.load{ position:absolute; top:0; bottom:0; opacity:.45; background-color:var(--veh-col, #43a047);
+  background-image:repeating-linear-gradient(-45deg, rgba(255,255,255,.35) 0 6px, transparent 6px 12px);
+  background-size:17px 17px; animation:veh-go .9s linear infinite; }
+@keyframes veh-go{ to{ background-position:17px 0; } }
+${p}.tgt{ position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.85); }
+${p}.badge{ position:absolute; top:50%; width:20px; height:20px; margin-left:-10px; transform:translateY(-50%);
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  background:var(--card-background-color, #1c1c1c); box-shadow:0 0 0 2px var(--veh-col, #43a047); }
+${p}.badge ha-icon{ --mdc-icon-size:13px; color:var(--veh-col, #43a047); }
+${p}.badge.plug{ box-shadow:0 0 0 2px rgba(160,160,160,.8); }
+${p}.badge.plug ha-icon{ color:var(--secondary-text-color); }`;
+}
+function vehBarDom(h, e, ch, el, icon) {
+  const soc = vehNum(h, e.soc), tgt = vehNum(h, e.target);
+  const pct = Math.max(0, Math.min(100, soc || 0));
+  const w = el("div", "barw");
+  w.style.setProperty("--veh-col", vehBarCol(soc));
+  const bar = el("div", "bar");
+  const fill = el("div", "fill");
+  fill.style.width = `${pct}%`;
+  bar.appendChild(fill);
+  if (ch.charging) {
+    const to = tgt != null && tgt > pct ? tgt : 100;
+    const ld = el("div", "load");
+    ld.style.left = `${pct}%`; ld.style.width = `${Math.max(0, to - pct)}%`;
+    bar.appendChild(ld);
+  }
+  if (tgt != null && tgt > 0 && tgt <= 100) {
+    const t = el("div", "tgt"); t.style.left = `calc(${tgt}% - 1px)`;
+    bar.appendChild(t);
+  }
+  w.appendChild(bar);
+  if (ch.charging || ch.plugged) {
+    const b = el("div", "badge" + (ch.charging ? "" : " plug"));
+    b.style.left = `${Math.max(3, Math.min(97, pct))}%`;
+    b.appendChild(icon(ch.charging ? "mdi:lightning-bolt" : "mdi:power-plug"));
+    b.dataset.tip = ch.charging ? `Charging${ch.w ? " at " + vehWatts(ch.w) : ""}` : "Plugged in, not charging";
+    if (e.charging || e.plug) b.dataset.tipEnt = ch.charging ? (e.charging || e.plug) : (e.plug || e.charging);
+    w.appendChild(b);
+  }
+  w.dataset.tip = tgt != null ? `${Math.round(pct)}%, charging to ${tgt}%` : `${Math.round(pct)}%`;
+  if (e.soc) w.dataset.tipEnt = e.soc;
+  return w;
+}
+/* What goes after the percentage: how fast and how long, or plugged in. */
+function vehChargeNote(ch) {
+  if (ch.charging) return [vehWatts(ch.w), vehLeft(ch.end)].filter(Boolean).join(" \u00b7 ") || "Charging";
+  return ch.plugged ? "Plugged in" : "";
+}
 
 function vehBarCol(soc) {
   return soc == null ? "rgba(127,127,127,.5)" : soc < 20 ? "#e53935" : soc < 40 ? "#fb8c00" : "#43a047";
@@ -9757,35 +9811,13 @@ class CharroVehicleCard extends HTMLElement {
     card.appendChild(car);
 
     const ch = vehCharge(h, e);
-    const chips = el("div", "chips");
-    const chip = (ic, txt, on, tip, ent) => {
-      const d = el("div", "chip" + (on ? " on" : ""));
-      d.append(icon(ic), el("span", "", txt));
-      d.dataset.tip = tip; if (ent) d.dataset.tipEnt = ent;
-      chips.appendChild(d);
-    };
-    if (e.plug) chip(ch.plugged ? "mdi:power-plug" : "mdi:power-plug-off-outline",
-      ch.plugged ? "Connected" : "Unplugged", ch.plugged, "Charge cable", e.plug);
-    if (e.charging) chip(ch.charging ? "mdi:ev-station" : "mdi:ev-station",
-      ch.charging ? "Charging" : vehWord(ch.word) || "Not charging", ch.charging, "Charging", e.charging);
-    if (e.power && ch.charging) chip("mdi:flash", vehWatts(ch.w), false, "Charging power", e.power);
-    if (chips.children.length) card.appendChild(chips);
-
     const soc = vehNum(h, e.soc);
-    const tgt = vehNum(h, e.target);
-    const bar = el("div", "bar");
-    bar.style.setProperty("--veh-col", vehBarCol(soc));
-    const fill = el("div", "fill" + (ch.charging ? " go" : ""));
-    fill.style.width = `${Math.max(0, Math.min(100, soc || 0))}%`;
-    bar.appendChild(fill);
-    if (tgt != null && tgt > 0 && tgt <= 100) {
-      const t = el("div", "tgt"); t.style.left = `calc(${tgt}% - 1px)`;
-      bar.appendChild(t);
-      bar.dataset.tip = `Charges to ${tgt}%`; bar.dataset.tipEnt = e.target;
-    }
-    card.appendChild(bar);
+    card.appendChild(vehBarDom(h, e, ch, el, icon));
     const foot = el("div", "foot");
-    foot.append(el("span", "", soc == null ? "—" : `${Math.round(soc)}%${ch.charging ? " Charging" : ""}`),
+    const left = el("span", "", soc == null ? "\u2014" : `${Math.round(soc)}%`);
+    const note = vehChargeNote(ch);
+    if (note) left.appendChild(el("span", "n", ` \u00b7 ${note}`));
+    foot.append(left,
       el("span", "", e.range && vehMiles(h, e.range) ? `Range: ${vehMiles(h, e.range)}` : ""));
     card.appendChild(foot);
 
@@ -9855,12 +9887,8 @@ const VEH_POP_CSS = `
 .charro-veh-pop .st.bad ha-icon, .charro-veh-pop .st.bad .v{ color:var(--error-color, #e53935); }
 .charro-veh-pop .st.good ha-icon{ color:var(--success-color, #43a047); }
 .charro-veh-pop .socrow{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:14px; }
-.charro-veh-pop .bar{ flex:1; position:relative; height:12px; border-radius:6px; background:rgba(127,127,127,.28); overflow:hidden; }
-.charro-veh-pop .fill{ height:100%; border-radius:6px; background:var(--veh-col,#43a047); }
-.charro-veh-pop .fill.go{ background-image:repeating-linear-gradient(-45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px);
-  background-size:22px 22px; animation:veh-go 1s linear infinite; }
-@keyframes veh-go{ to{ background-position:22px 0; } }
-.charro-veh-pop .tgt{ position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.85); }
+${vehBarCss(".charro-veh-pop ")}
+.charro-veh-pop .cnote{ text-align:center; font-size:12.5px; color:var(--secondary-text-color); margin-top:2px; }
 .charro-veh-pop .cap{ font-size:12px; font-weight:600; color:var(--secondary-text-color);
   text-transform:uppercase; letter-spacing:.06em; margin:16px 0 8px; }
 .charro-veh-pop .tyres{ display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; font-size:14px; }
@@ -9971,19 +9999,14 @@ Object.assign(CharroVehicleCard.prototype, {
     const ch = vehCharge(h, e);
     const soc = vehNum(h, e.soc), tgt = vehNum(h, e.target);
     const row = el("div", "socrow");
-    row.appendChild(el("span", "", soc == null ? "—" : `${Math.round(soc)}%`));
-    const bar = el("div", "bar");
-    bar.style.setProperty("--veh-col", vehBarCol(soc));
-    const fill = el("div", "fill" + (ch.charging ? " go" : ""));
-    fill.style.width = `${Math.max(0, Math.min(100, soc || 0))}%`;
-    bar.appendChild(fill);
-    if (tgt != null && tgt > 0 && tgt <= 100) {
-      const t = el("div", "tgt"); t.style.left = `calc(${tgt}% - 1px)`; bar.appendChild(t);
-    }
-    row.appendChild(bar);
+    row.appendChild(el("span", "", soc == null ? "\u2014" : `${Math.round(soc)}%`));
+    const bw = vehBarDom(h, e, ch, el, icon);
+    bw.style.flex = "1";
+    row.appendChild(bw);
     row.appendChild(el("span", "", vehMiles(h, e.range)));
-    row.dataset.tip = tgt != null ? `Charges to ${tgt}%` : "Charge"; row.dataset.tipEnt = e.soc;
     pop.appendChild(row);
+    const cn = vehChargeNote(ch);
+    if (cn) pop.appendChild(el("div", "cnote", cn + (tgt != null ? ` \u00b7 to ${tgt}%` : "")));
 
     /* The readings, each only when the car has it. */
     const grid = el("div", "grid");
@@ -10003,12 +10026,7 @@ Object.assign(CharroVehicleCard.prototype, {
       const n = parseFloat(st.state);
       return isFinite(n) && u ? `${Math.round(n * 10) / 10} ${u}` : vehWord(st.state);
     };
-    if (e.plug) stat(ch.plugged ? "mdi:power-plug" : "mdi:power-plug-off-outline", "Charge port",
-      ch.plugged ? "Connected" : "Unplugged", e.plug, ch.plugged ? "good" : "");
-    if (e.charging) stat("mdi:ev-station", "Charging", ch.charging ? vehWatts(ch.w) || "Charging"
-      : vehWord(ch.word), e.charging, ch.charging ? "good" : "");
-    if (ch.charging) stat("mdi:timer-outline", "Charge time", vehLeft(ch.end) || "—", e.charging);
-    else if (e.charging && /complete/i.test(ch.word)) stat("mdi:timer-check-outline", "Charge time", "Done", e.charging);
+    /* plugged in / charging / how long are on the charge bar now */
     const lock = vehState(h, e.lock);
     if (lock) stat(lock.state === "locked" ? "mdi:lock" : "mdi:lock-open-variant", "Doors",
       lock.state === "locked" ? "Locked" : vehWord(lock.state), e.lock, lock.state === "locked" ? "good" : "bad");

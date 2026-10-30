@@ -1408,9 +1408,10 @@ to be framed (an `X-Frame-Options` or `frame-ancestors` header on the proxy)
 
 ## `charro-vehicle-card`
 
-A car at a glance: its name, miles and where it is, the car itself, plug /
-charging / charging power, a charge bar with the target charge marked (it
-moves while charging), and range.
+A car at a glance: its name, miles and where it is, the car itself, and a
+charge bar with the target charge marked. A plug on the bar means plugged
+in; a bolt means charging, with the stretch up to the target loading and
+the power and time left beside the percentage. Range on the right.
 
 ```yaml
 type: custom:charro-vehicle-card
