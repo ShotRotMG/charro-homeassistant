@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.153.0";
+const VERSION = "5.154.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9685,6 +9685,9 @@ ${vehChipsCss("")}
 ${vehBarCss("")}
 .foot{ display:flex; justify-content:space-between; gap:8px; margin-top:5px; font-size:13.5px; font-weight:700; }
 .foot .n{ font-weight:400; color:var(--secondary-text-color); }
+.odo{ display:flex; align-items:center; justify-content:center; gap:4px; margin-top:4px;
+  font-size:12px; color:var(--secondary-text-color); }
+.odo ha-icon{ --mdc-icon-size:14px; }
 `;
 
 /* The charge bar, for the card and the pop-up alike. The fill is the
@@ -9940,11 +9943,6 @@ class CharroVehicleCard extends HTMLElement {
       s.dataset.tip = "Where it is"; s.dataset.tipEnt = e.tracker;
       sub.appendChild(s);
     }
-    if (odo) {
-      const s = el("span"); s.append(icon("mdi:speedometer"), document.createTextNode(odo));
-      s.dataset.tip = "Odometer"; s.dataset.tipEnt = e.odometer;
-      sub.appendChild(s);
-    }
     card.appendChild(sub);
 
     const car = el("div", "car");
@@ -9966,7 +9964,15 @@ class CharroVehicleCard extends HTMLElement {
     if (note) left.appendChild(el("span", "n", ` \u00b7 ${note}`));
     foot.append(left,
       el("span", "", e.range && vehMiles(h, e.range) ? `Range: ${vehMiles(h, e.range)}` : ""));
+
     card.appendChild(foot);
+    /* the odometer, out of the way under the bar */
+    if (odo) {
+      const o = el("div", "odo");
+      o.append(icon("mdi:counter"), document.createTextNode(odo));
+      o.dataset.tip = "Odometer"; o.dataset.tipEnt = e.odometer;
+      card.appendChild(o);
+    }
 
     card.dataset.tip = name;
     card.dataset.tipDo = "Tap: everything about the car";
@@ -10238,7 +10244,6 @@ Object.assign(CharroVehicleCard.prototype, {
     stat("mdi:thermometer-lines", "Outside", reading(e.outside), e.outside);
     const b12 = vehNum(h, e.battery12);
     stat("mdi:car-battery", "12V battery", reading(e.battery12), e.battery12, b12 != null && b12 < 50 ? "bad" : "");
-    stat("mdi:speedometer", "Odometer", vehMiles(h, e.odometer), e.odometer);
     const rs = vehState(h, e.remote_status);
     if (rs) stat("mdi:car-key", "Remote start", vehWord(rs.state), e.remote_status);
     pop.appendChild(grid);
@@ -10261,7 +10266,14 @@ Object.assign(CharroVehicleCard.prototype, {
 
     const last = vehState(h, e.last_refresh);
     const when = last ? Date.parse(last.state) : NaN;
-    if (isFinite(when)) pop.appendChild(el("div", "note", `Last heard from ${tipAgo(last.state)}`));
+    const odo = vehMiles(h, e.odometer);
+    const bits = [odo ? `${odo} on the clock` : "", isFinite(when) ? `last heard from ${tipAgo(last.state)}` : ""]
+      .filter(Boolean).join(" \u00b7 ");
+    if (bits) {
+      const n = el("div", "note", bits.charAt(0).toUpperCase() + bits.slice(1));
+      if (e.odometer) { n.dataset.tip = "Odometer"; n.dataset.tipEnt = e.odometer; }
+      pop.appendChild(n);
+    }
   },
 });
 

@@ -90,6 +90,8 @@ eq(sr.querySelector(".tgt").style.left, "calc(95% - 1px)", "the target marked at
 const foot = sr.querySelector(".foot").children;
 ok(/^40% · 6\.4 kW/.test(foot[0].textContent), "40%, then how fast  got " + foot[0].textContent);
 eq(foot[1].textContent, "Range: 118 mi", "range on the right");
+eq(sr.querySelector(".odo").textContent, "43,996 mi", "the odometer under the bar");
+ok(!sr.querySelector(".sub").textContent.includes("43,996"), "not up by the name any more");
 {
   const hp = mk({ [`sensor.${V}_elvehcharging`]: st("COMPLETED"), [`sensor.${V}_elvehchargingpower`]: st("0", { unit_of_measurement: "kW" }) });
   const pc = card(hp).shadowRoot;
@@ -160,7 +162,7 @@ console.log("-- the details pop-up --");
     "without the room pop-up's class, whose sheet hides it below the screen");
   ok(!!T.tipAnchor([p._pop.querySelector(".grid").children[0], p._pop]), "and hover tips still work in it");
   const labels = p._pop.querySelector(".grid").children.map((d) => d.querySelector(".k").textContent);
-  for (const k of ["Doors", "Alarm", "Cabin", "12V battery", "Odometer"])
+  for (const k of ["Doors", "Alarm", "Cabin", "12V battery"])
     ok(labels.includes(k), `it shows ${k}`);
   const doorRow = p._pop.querySelector(".grid").children.filter((d) => d.querySelector(".k").textContent === "Doors")
     .map((d) => d.querySelector(".v").textContent);

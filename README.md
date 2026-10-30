@@ -1408,10 +1408,11 @@ to be framed (an `X-Frame-Options` or `frame-ancestors` header on the proxy)
 
 ## `charro-vehicle-card`
 
-A car at a glance: its name, miles and where it is, the car itself, and a
+A car at a glance: its name and where it is, the car itself, and a
 charge bar with the target charge marked. A plug on the bar means plugged
 in; a bolt means charging, with the stretch up to the target loading and
-the power and time left beside the percentage. Range on the right.
+the power and time left beside the percentage. Range on the right. The
+odometer sits under the bar (in the pop-up, at the bottom).
 
 **Chips**, on the card and in its pop-up, like a room's — each only when
 there's something to say: plugged in / charging, unlocked, a door open, a
