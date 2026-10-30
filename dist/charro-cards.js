@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.145.0";
+const VERSION = "5.146.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9648,7 +9648,7 @@ function vehSilhouette(col) {
 
 const VEH_CSS = `
 :host{ display:block; }
-ha-card{ padding:12px 14px 12px; text-align:center; }
+ha-card{ padding:12px 14px 12px; text-align:center; cursor:pointer; }
 .nm{ font-size:17px; font-weight:700; }
 .sub{ display:flex; justify-content:center; gap:14px; margin-top:2px; font-size:12.5px;
   color:var(--secondary-text-color); }
@@ -9767,8 +9767,11 @@ class CharroVehicleCard extends HTMLElement {
     card.appendChild(foot);
 
     card.dataset.tip = name;
+    card.dataset.tipDo = "Tap: everything about the car";
+    card.addEventListener("click", () => this._open());
     root.append(style, card);
     this._card = card;
+    if (this._pop) this._paintPop();
   }
 }
 defCard("charro-vehicle-card", CharroVehicleCard, { name: "Charro Vehicle",
@@ -9799,6 +9802,236 @@ makeEditor("charro-vehicle-card-editor", [
   image: "A web address for a photo of the car - a transparent PNG looks best. "
     + "Blank draws a plain one.",
   color: "For the drawn car, e.g. #3fa9f5.",
+});
+
+/* The details pop-up: everything the car reports, in one place. */
+const VEH_POP_CSS = `
+.charro-veh-back{ position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.5); }
+.charro-veh-pop{ position:fixed; z-index:41; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(440px, calc(100vw - 24px)); max-height:calc(100vh - 32px); overflow:auto;
+  box-sizing:border-box; padding:16px; border-radius:20px;
+  background:linear-gradient(var(--card-background-color,#1c1c1c),var(--card-background-color,#1c1c1c)),
+    var(--primary-background-color,#111);
+  color:var(--primary-text-color); box-shadow:0 12px 40px rgba(0,0,0,.55);
+  font-family:var(--paper-font-body1_-_font-family, system-ui, sans-serif); }
+.charro-veh-pop .hd{ display:flex; align-items:center; gap:10px; }
+.charro-veh-pop .hd .t{ flex:1; font-size:19px; font-weight:700; }
+.charro-veh-pop button.x{ width:36px; height:36px; border-radius:50%; border:none; cursor:pointer; padding:0;
+  background:rgba(127,127,127,.16); color:var(--primary-text-color);
+  display:flex; align-items:center; justify-content:center; }
+.charro-veh-pop .car{ height:130px; display:flex; align-items:center; justify-content:center; margin:6px 0; }
+.charro-veh-pop .car img, .charro-veh-pop .car svg{ max-height:130px; max-width:100%; object-fit:contain; }
+.charro-veh-pop .where{ display:flex; align-items:center; justify-content:center; gap:6px;
+  color:var(--secondary-text-color); font-size:13px; margin-bottom:10px; }
+.charro-veh-pop .where ha-icon{ --mdc-icon-size:16px; }
+.charro-veh-pop .grid{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px 8px; margin:8px 0 14px; }
+.charro-veh-pop .st{ display:flex; gap:8px; align-items:center; min-width:0; }
+.charro-veh-pop .st ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
+.charro-veh-pop .st .k{ font-size:11.5px; color:var(--secondary-text-color); }
+.charro-veh-pop .st .v{ font-size:14.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.charro-veh-pop .st.bad ha-icon, .charro-veh-pop .st.bad .v{ color:var(--error-color, #e53935); }
+.charro-veh-pop .st.good ha-icon{ color:var(--success-color, #43a047); }
+.charro-veh-pop .socrow{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:14px; }
+.charro-veh-pop .bar{ flex:1; position:relative; height:12px; border-radius:6px; background:rgba(127,127,127,.28); overflow:hidden; }
+.charro-veh-pop .fill{ height:100%; border-radius:6px; background:var(--veh-col,#43a047); }
+.charro-veh-pop .fill.go{ background-image:repeating-linear-gradient(-45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px);
+  background-size:22px 22px; animation:veh-go 1s linear infinite; }
+@keyframes veh-go{ to{ background-position:22px 0; } }
+.charro-veh-pop .tgt{ position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.85); }
+.charro-veh-pop .cap{ font-size:12px; font-weight:600; color:var(--secondary-text-color);
+  text-transform:uppercase; letter-spacing:.06em; margin:16px 0 8px; }
+.charro-veh-pop .tyres{ display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; font-size:14px; }
+.charro-veh-pop .tyres div{ display:flex; justify-content:space-between; }
+.charro-veh-pop .tyres .bad{ color:var(--error-color, #e53935); font-weight:600; }
+.charro-veh-pop .note{ font-size:12px; color:var(--secondary-text-color); margin-top:14px; text-align:center; }
+`;
+
+/* "1 h 20 min left" from an end time; "" when it has passed or is unknown. */
+function vehLeft(end, now) {
+  const t = Date.parse(end || "");
+  if (!isFinite(t)) return "";
+  const m = Math.round((t - (now || Date.now())) / 60000);
+  if (m <= 0) return "";
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min left` : `${m} min left`;
+}
+
+/* The four tyres, from FordPass's one sensor (attributes per corner) or
+ * from four separate ones. Each: [label, reading, low?]. */
+function vehTyres(hass, e) {
+  const out = [];
+  const corners = [["Front left", "frontLeft", "tire_fl"], ["Front right", "frontRight", "tire_fr"],
+    ["Rear left", "rearLeft", "tire_rl"], ["Rear right", "rearRight", "tire_rr"]];
+  const one = vehState(hass, e.tires);
+  for (const [label, attr, key] of corners) {
+    const own = vehState(hass, e[key]);
+    if (own) {
+      const u = (own.attributes || {}).unit_of_measurement || "";
+      out.push([label, `${Math.round(parseFloat(own.state) * 10) / 10}${u ? " " + u : ""}`, false]);
+    } else if (one && one.attributes && one.attributes[attr] != null) {
+      const a = one.attributes;
+      out.push([label, String(a[attr]), /low|alert|warn/i.test(String(a[attr + "_state"] || ""))]);
+    }
+  }
+  return out;
+}
+
+Object.assign(CharroVehicleCard.prototype, {
+  _open() {
+    if (this._pop) return;
+    const host = popupHost();
+    if (!host.__charroVehCss) {
+      const s = document.createElement("style");
+      s.textContent = VEH_POP_CSS;
+      host.appendChild(s);
+      host.__charroVehCss = true;
+    }
+    const back = document.createElement("div");
+    back.className = "charro-veh-back";
+    const pop = document.createElement("div");
+    pop.className = "charro-veh-pop charro-pop";
+    back.addEventListener("click", () => this._close());
+    this._key = (ev) => { if (ev.key === "Escape") this._close(); };
+    window.addEventListener("keydown", this._key);
+    host.append(back, pop);
+    this._pop = pop; this._back = back;
+    this._paintPop();
+  },
+
+  _close() {
+    if (this._key) { window.removeEventListener("keydown", this._key); this._key = null; }
+    for (const n of [this._pop, this._back]) if (n) { try { n.remove(); } catch (err) {} }
+    this._pop = null; this._back = null;
+  },
+
+  disconnectedCallback() { this._close(); },
+
+  _paintPop() {
+    const pop = this._pop, h = this._hass, e = this._ents || {};
+    if (!pop || !h) return;
+    pop.innerHTML = "";
+    const el = (tag, cls, txt) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (txt != null) n.textContent = txt;
+      return n;
+    };
+    const icon = (ic) => { const i = document.createElement("ha-icon"); i.setAttribute("icon", ic); return i; };
+    const c = this._config;
+    const name = (this._card && this._card.dataset.tip) || c.name || "Car";
+
+    const hd = el("div", "hd");
+    hd.appendChild(el("div", "t", name));
+    const x = el("button", "x");
+    x.appendChild(icon("mdi:close"));
+    x.title = "Close"; x.dataset.tip = "Close";
+    x.addEventListener("click", () => this._close());
+    hd.appendChild(x);
+    pop.appendChild(hd);
+
+    const car = el("div", "car");
+    if (c.image) { const img = document.createElement("img"); img.src = c.image; img.alt = name; car.appendChild(img); }
+    else car.innerHTML = vehSilhouette(c.color);
+    pop.appendChild(car);
+
+    const where = vehState(h, e.tracker);
+    if (where) {
+      const w = el("div", "where");
+      w.append(icon("mdi:map-marker"), el("span", "",
+        where.state === "not_home" ? "Away from home" : vehWord(where.state)));
+      w.dataset.tip = "Where it is"; w.dataset.tipEnt = e.tracker;
+      pop.appendChild(w);
+    }
+
+    const ch = vehCharge(h, e);
+    const soc = vehNum(h, e.soc), tgt = vehNum(h, e.target);
+    const row = el("div", "socrow");
+    row.appendChild(el("span", "", soc == null ? "—" : `${Math.round(soc)}%`));
+    const bar = el("div", "bar");
+    bar.style.setProperty("--veh-col", vehBarCol(soc));
+    const fill = el("div", "fill" + (ch.charging ? " go" : ""));
+    fill.style.width = `${Math.max(0, Math.min(100, soc || 0))}%`;
+    bar.appendChild(fill);
+    if (tgt != null && tgt > 0 && tgt <= 100) {
+      const t = el("div", "tgt"); t.style.left = `calc(${tgt}% - 1px)`; bar.appendChild(t);
+    }
+    row.appendChild(bar);
+    row.appendChild(el("span", "", vehMiles(h, e.range)));
+    row.dataset.tip = tgt != null ? `Charges to ${tgt}%` : "Charge"; row.dataset.tipEnt = e.soc;
+    pop.appendChild(row);
+
+    /* The readings, each only when the car has it. */
+    const grid = el("div", "grid");
+    const stat = (ic, k, v, ent, tone) => {
+      if (v == null || v === "") return;
+      const d = el("div", "st" + (tone ? " " + tone : ""));
+      const tx = el("div");
+      tx.append(el("div", "k", k), el("div", "v", v));
+      d.append(icon(ic), tx);
+      d.dataset.tip = k; if (ent) d.dataset.tipEnt = ent;
+      grid.appendChild(d);
+    };
+    const reading = (id) => {
+      const st = vehState(h, id);
+      if (!st) return null;
+      const u = (st.attributes || {}).unit_of_measurement || "";
+      const n = parseFloat(st.state);
+      return isFinite(n) && u ? `${Math.round(n * 10) / 10} ${u}` : vehWord(st.state);
+    };
+    if (e.plug) stat(ch.plugged ? "mdi:power-plug" : "mdi:power-plug-off-outline", "Charge port",
+      ch.plugged ? "Connected" : "Unplugged", e.plug, ch.plugged ? "good" : "");
+    if (e.charging) stat("mdi:ev-station", "Charging", ch.charging ? vehWatts(ch.w) || "Charging"
+      : vehWord(ch.word), e.charging, ch.charging ? "good" : "");
+    if (ch.charging) stat("mdi:timer-outline", "Charge time", vehLeft(ch.end) || "—", e.charging);
+    else if (e.charging && /complete/i.test(ch.word)) stat("mdi:timer-check-outline", "Charge time", "Done", e.charging);
+    const lock = vehState(h, e.lock);
+    if (lock) stat(lock.state === "locked" ? "mdi:lock" : "mdi:lock-open-variant", "Doors",
+      lock.state === "locked" ? "Locked" : vehWord(lock.state), e.lock, lock.state === "locked" ? "good" : "bad");
+    const doors = vehState(h, e.doors);
+    if (doors) {
+      const open = Object.entries(doors.attributes || {})
+        .filter(([k, v]) => !/friendly|icon/.test(k) && /open|ajar/i.test(String(v))).map(([k]) => k);
+      stat("mdi:car-door", "Doors", open.length ? `${open.length} open` : vehWord(doors.state), e.doors,
+        open.length || /open|ajar/i.test(doors.state) ? "bad" : "");
+    }
+    const win = vehState(h, e.windows);
+    if (win) stat("mdi:car-windshield-outline", "Windows", vehWord(win.state), e.windows,
+      /open|vent/i.test(win.state) ? "bad" : "");
+    for (const [key, ic, label] of [["trunk", "mdi:car-back", "Trunk"], ["frunk", "mdi:car-select", "Frunk"],
+      ["charge_port", "mdi:ev-plug-type2", "Charge port door"]]) {
+      const s = vehState(h, e[key]);
+      if (s) stat(ic, label, vehWord(s.state), e[key], s.state === "open" ? "bad" : "");
+    }
+    const alarm = vehState(h, e.alarm);
+    if (alarm) stat("mdi:bell-outline", "Alarm", vehWord(alarm.state), e.alarm, /trigger|panic/i.test(alarm.state) ? "bad" : "");
+    const sentry = vehState(h, e.sentry);
+    if (sentry) stat("mdi:shield-car", "Sentry", sentry.state === "on" ? "On" : "Off", e.sentry);
+    stat("mdi:thermometer", "Cabin", reading(e.cabin), e.cabin);
+    stat("mdi:thermometer-lines", "Outside", reading(e.outside), e.outside);
+    const b12 = vehNum(h, e.battery12);
+    stat("mdi:car-battery", "12V battery", reading(e.battery12), e.battery12, b12 != null && b12 < 50 ? "bad" : "");
+    stat("mdi:speedometer", "Odometer", vehMiles(h, e.odometer), e.odometer);
+    const rs = vehState(h, e.remote_status);
+    if (rs) stat("mdi:car-key", "Remote start", vehWord(rs.state), e.remote_status);
+    pop.appendChild(grid);
+
+    const tyres = vehTyres(h, e);
+    if (tyres.length) {
+      pop.appendChild(el("div", "cap", "Tyres"));
+      const t = el("div", "tyres");
+      for (const [label, v, low] of tyres) {
+        const d = el("div", low ? "bad" : "");
+        d.append(el("span", "", label), el("span", "", v));
+        t.appendChild(d);
+      }
+      const one = vehState(h, e.tires);
+      if (one) { t.dataset.tip = vehWord(one.state); t.dataset.tipEnt = e.tires; }
+      pop.appendChild(t);
+    }
+
+    const last = vehState(h, e.last_refresh);
+    const when = last ? Date.parse(last.state) : NaN;
+    if (isFinite(when)) pop.appendChild(el("div", "note", `Last heard from ${tipAgo(last.state)}`));
+  },
 });
 
 defCard("charro-lights-card", CharroLightsCard, { name: "Charro Lights Card",

@@ -1425,6 +1425,12 @@ the car** takes a web address (a transparent PNG looks best); blank draws a
 plain car in **Colour of the
 drawn car**. It only redraws when one of the car's own entities changes.
 
+**Tap it** for the details pop-up: the charge bar with range, then each
+reading the car has — charge port, charging power and time left, doors
+(and how many are open), windows, trunk / frunk, alarm or sentry, cabin and
+outside temperature, 12V battery, odometer, remote start — the four tyres
+with a low one in red, and when the car was last heard from.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —

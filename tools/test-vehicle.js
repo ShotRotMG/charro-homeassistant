@@ -97,5 +97,33 @@ const pic = card(h, { device: "car1", image: "/local/mache.png", name: "Mach-E" 
 eq(pic.shadowRoot.querySelector("img").src, "/local/mache.png", "a picture when one is given");
 eq(pic.shadowRoot.querySelector(".nm").textContent, "Mach-E", "and its own name");
 
+console.log("-- the details pop-up --");
+{
+  const hp = mk({
+    [`sensor.${V}_tirepressure`]: st("LOW_TIRE_PRESSURE", { frontLeft: "38 psi", frontRight: "39 psi",
+      rearLeft: "29 psi", rearRight: "38 psi", rearLeft_state: "LOW", frontLeft_state: "NORMAL" }),
+    [`sensor.${V}_doorstatus`]: st("Closed", { driverFront: "CLOSED", tailgate: "OPEN" }),
+    [`sensor.${V}_cabintemperature`]: st("74.3", { unit_of_measurement: "°F" }),
+    [`sensor.${V}_alarm`]: st("ARMED"),
+  });
+  const p = card(hp);
+  p.shadowRoot.querySelector("ha-card").click();
+  ok(!!p._pop, "tapping the card opens the details");
+  const labels = p._pop.querySelector(".grid").children.map((d) => d.querySelector(".k").textContent);
+  for (const k of ["Charge port", "Charging", "Charge time", "Doors", "Alarm", "Cabin", "12V battery", "Odometer"])
+    ok(labels.includes(k), `it shows ${k}`);
+  const doorRow = p._pop.querySelector(".grid").children.filter((d) => d.querySelector(".k").textContent === "Doors")
+    .map((d) => d.querySelector(".v").textContent);
+  ok(doorRow.includes("1 open"), "the open tailgate counts as a door open  got " + doorRow);
+  eq(T.vehTyres(hp, T.vehEntities({ device: "car1" }, hp)).map((r) => [r[0], r[1], r[2]]),
+    [["Front left", "38 psi", false], ["Front right", "39 psi", false], ["Rear left", "29 psi", true], ["Rear right", "38 psi", false]],
+    "the four tyres, the low one flagged");
+  eq(T.vehLeft("2026-10-30T09:00:00Z", Date.parse("2026-10-30T07:40:00Z")), "1 h 20 min left", "time left on the charge");
+  p.hass = { ...hp, states: { ...hp.states, [`sensor.${V}_soc`]: { ...st("55"), last_updated: "t2" } } };
+  eq(p._pop.querySelector(".socrow").children[0].textContent, "55%", "it stays live while open");
+  p._close();
+  ok(!p._pop, "and closes");
+}
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);
