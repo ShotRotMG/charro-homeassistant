@@ -1444,12 +1444,17 @@ windows (Open or Closed), trunk / frunk, alarm or sentry, cabin and
 outside temperature, 12V battery, odometer, remote start — the four tires
 with a low one in red (in psi, or kPa or bar as set), and when the car was last heard from.
 
-Under that, **controls** for whatever the car offers: lock / unlock, remote
-start (Ford) or climate (Tesla), charging on/off, sentry, trunk and frunk,
-honk & flash and refresh, then **Charge to** as a dropdown and the
-remote-start **temperature**. Unlocking, starting, opening and
-honking take a second tap within four seconds. A Tesla's refresh wakes the
-car, which counts against its Fleet API allowance.
+Under that, **controls** for whatever the car offers: lock / unlock,
+charging on/off, sentry, trunk and frunk, honk & flash and refresh, then
+**Charge to** as a dropdown. Unlocking, opening and honking take a second
+tap within four seconds. A Tesla's refresh wakes the car, which counts
+against its Fleet API allowance.
+
+Last, **Climate**: Start / Stop (a Ford's remote start, which asks first
+since it starts the car; a Tesla's climate), a **− 21.5° +** stepper (the
+Ford's remote-start temperature, or the Tesla's set point), and toggles for
+the heated wheel, windshield and rear defrost, and each seat — a seat taps
+through its settings (Heat lo, Heat hi, Cool…) and round to off.
 
 **In a room:** the room editor has a **Vehicles** panel — **+ Car**, pick the
 car from the FordPass and Tesla devices it finds, and optionally a name,

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.156.0";
+const VERSION = "5.157.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -9534,7 +9534,11 @@ const VEH_LABELS = {
   tire_rl: "Tire rear left", tire_rr: "Tire rear right",
   battery12: "12V battery", remote: "Remote start", remote_status: "Remote start status",
   climate: "Climate", charge_pause: "Charging on/off", target: "Target charge",
-  climate_temp: "Climate temperature", honk: "Honk & flash", refresh: "Refresh",
+  climate_temp: "Climate temperature", wheel_heat: "Heated wheel",
+  defrost_front: "Front defrost", defrost_rear: "Rear defrost",
+  seat_fl: "Seat front left", seat_fr: "Seat front right",
+  seat_rl: "Seat rear left", seat_rr: "Seat rear right",
+  honk: "Honk & flash", refresh: "Refresh",
   last_refresh: "Last update",
 };
 const VEH_KEYS = Object.keys(VEH_LABELS);
@@ -9550,6 +9554,10 @@ const VEH_PROFILES = {
     remote: ["switch", /_ignition$/], remote_status: ["sensor", /_remotestartstatus$/],
     charge_pause: ["switch", /_elvehcharge$/], target: ["select", /_elvehtargetcharge$/],
     climate_temp: ["select", /_rcctemperature$/], honk: ["button", /_hafshort$/],
+    wheel_heat: ["switch", /_rccsteeringwheel$/], defrost_front: ["switch", /_rccdefrostfront$/],
+    defrost_rear: ["switch", /_rccdefrostrear$/],
+    seat_fl: ["select", /_rccseatfrontleft$/], seat_fr: ["select", /_rccseatfrontright$/],
+    seat_rl: ["select", /_rccseatrearleft$/], seat_rr: ["select", /_rccseatrearright$/],
     refresh: ["button", /_request_refresh$/], last_refresh: ["sensor", /_lastrefresh$/],
   } },
   tesla: { name: "Tesla (Tesla Fleet, Teslemetry or Tessie)",
@@ -9574,6 +9582,12 @@ const VEH_PROFILES = {
     tire_rl: ["sensor", /_tire_pressure_rear_left$/, ["vehicle_state_tpms_pressure_rl"]],
     tire_rr: ["sensor", /_tire_pressure_rear_right$/, ["vehicle_state_tpms_pressure_rr"]],
     climate: ["climate", /_climate$/, ["driver_temp", "climate"]],
+    wheel_heat: ["select", /_steering_wheel_heater$/, ["climate_state_steering_wheel_heat_level"]],
+    defrost_front: ["switch", /_defrost$/, ["climate_state_defrost_mode"]],
+    seat_fl: ["select", /_seat_heater_front_left$/, ["climate_state_seat_heater_left"]],
+    seat_fr: ["select", /_seat_heater_front_right$/, ["climate_state_seat_heater_right"]],
+    seat_rl: ["select", /_seat_heater_rear_left$/, ["climate_state_seat_heater_rear_left"]],
+    seat_rr: ["select", /_seat_heater_rear_right$/, ["climate_state_seat_heater_rear_right"]],
     charge_pause: ["switch", /_charge$/, ["charge_state_user_charge_enable_request", "charge"]],
     target: ["number", /_charge_limit$/, ["charge_state_charge_limit_soc", "charge_limit"]],
     honk: ["button", /_honk_horn$/, ["honk"]],
@@ -9886,6 +9900,18 @@ function vehWhere(h, e, cfg, onReady) {
   const a = st.attributes || {};
   const addr = cfg && cfg.hide_address ? "" : vehAddress(a.latitude, a.longitude, onReady);
   return addr || "Away";
+}
+
+/* A Ford's remote-start temperature, as read aloud: "21_5" is 21.5\u00b0,
+ * "lo" and "hi" are Lo and Hi. A seat: "heat_hi" is Heat hi. */
+function vehTempWord(v) {
+  const m = /^(\d+)[_.](\d)$/.exec(String(v));
+  if (m) return `${m[1]}.${m[2]}\u00b0`;
+  if (/^\d+(\.\d+)?$/.test(String(v))) return `${v}\u00b0`;
+  return vehWord(v);
+}
+function vehSeatWord(v) {
+  return vehWord(String(v).replace(/^(heat|cool)(ed)?_?/i, "$1 ").replace(/_/g, " "));
 }
 
 /* What goes after the percentage: how fast and how long, or plugged in. */
@@ -10321,10 +10347,28 @@ const VEH_CTRL_CSS = `
 .charro-veh-pop .tile.bad ha-icon{ color:var(--error-color, #e53935); }
 .charro-veh-pop .tile.arm{ border-color:var(--warning-color, #ffa000); background:rgba(255,160,0,.14); }
 .charro-veh-pop .tile.arm .v{ color:var(--warning-color, #ffa000); }
-.charro-veh-pop .opts{ display:flex; flex-wrap:wrap; gap:6px; }
-.charro-veh-pop .opts button{ border:1px solid var(--divider-color, rgba(255,255,255,.12)); border-radius:999px;
-  padding:5px 11px; background:none; color:inherit; font:inherit; font-size:13px; cursor:pointer; }
-.charro-veh-pop .opts button.sel{ background:var(--primary-color); border-color:var(--primary-color); color:#fff; }
+.charro-veh-pop .clim{ border:1px solid var(--divider-color, rgba(255,255,255,.12)); border-radius:14px;
+  padding:10px 12px; background:rgba(127,127,127,.06); }
+.charro-veh-pop .chd{ display:flex; align-items:center; gap:10px; }
+.charro-veh-pop .cst{ flex:1; font-weight:600; font-size:14px; }
+.charro-veh-pop .cgo{ display:flex; align-items:center; gap:6px; cursor:pointer; font:inherit; font-size:13.5px;
+  font-weight:600; color:inherit; padding:7px 14px; border-radius:999px;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:rgba(127,127,127,.12); }
+.charro-veh-pop .cgo ha-icon{ --mdc-icon-size:18px; }
+.charro-veh-pop .cgo.on{ background:color-mix(in srgb, #43a047 22%, transparent); border-color:#43a047; }
+.charro-veh-pop .cgo.arm{ background:rgba(255,160,0,.18); border-color:var(--warning-color, #ffa000); }
+.charro-veh-pop .cstep{ display:flex; align-items:center; justify-content:center; gap:22px; margin:10px 0 4px; }
+.charro-veh-pop .cstep .ct{ font-size:26px; font-weight:700; min-width:90px; text-align:center; }
+.charro-veh-pop .cbtn{ width:40px; height:40px; border-radius:50%; cursor:pointer; padding:0; color:inherit;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:rgba(127,127,127,.12);
+  display:flex; align-items:center; justify-content:center; }
+.charro-veh-pop .cbtn[disabled]{ opacity:.35; cursor:default; }
+.charro-veh-pop .ctog{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; justify-content:center; }
+.charro-veh-pop .ctg{ display:flex; align-items:center; gap:5px; cursor:pointer; font:inherit; font-size:12.5px;
+  color:var(--secondary-text-color); padding:5px 10px; border-radius:999px;
+  border:1px solid var(--divider-color, rgba(255,255,255,.12)); background:none; }
+.charro-veh-pop .ctg ha-icon{ --mdc-icon-size:16px; }
+.charro-veh-pop .ctg.on{ color:#fb8c00; border-color:#fb8c00; background:rgba(251,140,0,.12); }
 .charro-veh-pop .vdrop{ margin-top:10px; }
 .charro-veh-pop .vdd{ width:100%; display:flex; align-items:center; gap:10px; cursor:pointer; font:inherit;
   color:inherit; text-align:left; padding:10px 12px; border-radius:14px;
@@ -10341,8 +10385,6 @@ const VEH_CTRL_CSS = `
 .charro-veh-pop .vdi ha-icon{ --mdc-icon-size:16px; visibility:hidden; color:var(--primary-color); }
 .charro-veh-pop .vdi.cur ha-icon{ visibility:visible; }
 .charro-veh-pop .vdi:hover{ background:rgba(127,127,127,.18); }
-.charro-veh-pop .orow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
-.charro-veh-pop .orow > ha-icon{ --mdc-icon-size:20px; color:var(--secondary-text-color); flex:none; }
 `;
 const VEH_ARM_MS = 4000;
 const VEH_LIMITS = ["50", "60", "70", "80", "90", "100"];
@@ -10445,18 +10487,7 @@ Object.assign(CharroVehicleCard.prototype, {
         locked ? "Unlock" : "Lock", locked ? "on" : "bad",
         () => this._svc("lock", locked ? "unlock" : "lock", e.lock), locked ? "unlock" : null);
     }
-    const rem = vehState(h, e.remote);
-    if (rem) {
-      const on = rem.state === "on";
-      tile("remote", "mdi:car-key", on ? "Running" : "Remote start", on ? "Stop" : "Start", on ? "on" : "",
-        () => this._svc("switch", on ? "turn_off" : "turn_on", e.remote), on ? null : "start the car");
-    }
-    const cl = vehState(h, e.climate);
-    if (cl) {
-      const on = cl.state !== "off";
-      tile("climate", "mdi:fan", on ? "Climate on" : "Climate", on ? "Turn off" : "Turn on", on ? "on" : "",
-        () => this._svc("climate", on ? "turn_off" : "turn_on", e.climate));
-    }
+    /* remote start and climate have a panel of their own, below */
     const cp = vehState(h, e.charge_pause);
     if (cp) {
       const on = cp.state === "on";
@@ -10488,19 +10519,7 @@ Object.assign(CharroVehicleCard.prototype, {
     }
 
     /* Choices: the target charge, and the climate temperature. */
-    const choose = (ic, tip, ent, opts, cur, pick) => {
-      const r = el("div", "orow");
-      r.appendChild(icon(ic));
-      const o = el("div", "opts");
-      for (const v of opts) {
-        const b = el("button", String(v) === String(cur) ? "sel" : "", vehWord(v));
-        b.addEventListener("click", (ev) => { ev.stopPropagation(); pick(v); });
-        o.appendChild(b);
-      }
-      r.appendChild(o);
-      r.dataset.tip = tip; r.dataset.tipEnt = ent;
-      pop.appendChild(r);
-    };
+    /* The target charge, as a dropdown. */
     const tgt = vehState(h, e.target);
     if (tgt) {
       const sel = e.target.startsWith("select.");
@@ -10512,12 +10531,114 @@ Object.assign(CharroVehicleCard.prototype, {
         (v) => sel ? this._svc("select", "select_option", e.target, { option: v })
                    : this._svc("number", "set_value", e.target, { value: Number(v) })));
     }
-    const ct = vehState(h, e.climate_temp);
-    if (ct && (ct.attributes.options || []).length) {
-      pop.appendChild(el("div", "cap", "Climate temperature"));
-      choose("mdi:thermometer", "Remote start temperature", e.climate_temp, ct.attributes.options, ct.state,
-        (v) => this._svc("select", "select_option", e.climate_temp, { option: v }));
+    this._paintClimate(pop, el, icon, armedNow);
+  },
+
+  /* Climate, for either make. A Ford has no thermostat entity: it warms or
+   * cools the car by remote start, at the temperature its select holds, with
+   * switches for the wheel and the screens and a select per seat. A Tesla
+   * has a climate entity. Either way: Start / Stop, a stepper, and toggles. */
+  _paintClimate(pop, el, icon, armedNow) {
+    const h = this._hass, e = this._ents || {};
+    const rem = vehState(h, e.remote), cl = vehState(h, e.climate), ct = vehState(h, e.climate_temp);
+    const extras = ["wheel_heat", "defrost_front", "defrost_rear", "seat_fl", "seat_fr", "seat_rl", "seat_rr"]
+      .filter((k) => vehState(h, e[k]));
+    if (!rem && !cl && !ct && !extras.length) return;
+    const box = el("div", "clim");
+    pop.appendChild(el("div", "cap", "Climate"));
+
+    /* Start / Stop */
+    const top = el("div", "chd");
+    const on = cl ? cl.state !== "off" : !!rem && rem.state === "on";
+    const what = cl ? "climate" : "remote start";
+    const st = el("div", "cst", on ? (cl ? vehWord(cl.state) : "Running") : "Off");
+    top.appendChild(st);
+    if (rem || cl) {
+      const go = el("button", "cgo" + (on ? " on" : "") + (armedNow("climate") ? " arm" : ""));
+      go.append(icon(on ? "mdi:stop" : "mdi:play"),
+        el("span", "", armedNow("climate") ? "Tap again" : on ? "Stop" : "Start"));
+      go.dataset.tip = cl ? "Climate" : "Remote start";
+      go.dataset.tipDo = on ? `Tap: stop ${what}` : `Tap twice: start ${what}`;
+      const run = () => cl ? this._svc("climate", on ? "turn_off" : "turn_on", e.climate)
+                           : this._svc("switch", on ? "turn_off" : "turn_on", e.remote);
+      go.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        /* starting a Ford starts the car itself, so it asks first */
+        if (!on && !cl) this._armed("climate", run); else run();
+      });
+      top.appendChild(go);
     }
+    box.appendChild(top);
+
+    /* The stepper: a Ford's select options in order, or the climate's
+     * own range and step. */
+    let label = "", down = null, up = null;
+    if (cl) {
+      const a = cl.attributes || {};
+      const t = parseFloat(a.temperature);
+      const step = parseFloat(a.target_temp_step) || 0.5;
+      const lo = parseFloat(a.min_temp), hi = parseFloat(a.max_temp);
+      const set = (v) => this._svc("climate", "set_temperature", e.climate, { temperature: v });
+      if (isFinite(t)) {
+        label = `${t}\u00b0`;
+        if (!isFinite(lo) || t - step >= lo) down = () => set(Math.round((t - step) * 10) / 10);
+        if (!isFinite(hi) || t + step <= hi) up = () => set(Math.round((t + step) * 10) / 10);
+      }
+    } else if (ct && (ct.attributes.options || []).length) {
+      const opts = ct.attributes.options;
+      const i = opts.indexOf(ct.state);
+      label = vehTempWord(ct.state);
+      const set = (v) => this._svc("select", "select_option", e.climate_temp, { option: v });
+      if (i > 0) down = () => set(opts[i - 1]);
+      if (i >= 0 && i < opts.length - 1) up = () => set(opts[i + 1]);
+    }
+    if (label) {
+      const row = el("div", "cstep");
+      const btn = (ic, fn, tip) => {
+        const b = el("button", "cbtn");
+        b.appendChild(icon(ic));
+        b.dataset.tip = tip;
+        if (fn) b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+        else b.disabled = true;
+        return b;
+      };
+      row.append(btn("mdi:minus", down, "Cooler"), el("div", "ct", label), btn("mdi:plus", up, "Warmer"));
+      row.dataset.tip = cl ? "Cabin set point" : "Remote start temperature";
+      row.dataset.tipEnt = cl ? e.climate : e.climate_temp;
+      box.appendChild(row);
+    }
+
+    /* Wheel, screens and seats: a tap toggles a switch, or steps a seat or
+     * a Tesla wheel to its next level and round to off. */
+    if (extras.length) {
+      const tg = el("div", "ctog");
+      const names = { wheel_heat: ["mdi:steering", "Wheel"], defrost_front: ["mdi:car-defrost-front", "Windshield"],
+        defrost_rear: ["mdi:car-defrost-rear", "Rear"], seat_fl: ["mdi:car-seat-heater", "Driver"],
+        seat_fr: ["mdi:car-seat-heater", "Passenger"], seat_rl: ["mdi:car-seat-heater", "Rear L"],
+        seat_rr: ["mdi:car-seat-heater", "Rear R"] };
+      for (const k of extras) {
+        const s = vehState(h, e[k]);
+        const sel = e[k].startsWith("select.");
+        const opts = sel ? (s.attributes.options || []) : [];
+        const off = sel ? /^(off|0|none)$/i.test(s.state) : s.state !== "on";
+        const [ic, nm] = names[k];
+        const b = el("button", "ctg" + (off ? "" : " on"));
+        b.append(icon(/cool/i.test(s.state) ? "mdi:car-seat-cooler" : ic),
+          el("span", "", sel && !off ? `${nm} \u00b7 ${vehSeatWord(s.state)}` : nm));
+        b.dataset.tip = VEH_LABELS[k]; b.dataset.tipEnt = e[k];
+        b.dataset.tipDo = sel ? "Tap: the next setting" : `Tap: turn ${off ? "on" : "off"}`;
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (sel) {
+            const i = opts.indexOf(s.state);
+            this._svc("select", "select_option", e[k], { option: opts[(i + 1) % opts.length] });
+          } else this._svc("switch", off ? "turn_on" : "turn_off", e[k]);
+        });
+        tg.appendChild(b);
+      }
+      box.appendChild(tg);
+    }
+    pop.appendChild(box);
   },
 });
 

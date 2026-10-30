@@ -194,8 +194,8 @@ console.log("-- controls --");
   p._open();
   const tiles = () => p._pop.querySelector(".ctl").children;
   const byK = (k) => tiles().find((b) => b.querySelector(".k").textContent === k);
-  eq(tiles().map((b) => b.querySelector(".k").textContent), ["Locked", "Remote start", "Honk & flash"],
-    "lock, remote start and honk, from what the car has");
+  eq(tiles().map((b) => b.querySelector(".k").textContent), ["Locked", "Honk & flash"],
+    "lock and honk, from what the car has (remote start is in Climate)");
   byK("Locked").click();
   eq(calls.length, 0, "one tap on a locked car only arms the unlock");
   ok(byK("Locked").className.includes("arm") && /Tap again/.test(byK("Locked").querySelector(".v").textContent),
@@ -228,6 +228,46 @@ console.log("-- controls --");
   tp._pop.querySelector(".vdd").click();
   tp._pop.querySelector(".vdl").children[3].click();
   eq(tcalls.pop(), ["number", "set_value", { value: 80 }], "a Tesla's limit is a number");
+  tp._close();
+}
+
+console.log("-- climate --");
+{
+  const calls = [];
+  const hc = mk({ [`switch.${V}_ignition`]: st("off"),
+    [`select.${V}_rcctemperature`]: st("21_5", { options: ["lo", "21_0", "21_5", "22_0", "hi"] }),
+    [`switch.${V}_rccsteeringwheel`]: st("off"), [`switch.${V}_rccdefrostfront`]: st("on"),
+    [`select.${V}_rccseatfrontleft`]: st("off", { options: ["off", "heat_lo", "heat_hi", "cool_lo"] }) });
+  hc.callService = async (...a) => { calls.push([a[0], a[1], a[2], a[3].entity_id]); };
+  const p = card(hc);
+  p._open();
+  const cl = () => p._pop.querySelector(".clim");
+  eq(cl().querySelector(".cst").textContent, "Off", "it says Off");
+  eq(cl().querySelector(".ct").textContent, "21.5°", "the remote-start temperature as 21.5°");
+  const [minus, plus] = cl().querySelectorAll(".cbtn");
+  minus.click(); eq(calls.pop(), ["select", "select_option", { option: "21_0" }, `select.${V}_rcctemperature`], "minus steps down");
+  plus.click(); eq(calls.pop(), ["select", "select_option", { option: "22_0" }, `select.${V}_rcctemperature`], "plus steps up");
+  cl().querySelector(".cgo").click();
+  eq(calls.length, 0, "Start asks first: it starts the car");
+  cl().querySelector(".cgo").click();
+  eq(calls.pop(), ["switch", "turn_on", {}, `switch.${V}_ignition`], "then starts it");
+  const tg = () => cl().querySelector(".ctog").children;
+  eq(tg().map((b) => b.querySelector("span").textContent), ["Wheel", "Windshield", "Driver"], "wheel, windshield and the driver's seat");
+  ok(tg()[1].className.includes("on"), "the windshield shows on");
+  tg()[0].click(); eq(calls.pop(), ["switch", "turn_on", {}, `switch.${V}_rccsteeringwheel`], "the wheel toggles");
+  tg()[2].click(); eq(calls.pop(), ["select", "select_option", { option: "heat_lo" }, `select.${V}_rccseatfrontleft`], "the seat steps to its next setting");
+  p._close();
+
+  const tc = [];
+  const ts = { "climate.t_climate": st("off", { temperature: 21, target_temp_step: 0.5, min_temp: 15, max_temp: 28 }) };
+  const th = { states: ts, entities: { "climate.t_climate": { device_id: "t", platform: "teslemetry" } }, devices: {},
+    callService: async (...a) => { tc.push([a[0], a[1], a[2]]); } };
+  const tp = card(th, { device: "t" });
+  tp._open();
+  const tcl = tp._pop.querySelector(".clim");
+  eq(tcl.querySelector(".ct").textContent, "21°", "a Tesla's set point");
+  tcl.querySelectorAll(".cbtn")[1].click(); eq(tc.pop(), ["climate", "set_temperature", { temperature: 21.5 }], "plus by its own step");
+  tcl.querySelector(".cgo").click(); eq(tc.pop(), ["climate", "turn_on", {}], "and its climate starts on one tap");
   tp._close();
 }
 
