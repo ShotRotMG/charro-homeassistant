@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.158.0";
+const VERSION = "5.159.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3809,6 +3809,19 @@ function tempUnit(hass) {
 const WATER_SAYS = { resting: "resting", heating: "warming up",
                      warm: "up to temperature" };
 
+/* A pool or spa water temperature, or null when it can't be one. A
+ * Pentair heater reports garbage (-118\u00b0F) when its water sensor is
+ * disconnected or the pump has been off, and a chip saying the pool is
+ * -118\u00b0F says nothing true. Liquid water in a pool: 0-45\u00b0C. */
+function charroWaterTemp(t, hass) {
+  const n = typeof t === "number" ? t : parseFloat(t);
+  if (!isFinite(n)) return null;
+  const c = /C/.test(String(((hass || {}).config || {}).unit_system
+    ? hass.config.unit_system.temperature : "")) ? n : (n - 32) * 5 / 9;
+  return c >= 0 && c <= 45 ? n : null;
+}
+if (typeof window !== "undefined") window.charroWaterTemp = charroWaterTemp;
+
 function waterChip(r, hass, kind) {
   const pool = kind === "pool";
   const sw = pool ? r.pool_switch : r.spa_switch;
@@ -3823,7 +3836,7 @@ function waterChip(r, hass, kind) {
   const ht = pool ? r.pool_heater : r.spa_heater;
   const h = ht ? hass.states[ht] : null;
   const a = (h && h.attributes) || {};
-  const cur = a.current_temperature, set = a.temperature;
+  const cur = charroWaterTemp(a.current_temperature, hass), set = a.temperature;
   let mood = "resting";
   if (h && h.state !== "off" && h.state !== "unavailable") {
     if (a.hvac_action === "heating") mood = "heating";

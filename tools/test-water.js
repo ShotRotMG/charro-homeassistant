@@ -51,5 +51,14 @@ eq(T.pumpCard({ spa_switch: "switch.s" }, "spa").icon, "mdi:hot-tub", "default s
 eq(T.pumpCard({ spa_switch: "switch.s" }, "spa").name, "Spa", "default spa name");
 ok(T.pumpCard({}, "pool") === null, "no pump, no pump card");
 
+console.log("-- a reading no pool can have --");
+const HF = { config: { unit_system: { temperature: "°F" } } };
+const HC = { config: { unit_system: { temperature: "°C" } } };
+eq(T.charroWaterTemp(-118, HF), null, "-118°F is a sensor off line, not the pool");
+eq(T.charroWaterTemp(82, HF), 82, "82°F is a pool");
+eq(T.charroWaterTemp(140, HF), null, "and 140°F isn't one either");
+eq(T.charroWaterTemp(28, HC), 28, "28°C in a Celsius house is fine");
+eq(T.charroWaterTemp("unknown", HF), null, "nothing for no number");
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);
