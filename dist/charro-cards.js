@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.157.0";
+const VERSION = "5.158.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -3010,7 +3010,12 @@ const POPUP_CSS = `
 .charro-pop-backdrop.in{ opacity:1; }
 .charro-pop{
   position:fixed; left:0; right:0; bottom:0; z-index:9;
-  max-height:88vh; overflow:auto; box-sizing:border-box;
+  ${"" /* On a phone the sheet stops short of the top: the camera and the
+         status bar sit over the top-right corner, where the close button
+         is. --charro-top-clear is the house's "clear at the top" setting. */}
+  max-height:88vh;
+  max-height:calc(100dvh - var(--charro-top-clear, 150px));
+  overflow:auto; box-sizing:border-box;
   padding:14px 14px calc(18px + env(safe-area-inset-bottom,0px));
   background:var(--ha-dialog-surface-background,
              var(--ha-card-background, var(--card-background-color, #fff)));
@@ -4389,6 +4394,11 @@ function tipBoot(hass) {
   if (_tip.boot || !hass || typeof document === "undefined"
       || typeof document.addEventListener !== "function") return;
   _tip.boot = loadHouse(hass).then((house) => {
+    /* How much of a phone's screen top every pop-up leaves alone. */
+    const clear = Number(house && house.phone_top_clear);
+    if (isFinite(clear) && clear >= 0 && house.phone_top_clear !== "" && house.phone_top_clear != null
+        && document.documentElement && document.documentElement.style)
+      document.documentElement.style.setProperty("--charro-top-clear", `${clear}px`);
     const s = tipSettings(house);
     _tip.on = s.on; _tip.delay = s.delay;
     if (!s.on) return;
@@ -8967,6 +8977,13 @@ const CL_POP_CSS = `
 .charro-cl-pop .di ha-icon{ --mdc-icon-size:16px; visibility:hidden; color:var(--cl-col, var(--primary-color)); }
 .charro-cl-pop .di.cur ha-icon{ visibility:visible; }
 .charro-cl-pop .di:hover{ background:rgba(127,127,127,.18); }
+@media (max-width:869px){
+  .charro-cl-pop{ left:0; right:0; top:auto; bottom:0; transform:none; width:100%;
+    border-radius:20px 20px 0 0;
+    max-height:calc(100vh - 150px);
+    max-height:calc(100dvh - var(--charro-top-clear, 150px));
+    padding-bottom:calc(14px + env(safe-area-inset-bottom, 0px)); }
+}
 `;
 
 /* A slider that leaves itself alone while it is being dragged. */
@@ -10098,6 +10115,13 @@ ${vehChipsCss(".charro-veh-pop ")}
 .charro-veh-pop .tyres div{ display:flex; justify-content:space-between; }
 .charro-veh-pop .tyres .bad{ color:var(--error-color, #e53935); font-weight:600; }
 .charro-veh-pop .note{ font-size:12px; color:var(--secondary-text-color); margin-top:14px; text-align:center; }
+@media (max-width:869px){
+  .charro-veh-pop{ left:0; right:0; top:auto; bottom:0; transform:none; width:100%;
+    border-radius:20px 20px 0 0;
+    max-height:calc(100vh - 150px);
+    max-height:calc(100dvh - var(--charro-top-clear, 150px));
+    padding-bottom:calc(14px + env(safe-area-inset-bottom, 0px)); }
+}
 `;
 
 /* "1 h 20 min left" from an end time; "" when it has passed or is unknown. */
@@ -16723,6 +16747,24 @@ class CharroHouseEditor extends HTMLElement {
       : `living_room → ${pagePath(this._cfg.page_base, "living_room")}`;
     box.appendChild(eg);
     root.appendChild(box);
+
+    /* Phones: the space every pop-up leaves at the top of the screen, so
+     * the close button is never under a camera or the status bar. */
+    const capP = document.createElement("div");
+    capP.className = "vcap"; capP.textContent = "Pop-ups on phones";
+    root.appendChild(capP);
+    const pb = document.createElement("div"); pb.className = "vrowbox";
+    pb.appendChild(f.text("Keep clear at the top (px)",
+      this._cfg.phone_top_clear == null ? "" : String(this._cfg.phone_top_clear),
+      (v) => { const n = parseInt(v, 10); if (isFinite(n) && n >= 0) this._cfg.phone_top_clear = n;
+               else delete this._cfg.phone_top_clear; }, "150"));
+    const ph = document.createElement("div");
+    ph.className = "vhelp";
+    ph.textContent = "On a phone, the room and car pop-ups rise from the bottom and stop "
+      + "this far from the top, so the close button sits below the camera and the status "
+      + "bar. Blank is 150. Larger screens open pop-ups in the middle and are unaffected.";
+    pb.appendChild(ph);
+    root.appendChild(pb);
 
     /* Music Assistant's address, for every Music Assistant card that
      * doesn't name its own. */

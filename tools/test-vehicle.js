@@ -305,6 +305,13 @@ console.log("-- fits a phone --");
   const css = src.slice(src.indexOf("const VEH_POP_CSS"), src.indexOf("`;", src.indexOf("const VEH_POP_CSS")));
   ok(/max-height:calc\(100dvh/.test(css), "sized to what the phone actually shows (dvh), not 100vh");
   ok(/\.charro-veh-pop \.hd\{[^}]*position:sticky/.test(css), "the header, with close, stays at the top while it scrolls");
+  ok(/@media \(max-width:869px\)\{\s*\.charro-veh-pop\{[^}]*bottom:0[^}]*var\(--charro-top-clear/.test(css),
+    "on a phone it rises from the bottom and stops short of the camera");
+  const room = src.slice(src.indexOf("const POPUP_CSS"), src.indexOf("`;", src.indexOf("const POPUP_CSS")));
+  ok(/\.charro-pop\{[\s\S]{0,600}?max-height:calc\(100dvh - var\(--charro-top-clear, 150px\)\)/.test(room),
+    "so does a room's pop-up");
+  const cl = src.slice(src.indexOf("const CL_POP_CSS"), src.indexOf("`;", src.indexOf("const CL_POP_CSS")));
+  ok(/var\(--charro-top-clear/.test(cl), "and the colour light's");
 }
 
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
