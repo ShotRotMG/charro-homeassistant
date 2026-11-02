@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.161.0";
+const VERSION = "5.162.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -261,6 +261,7 @@ const INTERNAL_TAGS = {
   "charro-zone-source": "a source row inside the zone card",
   "charro-video-card": "the screens in a room's pop-up, built from its video block",
   "charro-gap-card": "an empty layout cell, placed by the layout builder",
+  "charro-camera-switch-card": "a room's cameras as one switchable view, built from its Cameras panel",
   "charro-irrigation-panel": "the body of the irrigation pop-up",
   "charro-chips-editor": "the Chips tab of Charro Config",
   "charro-house-editor": "the Settings tab of Charro Config",
@@ -2099,6 +2100,7 @@ function securityCard(s, r) {
  * which tab it was on. `live.preload: false` stays and matters - ten
  * cameras all opening streams because a pop-up exists is the difference
  * between a dashboard and a load problem. */
+const CAMERA_VIEWS = [["", "All of them, laid out"], ["one", "One at a time, switchable"]];
 const CAMERA_CARD = {
   type: "custom:advanced-camera-card",
   cameras: [{ camera_entity: "{{camera}}", title: "{{title}}" }],
@@ -2139,6 +2141,145 @@ function cameraCard(c, r, hass) {
   const tpl = o.camera_card || (r && r.camera_card) || CAMERA_CARD;
   return fillTemplate(clone(tpl), { camera: id, title: cameraTitle(c, hass) });
 }
+
+/* ===================================================== CAMERA SWITCHER == */
+/* A room's cameras as one view: the camera on screen, its name among tabs
+ * for the others, arrows, and a swipe on a phone. Only the camera on
+ * screen exists, so only one stream runs - the rest of the room's cameras
+ * cost nothing until they're picked. The last one picked is remembered per
+ * room, in this browser.
+ *
+ *   type: custom:charro-camera-switch-card
+ *   key: frontyard                     # what to remember the pick under
+ *   cameras: [{ title: Driveway, card: {...} }, ...]
+ */
+const CAMSW_CSS = `
+:host{ display:block; }
+.wrap{ position:relative; border-radius:var(--ha-card-border-radius, 12px); overflow:hidden; }
+.tabs{ display:flex; gap:6px; overflow-x:auto; padding:0 0 8px; scrollbar-width:none; }
+.tabs::-webkit-scrollbar{ display:none; }
+.tab{ flex:none; border:1px solid var(--divider-color, rgba(255,255,255,.12)); border-radius:999px;
+  padding:5px 12px; background:rgba(127,127,127,.10); color:var(--primary-text-color);
+  font:inherit; font-size:13px; cursor:pointer; white-space:nowrap; }
+.tab.on{ background:var(--primary-color); border-color:var(--primary-color); color:#fff; }
+.nav{ position:absolute; top:50%; transform:translateY(-50%); z-index:2; width:36px; height:36px;
+  border-radius:50%; border:none; cursor:pointer; padding:0; color:#fff; background:rgba(0,0,0,.45);
+  display:flex; align-items:center; justify-content:center; }
+.nav.l{ left:8px; } .nav.r{ right:8px; }
+.nav ha-icon{ --mdc-icon-size:22px; }
+`;
+function camSwStore(key, v) {
+  const k = "charro-cam:" + (key || "");
+  try {
+    if (v === undefined) return localStorage.getItem(k);
+    localStorage.setItem(k, String(v));
+  } catch (err) { /* private window: just don't remember */ }
+  return null;
+}
+
+class CharroCameraSwitchCard extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    const cams = this._config.cameras || [];
+    const kept = Number(camSwStore(this._config.key));
+    this._i = isFinite(kept) && kept >= 0 && kept < cams.length ? kept : 0;
+    this._shown = -1;
+    if (this.shadowRoot || this._hass) this._render();
+  }
+  set hass(h) {
+    this._hass = h;
+    if (this._shown < 0) this._render();
+    else if (this._inner) this._inner.hass = h;
+  }
+  getCardSize() { return 5; }
+
+  _go(i) {
+    const n = (this._config.cameras || []).length;
+    if (!n) return;
+    this._i = ((i % n) + n) % n;
+    camSwStore(this._config.key, this._i);
+    this._render();
+  }
+
+  _render() {
+    const cams = (this._config && this._config.cameras) || [];
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    if (this._shown === this._i && root.childNodes.length) return;
+    this._shown = this._i;
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = CAMSW_CSS;
+    root.appendChild(style);
+    if (!cams.length) return;
+    const icon = (x) => { const i = document.createElement("ha-icon"); i.setAttribute("icon", x); return i; };
+    if (cams.length > 1) {
+      const tabs = document.createElement("div");
+      tabs.className = "tabs";
+      cams.forEach((c, i) => {
+        const b = document.createElement("button");
+        b.className = "tab" + (i === this._i ? " on" : "");
+        b.textContent = c.title || `Camera ${i + 1}`;
+        b.dataset.tip = c.title || `Camera ${i + 1}`;
+        b.dataset.tipDo = "Tap: show this camera";
+        b.addEventListener("click", (ev) => { ev.stopPropagation(); this._go(i); });
+        tabs.appendChild(b);
+      });
+      root.appendChild(tabs);
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "wrap";
+    const slot = document.createElement("div");
+    wrap.appendChild(slot);
+    if (cams.length > 1) {
+      for (const [cls, ic, step, tip] of [["l", "mdi:chevron-left", -1, "Previous camera"],
+                                          ["r", "mdi:chevron-right", 1, "Next camera"]]) {
+        const b = document.createElement("button");
+        b.className = "nav " + cls;
+        b.appendChild(icon(ic));
+        b.dataset.tip = tip;
+        b.addEventListener("click", (ev) => { ev.stopPropagation(); this._go(this._i + step); });
+        wrap.appendChild(b);
+      }
+      /* a sideways swipe on a phone: past 50px, and more across than down */
+      let x0 = null, y0 = null;
+      wrap.addEventListener("touchstart", (ev) => {
+        const t = ev.touches && ev.touches[0]; if (t) { x0 = t.clientX; y0 = t.clientY; }
+      }, { passive: true });
+      wrap.addEventListener("touchend", (ev) => {
+        const t = ev.changedTouches && ev.changedTouches[0];
+        if (!t || x0 == null) return;
+        const dx = t.clientX - x0, dy = t.clientY - y0;
+        x0 = null;
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) this._go(this._i + (dx < 0 ? 1 : -1));
+      }, { passive: true });
+    }
+    root.appendChild(wrap);
+    this._inner = null;
+    const cfg = cams[this._i].card;
+    const want = this._i;
+    if (cfg && typeof window !== "undefined" && window.loadCardHelpers) {
+      window.loadCardHelpers().then((helpers) => {
+        if (this._shown !== want) return;
+        const el = helpers.createCardElement(cfg);
+        el.hass = this._hass;
+        slot.appendChild(el);
+        this._inner = el;
+      }).catch(() => { slot.textContent = "This camera couldn’t load."; });
+    }
+  }
+}
+def("charro-camera-switch-card", CharroCameraSwitchCard);
+
+/* The room's cameras as one switcher card, or null when it has none. */
+function cameraSwitchCard(r, hass) {
+  const cams = ((r && r.cameras) || []).map((c) => {
+    const card = cameraCard(c, r, hass);
+    return card ? { title: cameraTitle(c, hass) || cameraEntity(c), card } : null;
+  }).filter(Boolean);
+  if (!cams.length) return null;
+  return { type: "custom:charro-camera-switch-card", key: (r && (r.room || r.room_name)) || "", cameras: cams };
+}
+const camerasAsOne = (r) => !!r && r.camera_view === "one" && (r.cameras || []).length > 1;
 
 /* Locks.
  *
@@ -2382,7 +2523,10 @@ function blockCards(name, r, hass) {
     for (const c of remoteCards({ ...r, remotes: loose }, r._remotes || {})) push(c);
   }
 
-  if (name === "cameras" && (r.cameras || []).length) {
+  if (name === "cameras" && camerasAsOne(r)) {
+    const sw = cameraSwitchCard(r, hass);
+    if (sw) push(sw);
+  } else if (name === "cameras" && (r.cameras || []).length) {
     const cams = r.cameras.map((c) => cameraCard(c, r, hass)).filter(Boolean);
     if (cams.length)
       push({ type: "grid", columns: cams.length > 1 ? 2 : 1, square: false, cards: cams });
@@ -2455,6 +2599,7 @@ function layoutBody(r, hass) {
   const out = [];
   const fans = fanIdSet(r);
   let run = [];
+  let camsOne = false;
   const flush = () => {
     if (!run.length) return;
     out.push({ type: "grid", columns: 2, square: false, cards: run });
@@ -2510,6 +2655,17 @@ function layoutBody(r, hass) {
           flush();
           out.push({ type: "grid", columns: 1, square: false, cards: [c] });
         } else { run.push(c); }
+      }
+    } else if (it.camera && camerasAsOne(r)) {
+      /* One view: the first camera tile is the switcher for all of the
+       * room's cameras, wherever it was dragged; the others draw nothing. */
+      if (!camsOne) {
+        camsOne = true;
+        const sw = cameraSwitchCard(r, hass);
+        if (sw) {
+          if (it.width === "half") run.push(sw);
+          else { flush(); out.push({ type: "grid", columns: 1, square: false, cards: [sw] }); }
+        }
       }
     } else if (it.camera) {
       /* The opposite default to every other tile: a camera takes the row
@@ -14576,6 +14732,10 @@ class CharroRoomsEditor extends HTMLElement {
     box.appendChild(f.add("+ Camera", () => {
       (r.cameras = r.cameras || []).push({ entity: "" });
     }));
+    if (list.length > 1)
+      box.appendChild(f.sel("Show them", r.camera_view || "", CAMERA_VIEWS,
+        (v) => { if (v) r.camera_view = v; else delete r.camera_view; },
+        "One at a time streams only the camera on screen, with tabs, arrows and a swipe to change."));
     const note = document.createElement("div");
     note.className = "vnote";
     note.textContent = "Each camera is its own tile in the layout, so it can sit "

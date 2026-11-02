@@ -143,6 +143,14 @@ block the room has entities for appears in the default order.
 A saved `layout` supersedes it entirely: once a room has one, the drag builder
 owns the arrangement and `sections` is ignored.
 
+**Cameras, all or one at a time.** A room with more than one camera has a
+**Show them** choice in its Cameras panel. *All of them, laid out* is the
+default. *One at a time, switchable* draws a single camera with a tab for
+each, arrows, and a sideways swipe on a phone; only the camera on screen
+streams, and the last one picked is remembered per room. In a room with its
+own layout, the first camera tile becomes the switcher and the rest draw
+nothing.
+
 Audio and video used to share one `media` block. They split in 4.20 so a
 player can be sorted away from a TV remote. A room whose `sections` named
 `media` before the split gets `music` put back in right behind it, and a saved
