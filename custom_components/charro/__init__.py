@@ -36,9 +36,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import event
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 import homeassistant.util.dt as dt_util
 
+from .access import AccessError, CharroAccess
 from .const import (
     BUNDLE,
     KEEP_QUIET_SECONDS,
@@ -1134,6 +1136,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await keeper.async_rescan()
     store["keeper"] = keeper
 
+    # People whose access is paused: kept in .storage, not the rooms folder
+    access = CharroAccess(hass, Store(hass, 1, f"{DOMAIN}_access"))
+    await access.async_load()
+    store["access"] = access
+
+    websocket_api.async_register_command(hass, ws_access_list)
+    websocket_api.async_register_command(hass, ws_access_set)
+    websocket_api.async_register_command(hass, ws_access_me)
     websocket_api.async_register_command(hass, ws_get_rooms)
     websocket_api.async_register_command(hass, ws_list_rooms)
     websocket_api.async_register_command(hass, ws_save_room)
@@ -1799,6 +1809,74 @@ async def ws_save_notify(hass, connection, msg):
         # the checklist lives in this file, so a save is what re-subscribes
         hass.async_create_task(notifier.async_rescan())
     connection.send_result(msg["id"], {"path": os.path.join(path, NOTIFY_FILE)})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "charro/access_list"})
+@websocket_api.async_response
+async def ws_access_list(hass, connection, msg):
+    """Everyone who can sign in, and whether they're paused. Admin only."""
+    access = hass.data.get(DOMAIN, {}).get("access")
+    modes = access.modes() if access else {}
+    people = []
+    for user in await hass.auth.async_get_users():
+        if user.system_generated:
+            continue
+        people.append({"id": user.id, "name": user.name or "", "admin": bool(user.is_admin),
+                       "owner": bool(user.is_owner), "active": bool(user.is_active),
+                       "mode": modes.get(user.id, "")})
+    people.sort(key=lambda p: (p["admin"], p["name"].lower()))
+    connection.send_result(msg["id"], {"people": people})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "charro/access_set",
+        vol.Required("user_id"): str,
+        vol.Required("mode"): vol.In(["", "paused", "hidden"]),
+    }
+)
+@websocket_api.async_response
+async def ws_access_set(hass, connection, msg):
+    """Pause, hide, or give back one person's access. Admin only."""
+    access = hass.data.get(DOMAIN, {}).get("access")
+    if access is None:
+        connection.send_error(msg["id"], "not_ready", "Charro is still starting")
+        return
+    if msg["user_id"] == connection.user.id and msg["mode"]:
+        connection.send_error(msg["id"], "self", "You can't pause yourself")
+        return
+    try:
+        await access.async_set(msg["user_id"], msg["mode"])
+    except AccessError as err:
+        reason = {"admin": "Admins and the owner can't be paused",
+                  "no_user": "No such person", "bad_mode": "Unknown setting"}.get(str(err), str(err))
+        connection.send_error(msg["id"], str(err), reason)
+        return
+    connection.send_result(msg["id"], {"mode": access.mode(msg["user_id"])})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "charro/access_me"})
+@callback
+def ws_access_me(hass, connection, msg):
+    """The signed-in person's own setting, now and whenever it changes.
+
+    A subscription, so a pause lands on a dashboard that is already open
+    without anyone reloading - and lifts the same way.
+    """
+    access = hass.data.get(DOMAIN, {}).get("access")
+    uid = connection.user.id
+
+    @callback
+    def push(user_id: str | None = None, _mode: str | None = None) -> None:
+        if user_id is None or user_id == uid:
+            connection.send_message(websocket_api.event_message(
+                msg["id"], {"mode": access.mode(uid) if access else ""}))
+
+    connection.subscriptions[msg["id"]] = access.listen(push) if access else (lambda: None)
+    connection.send_result(msg["id"])
+    push()
 
 
 @websocket_api.websocket_command({vol.Required("type"): "charro/watching"})
