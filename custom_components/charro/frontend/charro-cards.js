@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.163.0";
+const VERSION = "5.164.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -265,6 +265,7 @@ const INTERNAL_TAGS = {
   "charro-irrigation-panel": "the body of the irrigation pop-up",
   "charro-chips-editor": "the Chips tab of Charro Config",
   "charro-house-editor": "the Settings tab of Charro Config",
+  "charro-people-editor": "the People tab of Charro Config",
   "charro-notify-editor": "the Notifications tab of Charro Config",
   "charro-config-panel": "the Charro Config sidebar panel itself",
   "charro-unifi-panel": "the UniFi tab of Charro Config",
@@ -16990,6 +16991,104 @@ class CharroHouseEditor extends HTMLElement {
 }
 def("charro-house-editor", CharroHouseEditor);
 
+/* ======================================================= PEOPLE EDITOR == */
+/* Charro Config's People tab: everyone who can sign in, and for each a
+ * Normal / Paused / Hidden choice. It applies the moment it's picked -
+ * there's nothing to save - and lands on that person's open dashboards
+ * without a reload. Admins and the owner are listed but can't be changed:
+ * pausing an admin could lock the house out of its own settings. */
+const PEOPLE_MODES = [["", "Normal"], ["paused", "Paused — a paused screen, no control"],
+  ["hidden", "Hidden — no dashboards, no control"]];
+
+class CharroPeopleEditor extends HTMLElement {
+  static getStubConfig() { return { type: "custom:charro-people-editor" }; }
+  setConfig(config) { this._config = config || {}; }
+  set hass(h) { this._hass = h; if (!this._built) this._build(); }
+  getCardSize() { return 6; }
+
+  _say(msg, cls) {
+    if (this._status) {
+      this._status.textContent = msg;
+      this._status.className = "status " + (cls || "");
+    }
+  }
+
+  _build() {
+    this._built = true;
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = RE_CSS + NT_CSS;
+    const card = document.createElement("ha-card");
+    const bar = document.createElement("div"); bar.className = "bar";
+    const t = document.createElement("div");
+    t.className = "ttl"; t.textContent = "People";
+    bar.appendChild(t);
+    this._body = document.createElement("div");
+    this._status = document.createElement("div");
+    this._status.className = "status";
+    card.append(bar, this._body, this._status);
+    root.innerHTML = ""; root.append(style, card);
+    this._load();
+  }
+
+  async _load() {
+    try {
+      const r = await this._hass.callWS({ type: "charro/access_list" });
+      this._people = (r && r.people) || [];
+      this._paint();
+    } catch (err) {
+      this._say(`Could not list people — ${err.message || err.code || err}`, "err");
+    }
+  }
+
+  async _set(p, mode) {
+    try {
+      await this._hass.callWS({ type: "charro/access_set", user_id: p.id, mode });
+      p.mode = mode;
+      this._say(mode ? `${p.name} is ${mode === "paused" ? "paused" : "hidden"}. Still signed in; nothing they `
+        + "do can change anything until you set them back to Normal." : `${p.name} is back to normal.`, "ok");
+    } catch (err) {
+      this._say(`Could not change ${p.name} — ${err.message || err.code || err}`, "err");
+    }
+    this._paint();
+  }
+
+  _paint() {
+    const root = this._body;
+    if (!root) return;
+    root.innerHTML = "";
+    const f = fieldKit(this._hass, () => this._paint());
+    const note = document.createElement("div");
+    note.className = "vnote";
+    note.textContent = "Take someone’s access away without signing them out. Paused shows an "
+      + "“Access paused” screen on their dashboards; Hidden just shows nothing. Either way "
+      + "Home Assistant puts them in its read-only group, so they can’t turn anything on or off "
+      + "from anywhere — the app, an entity pop-up, Settings or a voice assistant. Changes apply "
+      + "straight away, and stay until you set them back to Normal.";
+    root.appendChild(note);
+    const me = this._hass && this._hass.user && this._hass.user.id;
+    for (const p of this._people || []) {
+      const row = f.rowBox();
+      const locked = p.admin || p.owner || p.id === me;
+      const label = `${p.name}${p.owner ? " (owner)" : p.admin ? " (admin)" : ""}${p.active ? "" : " — can’t sign in"}`;
+      const sel = f.sel(label, p.mode || "", PEOPLE_MODES, (v) => this._set(p, v || ""),
+        locked ? (p.id === me ? "That’s you." : "Admins can’t be paused.") : "");
+      if (locked) {
+        const s = sel.querySelector ? sel.querySelector("select") : null;
+        if (s) s.disabled = true;
+      }
+      row.appendChild(sel);
+      root.appendChild(row);
+    }
+    if (!(this._people || []).length) {
+      const n = document.createElement("div");
+      n.className = "vnote"; n.textContent = "Nobody to list yet.";
+      root.appendChild(n);
+    }
+  }
+}
+def("charro-people-editor", CharroPeopleEditor);
+
 /* ====================================================== NOTIFY EDITOR == */
 /*
  * Who gets told what, and how loudly.
@@ -17984,6 +18083,7 @@ const CONFIG_TABS = [
   ["remotes", "Remotes"],
   ["notify", "Notifications"],
   ["chips", "Chips"],
+  ["people", "People"],
   ["settings", "Settings"],
   ["unifi", "UniFi"],
 ];
@@ -18075,7 +18175,7 @@ class CharroConfigPanel extends HTMLElement {
 
   /* Rooms and Remotes are the same element, so they are the same pane. */
   _paneKey(tab) {
-    return ["unifi", "notify", "chips", "settings"].includes(tab)
+    return ["unifi", "notify", "chips", "settings", "people"].includes(tab)
       ? tab : "editor";
   }
 
@@ -18094,6 +18194,9 @@ class CharroConfigPanel extends HTMLElement {
     } else if (key === "chips") {
       el = document.createElement("charro-chips-editor");
       el.setConfig({ type: "custom:charro-chips-editor" });
+    } else if (key === "people") {
+      el = document.createElement("charro-people-editor");
+      el.setConfig({ type: "custom:charro-people-editor" });
     } else if (key === "settings") {
       el = document.createElement("charro-house-editor");
       el.setConfig({ type: "custom:charro-house-editor" });
