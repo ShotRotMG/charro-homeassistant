@@ -1623,8 +1623,14 @@ Break the JSON and the card shows a red error instead of failing silently.
 
 ## Notifications on iOS and Android
 
-Each phone in the **Notifications** tab says which platform it runs, and the
-payload is written in that phone's own spelling. The shared half is `tag`,
+A notification person can carry several devices — a phone and a tablet,
+say — and every one gets their notifications, at that person's levels and
+quiet hours. **Signs in as** ties the person to their Home Assistant login.
+A row saved before this (one `service` on the person) still works as that
+one device.
+
+Each device says which platform it runs, and the payload is written in that
+device's own spelling. The shared half is `tag`,
 `group`, `notification_icon` and `color`. The rest is not shared, and the wrong
 spelling is not an error — it is a notification that arrives without its
 urgency, its camera frame, or the thing it was supposed to open when tapped:

@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.165.0";
+const VERSION = "5.166.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -17440,6 +17440,15 @@ class CharroNotifyEditor extends HTMLElement {
       this._pageBase = (all.house || {}).page_base;
       const cfg = JSON.parse(JSON.stringify(all.notify || {}));
       if (!Array.isArray(cfg.people)) cfg.people = [];
+      /* A person used to be one phone; now they carry a list of devices.
+       * An old row becomes a person with that one device, saved in the new
+       * shape the next time Save is pressed (the service reads both). */
+      for (const p of cfg.people) {
+        if (!Array.isArray(p.devices)) {
+          p.devices = p.service ? [{ service: p.service, platform: p.platform || "ios" }] : [];
+          delete p.service; delete p.platform;
+        }
+      }
       if (!Array.isArray(cfg.categories) || !cfg.categories.length)
         cfg.categories = JSON.parse(JSON.stringify(NT_CATS));
       this._cfg = cfg;
@@ -17451,8 +17460,9 @@ class CharroNotifyEditor extends HTMLElement {
        * falls back to typing the name - which is all this ever was. */
       try {
         const list = await this._hass.callWS({ type: "config/auth/list" });
-        this._users = list.filter((u) => !u.system_generated && u.is_active)
-          .map((u) => u.name).filter(Boolean).sort();
+        const real = list.filter((u) => !u.system_generated && u.is_active && u.name);
+        this._users = real.map((u) => u.name).sort();
+        this._userIds = Object.fromEntries(real.map((u) => [u.name, u.id]));
       } catch (err) { this._users = null; }
       this._say("");
       this._paint();
@@ -17631,7 +17641,7 @@ class CharroNotifyEditor extends HTMLElement {
     if (!cfg.people.length) {
       const n = document.createElement("div");
       n.className = "vnote";
-      n.textContent = "No phones yet — add one below and the grid appears.";
+      n.textContent = "Nobody yet — add a person below and the grid appears.";
       box.appendChild(n);
     } else {
       const wrapx = document.createElement("div"); wrapx.className = "wrapx";
@@ -17651,7 +17661,10 @@ class CharroNotifyEditor extends HTMLElement {
         who.className = "who";
         who.textContent = p.name || p.key || "?";
         const sub = document.createElement("small");
-        sub.textContent = (p.service || "no phone").replace("notify.mobile_app_", "");
+        const devs = (p.devices || []).filter((d) => d.service);
+        sub.textContent = devs.length
+          ? devs.map((d) => d.service.replace("notify.mobile_app_", "")).join(", ")
+          : "no device";
         who.appendChild(sub);
         tr.appendChild(who);
         for (const c of cfg.categories) {
@@ -17731,8 +17744,8 @@ class CharroNotifyEditor extends HTMLElement {
       box.appendChild(bar);
     }
 
-    /* ---- phones ---- */
-    box = this._section(root, "phones", "Phones",
+    /* ---- people ---- */
+    box = this._section(root, "phones", "People",
       cfg.people.map((p) => p.name || p.key || "?").join(", ") || "none");
     cfg.people.forEach((p, i) => {
       const set = (k) => (v) => { if (v === "" || v === false || v == null) delete p[k]; else p[k] = v; };
@@ -17742,33 +17755,48 @@ class CharroNotifyEditor extends HTMLElement {
       if (!p.key && p.name)
         p.key = String(p.name).toLowerCase().replace(/[^a-z0-9_]+/g, "_")
           .replace(/^_+|_+$/g, "");
+      if (!Array.isArray(p.devices)) p.devices = [];
       const row = f.rowBox();
       row.appendChild(f.text("Name", p.name, set("name"), "Alex"));
       row.appendChild(f.text("Key", p.key, (v) =>
         { p.key = String(v || "").toLowerCase().replace(/[^a-z0-9_]/g, ""); },
         "alex"));
-      row.appendChild(f.sel("Phone", p.service || "", this._services(), set("service")));
-      /* iOS and Android want different payloads for the same notification,
-       * and the iOS spelling on an Android phone is not an error - it just
-       * arrives without its urgency, its camera frame and the thing it
-       * opens when tapped. Nothing in Home Assistant reliably says which
-       * a notify service is, so this is asked rather than guessed, and iOS
-       * is the default because that is what every existing row is. */
-      row.appendChild(f.sel("Phone runs", p.platform || "ios",
-        [["ios", "iOS"], ["android", "Android"]], set("platform"),
-        "Which spelling of the payload this phone gets. iOS carries "
-        + "urgency per notification; Android carries it in a channel you "
-        + "then control in Android's own settings."));
       /* Typing a login by hand is a spelling test nobody needs to sit:
        * the match is on the name, so one wrong letter silently means
-       * "this row is nobody" and Mark all read stops working. */
+       * "this row is nobody" and Mark all read stops working. The id is
+       * kept beside it, so renaming the login doesn't unlink them. */
       row.appendChild(this._users && this._users.length
-        ? f.sel("HA user", p.ha_user || "",
+        ? f.sel("Signs in as", p.ha_user || "",
             [["", "\u2014 nobody \u2014"]].concat(this._users.map((n) => [n, n])),
-            set("ha_user"),
-            "Which Home Assistant login this phone belongs to. It is what "
-            + "makes the feed's unread count and Mark all read work.")
-        : f.text("HA user", p.ha_user, set("ha_user"), "the Home Assistant login"));
+            (v) => {
+              if (v) { p.ha_user = v; p.ha_user_id = (this._userIds || {})[v] || p.ha_user_id; }
+              else { delete p.ha_user; delete p.ha_user_id; }
+            },
+            "Which Home Assistant login is this person. It ties their sign-in to their "
+            + "devices, and is what makes the feed's unread count and Mark all read work.")
+        : f.text("Signs in as", p.ha_user, set("ha_user"), "the Home Assistant login"));
+
+      /* Every phone and tablet they carry: each gets the same
+       * notifications, at this person's levels and quiet hours. */
+      p.devices.forEach((d, j) => {
+        const dset = (k) => (v) => { if (v) d[k] = v; else delete d[k]; };
+        const dr = document.createElement("div");
+        dr.className = "vrow";
+        dr.appendChild(f.sel(`Device ${j + 1}`, d.service || "", this._services(), dset("service")));
+        /* iOS and Android want different payloads for the same
+         * notification, and the iOS spelling on an Android phone is not an
+         * error - it just arrives without its urgency, its camera frame and
+         * the thing it opens when tapped. Nothing in Home Assistant reliably
+         * says which a notify service is, so it's asked, per device. */
+        dr.appendChild(f.sel("Runs", d.platform || "ios",
+          [["ios", "iOS"], ["android", "Android"]], dset("platform"),
+          "Which spelling of the payload this device gets. iOS carries urgency per "
+          + "notification; Android carries it in a channel you control in Android's settings."));
+        dr.appendChild(f.del("Remove device", () => { p.devices.splice(j, 1); }));
+        row.appendChild(dr);
+      });
+      row.appendChild(f.add("+ Device", () => { p.devices.push({ service: "", platform: "ios" }); }));
+
       row.appendChild(f.time("Quiet from", p.quiet_from, set("quiet_from")));
       row.appendChild(f.time("Quiet until", p.quiet_to, set("quiet_to")));
       row.appendChild(f.sel("During quiet hours", p.quiet_level || "quiet",
@@ -17776,15 +17804,15 @@ class CharroNotifyEditor extends HTMLElement {
         "Anything louder than this is brought down to it. Critical is never touched."));
       const test = document.createElement("button");
       test.className = "tiny";
-      test.textContent = "Test this phone";
+      test.textContent = p.devices.length > 1 ? "Test their devices" : "Test this person";
       test.addEventListener("click", () => this._sendTest(String(i)));
       row.appendChild(test);
-      row.appendChild(f.del("Remove phone", () => {
+      row.appendChild(f.del("Remove person", () => {
         cfg.people.splice(i, 1);
       }));
       box.appendChild(row);
     });
-    box.appendChild(f.add("+ Phone", () => { cfg.people.push({ key: "", name: "", levels: {} }); }));
+    box.appendChild(f.add("+ Person", () => { cfg.people.push({ key: "", name: "", levels: {}, devices: [] }); }));
     const an = document.createElement("div");
     an.className = "vnote";
     an.textContent = "On an Android phone, urgency is a notification channel "

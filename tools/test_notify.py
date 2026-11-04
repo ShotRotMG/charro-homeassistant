@@ -16,7 +16,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "custom_components", "charro"))
 import const  # noqa: E402  - the real constants, not a copy
 
-WANT = ("_notify_payload", "_notify_platform")
+WANT = ("_notify_payload", "_notify_platform", "_notify_devices", "_notify_expand")
 src = io.open(os.path.join(ROOT, "custom_components", "charro", "__init__.py"),
               encoding="utf-8").read()
 tree = ast.parse(src)
@@ -28,6 +28,8 @@ ns = {"Any": object, "NOTIFY_PLATFORMS": const.NOTIFY_PLATFORMS}
 exec(compile(ast.Module(body=picked, type_ignores=[]), "<charro>", "exec"), ns)
 payload = ns["_notify_payload"]
 platform = ns["_notify_platform"]
+devices = ns["_notify_devices"]
+expand = ns["_notify_expand"]
 
 fails = []
 
@@ -127,6 +129,24 @@ ok(const.NOTIFY_ANDROID_CRITICAL_CHANNEL
    and const.NOTIFY_ANDROID_CRITICAL_CHANNEL != "General",
    "critical has a channel of its own to allow past Do Not Disturb")
 eq(const.NOTIFY_PLATFORMS, ("ios", "android"), "two platforms, iOS first")
+
+
+# ------------------------------------------------------------ devices --
+old = {"key": "javon", "name": "Javon", "service": "notify.mobile_app_iphone", "platform": "ios"}
+eq([d["service"] for d in devices(old)], ["notify.mobile_app_iphone"], "a row from before is its one phone")
+eq([(o["service"], o["_rec"]) for o in expand(old)], [("notify.mobile_app_iphone", "javon")],
+   "recorded under the person's own key, exactly as before")
+two = {"key": "javon", "name": "Javon", "levels": {"doors": "urgent"},
+       "devices": [{"service": "notify.mobile_app_iphone", "platform": "ios"},
+                   {"service": "notify.mobile_app_pixel_tablet", "platform": "android"}]}
+ex = expand(two)
+eq([(o["service"], o["platform"], o["_rec"]) for o in ex],
+   [("notify.mobile_app_iphone", "ios", "javon~mobile_app_iphone"),
+    ("notify.mobile_app_pixel_tablet", "android", "javon~mobile_app_pixel_tablet")],
+   "two devices: each its own service, platform and record")
+eq([o["levels"] for o in ex], [{"doors": "urgent"}] * 2, "both at the person's levels")
+eq(devices({"key": "x", "devices": [{"service": ""}]}), [], "a device with no service is no device")
+eq(devices({"key": "x"}), [], "and nobody set is nothing")
 
 print("\n%d FAILED" % len(fails) if fails else "\nall passed")
 sys.exit(1 if fails else 0)

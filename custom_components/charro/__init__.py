@@ -245,6 +245,41 @@ def _notify_payload(cat: dict, call_data: dict, tag: str,
     return data
 
 
+def _notify_devices(person: dict) -> list[dict]:
+    """Every device a person's notifications go to.
+
+    A person used to be one phone: `service` and `platform` on the row
+    itself. Now a row can carry `devices`, a list of {service, platform},
+    so a phone and a tablet both ring. A row from before still reads as
+    the one device it always was.
+    """
+    devs = person.get("devices")
+    if isinstance(devs, list) and devs:
+        out = [d for d in devs if isinstance(d, dict) and (d.get("service") or "").strip()]
+    elif (person.get("service") or "").strip():
+        out = [{"service": person["service"], "platform": person.get("platform")}]
+    else:
+        out = []
+    return out
+
+
+def _notify_expand(person: dict) -> list[dict]:
+    """The person once per device, each copy carrying that device's service
+    and platform and the key its delivery is recorded under. With one
+    device the key is the person's own, exactly as before; with several,
+    each is "key~device" so their states don't overwrite each other."""
+    devs = _notify_devices(person)
+    base = person.get("key") or (devs[0]["service"] if devs else "") or "?"
+    out = []
+    for d in devs:
+        one = dict(person)
+        one["service"] = d["service"]
+        one["platform"] = d.get("platform") or person.get("platform")
+        one["_rec"] = base if len(devs) == 1 else f"{base}~{d['service'].split('.')[-1]}"
+        out.append(one)
+    return out
+
+
 def _notify_platform(person: dict) -> str:
     """Which spelling this phone reads. Anything unrecognised is iOS."""
     p = str(person.get("platform") or "ios").strip().lower()
@@ -542,8 +577,8 @@ class CharroNotifier:
         out = []
         for person in self.cfg.get("people") or []:
             who = person.get("name") or person.get("key") or "a phone row"
-            if not (person.get("service") or "").strip():
-                _LOGGER.warning("charro.notify: %s has no phone set, so it gets nothing", who)
+            if not _notify_devices(person):
+                _LOGGER.warning("charro.notify: %s has no device set, so they get nothing", who)
                 continue
             if only and person.get("key") not in only:
                 continue
@@ -559,11 +594,12 @@ class CharroNotifier:
             if level not in NOTIFY_PUSH_LEVEL:
                 _LOGGER.debug("charro.notify: %s has %r set to %r", who, key, level)
                 continue
-            out.append((person, level))
+            # every device the person has, at the person's level
+            out.extend((one, level) for one in _notify_expand(person))
         return out
 
     async def _async_deliver(self, entry, person, level, cat, data, attempt=0) -> None:
-        pk = person.get("key") or person.get("service") or "?"
+        pk = person.get("_rec") or person.get("key") or person.get("service") or "?"
         rec = entry["to"].setdefault(pk, {"name": person.get("name") or pk, "level": level})
         rec["level"] = level
         rec["tries"] = attempt + 1
@@ -666,8 +702,11 @@ class CharroNotifier:
             for pk, rec in (entry.get("to") or {}).items():
                 if rec.get("state") == "sent":
                     continue
-                person = next((p for p in self.cfg.get("people") or []
-                               if p.get("key") == pk), None)
+                key = pk.split("~", 1)[0]
+                owner = next((p for p in self.cfg.get("people") or []
+                              if p.get("key") == key), None)
+                person = next((one for one in _notify_expand(owner) if one["_rec"] == pk),
+                              None) if owner else None
                 if not person:
                     continue
                 resumed += 1
@@ -959,6 +998,10 @@ class CharroNotifier:
 
     def person_for_user(self, user) -> str | None:
         """Which phone row the signed-in user is, if any."""
+        uid = getattr(user, "id", None)
+        for p in self.cfg.get("people") or []:
+            if uid and p.get("ha_user_id") == uid:
+                return p.get("key")
         name = (getattr(user, "name", "") or "").strip().lower()
         for p in self.cfg.get("people") or []:
             tag = (p.get("ha_user") or "").strip().lower()
