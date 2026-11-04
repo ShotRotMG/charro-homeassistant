@@ -1470,6 +1470,23 @@ picture, colour and make. As many cars as you like; they appear in the
 pop-up's **Vehicles** section, two to a row, and a custom layout can drag
 Vehicles in from Available.
 
+## Pausing a person's access
+
+**Charro Config → People** lists everyone who can sign in. Set a person to:
+
+- **Paused** — their dashboards show an "Access paused" screen (the wording
+  is set at the top of the tab);
+- **Hidden** — their dashboards show nothing at all;
+- **Normal** — everything back as it was.
+
+Nobody is signed out, it applies to open dashboards at once, and it lasts
+until you set them back. Paused and Hidden both also move the person into
+Home Assistant's own **read-only** group, so they can't change anything from
+anywhere — a card, an entity pop-up, Settings, the app or a voice
+assistant; their own group is kept and given back on Normal. Admins and the
+owner can't be paused. The screen covers dashboards; Home Assistant's own
+pages (History, Map) stay readable, but read-only.
+
 ## `charro-rooms-editor`
 
 With the integration installed this is already on the sidebar as **Rooms** —

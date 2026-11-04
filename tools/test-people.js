@@ -16,6 +16,8 @@ const hass = { states: {}, user: { id: "me" }, callWS: async (m) => {
   calls.push(m);
   if (m.type === "charro/access_list") return { people: JSON.parse(JSON.stringify(people)) };
   if (m.type === "charro/access_set") return { mode: m.mode };
+  if (m.type === "charro/get_rooms") return { rooms: {}, house: { tooltips: false } };
+  if (m.type === "charro/save_house") return {};
   throw new Error(m.type);
 } };
 const ed = Object.create(T.CharroPeopleEditor.prototype);
@@ -35,6 +37,30 @@ setTimeout(async () => {
   sels()[1].value = ""; sels()[1].fire("change");
   await new Promise((r) => setTimeout(r, 5));
   eq(calls.filter((c) => c.type === "charro/access_set").pop().mode, "", "Normal gives access back");
+
+  console.log("-- what the paused screen says --");
+  const msg = ed._body.querySelectorAll("input").find((i) => /paused for now/.test(i.placeholder || ""));
+  ok(!!msg, "a field for it, the built-in sentence as its placeholder");
+  msg.value = "Ask Javon"; msg.fire("change");
+  await new Promise((r) => setTimeout(r, 5));
+  eq(calls.filter((c) => c.type === "charro/save_house").pop().config, { tooltips: false, paused_message: "Ask Javon" },
+    "saved with the house's other settings, which are kept");
+
+  console.log("-- on a paused person's dashboard --");
+  const body = document.body;
+  T.accessApply("paused");
+  let scr = body.querySelector(".charro-access");
+  ok(!!scr && scr.dataset.mode === "paused", "Paused covers the dashboard");
+  ok(/Access paused/.test(JSON.stringify(scr.children.map((c) => c.textContent))), "saying Access paused");
+  T.accessApply("hidden");
+  scr = body.querySelector(".charro-access");
+  ok(!!scr && scr.dataset.mode === "hidden" && !/Access paused/.test(JSON.stringify(scr.children.map((c) => c.textContent))),
+    "Hidden covers it with nothing to read");
+  ok(body.querySelectorAll(".charro-access").length === 1, "one screen, not two");
+  T.accessApply("");
+  ok(!body.querySelector(".charro-access"), "Normal takes the screen away, no reload");
+  ok(T._acc.timer === null, "and stops checking");
+
   console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
   process.exit(fails ? 1 : 0);
 }, 10);

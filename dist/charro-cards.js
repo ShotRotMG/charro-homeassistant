@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.164.0";
+const VERSION = "5.165.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -4559,8 +4559,118 @@ const _tip = { boot: null, on: false, delay: TIP_DELAY, hass: null,
 
 /* Called from every room card's hass setter: one assignment and one test
  * once booted. */
+/* ======================================================= ACCESS PAUSE === */
+/* What a paused person sees. The integration has already made them
+ * read-only, so nothing they tap can change anything - this is the part
+ * that stops them seeing the dashboards: Paused covers each dashboard with
+ * an "Access paused" screen, Hidden with an empty one. It covers the
+ * dashboard's own area, not the sidebar, and keeps a menu button so a
+ * phone can still open the sidebar and get to their profile.
+ *
+ * Normal users and admins cost nothing: one subscription when the first
+ * dashboard opens, which only ever says something when an admin changes
+ * that person. The re-check that keeps the screen in place runs only
+ * while the person is paused. */
+const _acc = { mode: "", started: false, timer: null, hass: null, tries: 0 };
+
+function accessBoot(hass) {
+  if (_acc.started || typeof document === "undefined") return;
+  const h = hass || (document.querySelector && document.querySelector("home-assistant")
+    && document.querySelector("home-assistant").hass);
+  if (!h || !h.connection || !h.user) {
+    if (!hass && _acc.tries++ < 20) setTimeout(() => accessBoot(), 1000);
+    return;
+  }
+  _acc.started = true;
+  _acc.hass = h;
+  if (h.user.is_admin) return;                 // admins can't be paused
+  try {
+    Promise.resolve(h.connection.subscribeMessage(
+      (m) => accessApply((m && m.mode) || ""), { type: "charro/access_me" }))
+      .catch(() => { /* an older integration: nothing to enforce here */ });
+  } catch (err) { /* same */ }
+}
+
+/* The dashboard panel that's showing, so the screen covers it and not the
+ * sidebar. Falls back to the whole window if Home Assistant has moved it. */
+function accessTarget() {
+  const ha = document.querySelector && document.querySelector("home-assistant");
+  const main = ha && ha.shadowRoot && ha.shadowRoot.querySelector("home-assistant-main");
+  const panel = main && main.shadowRoot && main.shadowRoot.querySelector("ha-panel-lovelace");
+  if (panel && panel.shadowRoot) return { root: panel.shadowRoot, fixed: false };
+  return { root: popupHost(), fixed: true };
+}
+
+function accessScreen(mode, fixed, house) {
+  const d = document.createElement("div");
+  d.className = "charro-access";
+  d.dataset.mode = mode;
+  d.setAttribute("style", `position:${fixed ? "fixed" : "absolute"}; inset:0; z-index:1000;`
+    + "display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;"
+    + "padding:24px; box-sizing:border-box; text-align:center;"
+    + "background:var(--primary-background-color, #111); color:var(--primary-text-color, #fff);"
+    + "font-family:var(--paper-font-body1_-_font-family, system-ui, sans-serif);");
+  const menu = document.createElement("button");
+  menu.setAttribute("style", "position:absolute; top:max(8px, env(safe-area-inset-top, 0px)); left:8px;"
+    + "width:44px; height:44px; border:none; border-radius:50%; background:none; color:inherit; cursor:pointer;");
+  menu.setAttribute("aria-label", "Menu");
+  const mi = document.createElement("ha-icon"); mi.setAttribute("icon", "mdi:menu");
+  menu.appendChild(mi);
+  menu.addEventListener("click", () => {
+    menu.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+  });
+  d.appendChild(menu);
+  if (mode === "paused") {
+    const ic = document.createElement("ha-icon");
+    ic.setAttribute("icon", "mdi:lock-clock");
+    ic.setAttribute("style", "--mdc-icon-size:56px; color:var(--secondary-text-color);");
+    const t = document.createElement("div");
+    t.setAttribute("style", "font-size:22px; font-weight:700;");
+    t.textContent = "Access paused";
+    const s = document.createElement("div");
+    s.setAttribute("style", "font-size:14px; color:var(--secondary-text-color); max-width:320px;");
+    s.textContent = (house && house.paused_message) || "Your access to the house controls is paused for now.";
+    d.append(ic, t, s);
+  }
+  return d;
+}
+
+let _accHouse = null;
+function accessEnsure() {
+  if (!_acc.mode) return;
+  const { root, fixed } = accessTarget();
+  const have = root.querySelector ? root.querySelector(".charro-access") : null;
+  if (have && have.dataset.mode === _acc.mode) return;
+  if (have) have.remove();
+  root.appendChild(accessScreen(_acc.mode, fixed, _accHouse));
+}
+
+function accessClear() {
+  const roots = [popupHost()];
+  const t = accessTarget();
+  if (!t.fixed) roots.push(t.root);
+  for (const r of roots) {
+    const all = r.querySelectorAll ? r.querySelectorAll(".charro-access") : [];
+    for (const n of all) { try { n.remove(); } catch (err) { /* gone */ } }
+  }
+}
+
+function accessApply(mode) {
+  _acc.mode = mode === "paused" || mode === "hidden" ? mode : "";
+  clearInterval(_acc.timer); _acc.timer = null;
+  if (!_acc.mode) { accessClear(); return; }
+  if (_acc.hass && !_accHouse) loadHouse(_acc.hass).then((h) => { _accHouse = h; accessClear(); accessEnsure(); });
+  accessEnsure();
+  /* Home Assistant swaps the panel when you change dashboard; put the
+   * screen back on whichever one is showing. Paused people only. */
+  _acc.timer = setInterval(accessEnsure, 1500);
+}
+if (typeof window !== "undefined" && typeof document !== "undefined" && document.querySelector)
+  setTimeout(() => accessBoot(), 0);
+
 function tipBoot(hass) {
   if (hass) _tip.hass = hass;
+  if (hass && !_acc.started) accessBoot(hass);
   if (_tip.boot || !hass || typeof document === "undefined"
       || typeof document.addEventListener !== "function") return;
   _tip.boot = loadHouse(hass).then((house) => {
@@ -17035,6 +17145,8 @@ class CharroPeopleEditor extends HTMLElement {
     try {
       const r = await this._hass.callWS({ type: "charro/access_list" });
       this._people = (r && r.people) || [];
+      invalidateRooms();
+      this._house = JSON.parse(JSON.stringify((await loadAll(this._hass)).house || {}));
       this._paint();
     } catch (err) {
       this._say(`Could not list people — ${err.message || err.code || err}`, "err");
@@ -17053,6 +17165,21 @@ class CharroPeopleEditor extends HTMLElement {
     this._paint();
   }
 
+  async _saveMessage(v) {
+    const house = Object.assign({}, this._house || {});
+    const t = String(v || "").trim();
+    if (t) house.paused_message = t; else delete house.paused_message;
+    if ((house.paused_message || "") === ((this._house || {}).paused_message || "")) return;
+    try {
+      await this._hass.callWS({ type: WS_SAVE_HOUSE, config: house });
+      this._house = house;
+      invalidateRooms();
+      this._say("Saved what the Paused screen says.", "ok");
+    } catch (err) {
+      this._say(`Could not save the message \u2014 ${err.message || err.code || err}`, "err");
+    }
+  }
+
   _paint() {
     const root = this._body;
     if (!root) return;
@@ -17066,6 +17193,12 @@ class CharroPeopleEditor extends HTMLElement {
       + "from anywhere — the app, an entity pop-up, Settings or a voice assistant. Changes apply "
       + "straight away, and stay until you set them back to Normal.";
     root.appendChild(note);
+    /* What the Paused screen says. Saved with the house's other settings
+     * when the field is left; blank is the built-in sentence. */
+    const mrow = f.rowBox();
+    mrow.appendChild(f.text("The Paused screen says", (this._house || {}).paused_message || "",
+      (v) => this._saveMessage(v), "Your access to the house controls is paused for now."));
+    root.appendChild(mrow);
     const me = this._hass && this._hass.user && this._hass.user.id;
     for (const p of this._people || []) {
       const row = f.rowBox();
