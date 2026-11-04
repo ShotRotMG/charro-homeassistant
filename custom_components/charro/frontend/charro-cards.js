@@ -23,7 +23,7 @@
  *   template_url: /local/cards/room-card.json
  */
 
-const VERSION = "5.166.0";
+const VERSION = "5.167.0";
 console.info(
   `%c CHARRO CARDS %c ${VERSION} `,
   "color:#fff;background:#4caf50;font-weight:700",
@@ -17131,7 +17131,7 @@ class CharroPeopleEditor extends HTMLElement {
     const card = document.createElement("ha-card");
     const bar = document.createElement("div"); bar.className = "bar";
     const t = document.createElement("div");
-    t.className = "ttl"; t.textContent = "People";
+    t.className = "ttl"; t.textContent = "Access";
     bar.appendChild(t);
     this._body = document.createElement("div");
     this._status = document.createElement("div");
@@ -17146,7 +17146,9 @@ class CharroPeopleEditor extends HTMLElement {
       const r = await this._hass.callWS({ type: "charro/access_list" });
       this._people = (r && r.people) || [];
       invalidateRooms();
-      this._house = JSON.parse(JSON.stringify((await loadAll(this._hass)).house || {}));
+      const all = await loadAll(this._hass);
+      this._house = JSON.parse(JSON.stringify(all.house || {}));
+      this._notifyPeople = ((all.notify || {}).people) || [];
       this._paint();
     } catch (err) {
       this._say(`Could not list people — ${err.message || err.code || err}`, "err");
@@ -17211,6 +17213,17 @@ class CharroPeopleEditor extends HTMLElement {
         if (s) s.disabled = true;
       }
       row.appendChild(sel);
+      /* The phones and tablets this sign-in owns, from the notification
+       * people below - tied by id, or by name for an older row. */
+      const np = (this._notifyPeople || []).find((n) => (n.ha_user_id && n.ha_user_id === p.id)
+        || (!n.ha_user_id && n.ha_user && n.ha_user.toLowerCase() === String(p.name).toLowerCase()));
+      const devs = np ? (Array.isArray(np.devices) ? np.devices.map((d) => d.service)
+        : [np.service]).filter(Boolean).map((x) => x.replace(/^notify\.(mobile_app_)?/, "")) : [];
+      const dn = document.createElement("div");
+      dn.className = "vhelp";
+      dn.textContent = devs.length ? `Devices: ${devs.join(", ")}`
+        : "No devices for notifications \u2014 add this person under People below.";
+      row.appendChild(dn);
       root.appendChild(row);
     }
     if (!(this._people || []).length) {
@@ -18242,7 +18255,6 @@ def("charro-notify-editor", CharroNotifyEditor);
 const CONFIG_TABS = [
   ["rooms", "Rooms"],
   ["remotes", "Remotes"],
-  ["notify", "Notifications"],
   ["chips", "Chips"],
   ["people", "People"],
   ["settings", "Settings"],
@@ -18286,6 +18298,8 @@ class CharroConfigPanel extends HTMLElement {
     const r = this._route || {};
     const seg = String(r.path || "").replace(/^\/+/, "").split("/")[0];
     if (CONFIG_TABS.some(([k]) => k === seg)) return seg;
+    // Notifications became part of People; an old link still lands there
+    if (seg === "notify") return "people";
     if (String(r.prefix || "").indexOf("unifi") >= 0) return "unifi";
     return "rooms";
   }
@@ -18336,7 +18350,7 @@ class CharroConfigPanel extends HTMLElement {
 
   /* Rooms and Remotes are the same element, so they are the same pane. */
   _paneKey(tab) {
-    return ["unifi", "notify", "chips", "settings", "people"].includes(tab)
+    return ["unifi", "chips", "settings", "people"].includes(tab)
       ? tab : "editor";
   }
 
@@ -18349,15 +18363,19 @@ class CharroConfigPanel extends HTMLElement {
       el = document.createElement("charro-unifi-panel");
       el.setAttribute("embedded", "");
       el.embedded = true;                       // before hass, which renders
-    } else if (key === "notify") {
-      el = document.createElement("charro-notify-editor");
-      el.setConfig({ type: "custom:charro-notify-editor" });
     } else if (key === "chips") {
       el = document.createElement("charro-chips-editor");
       el.setConfig({ type: "custom:charro-chips-editor" });
     } else if (key === "people") {
+      /* One tab for a person: their access first, then their devices and
+       * what each notification does to them. */
       el = document.createElement("charro-people-editor");
       el.setConfig({ type: "custom:charro-people-editor" });
+      const nt = document.createElement("charro-notify-editor");
+      nt.setConfig({ type: "custom:charro-notify-editor" });
+      nt.hass = this._hass;
+      box.appendChild(nt);
+      this._els.notify = nt;
     } else if (key === "settings") {
       el = document.createElement("charro-house-editor");
       el.setConfig({ type: "custom:charro-house-editor" });
@@ -18366,7 +18384,7 @@ class CharroConfigPanel extends HTMLElement {
       el.setConfig({ type: "custom:charro-rooms-editor", panel: true });
     }
     el.hass = this._hass;
-    box.appendChild(el);
+    box.insertBefore ? box.insertBefore(el, box.firstChild) : box.appendChild(el);
     this._body.appendChild(box);
     this._panes[key] = box;
     this._els[key] = el;
@@ -18378,9 +18396,10 @@ class CharroConfigPanel extends HTMLElement {
     /* The notifications editor saves explicitly, so leaving it is the one
      * place in here that can lose work. */
     /* Two tabs save explicitly, so leaving either can lose work. */
-    for (const k of ["notify", "chips", "settings"]) {
+    for (const k of ["people", "chips", "settings"]) {
       if (this._tab !== k || tab === k) continue;
-      const ed = this._els && this._els[k];
+      // People's unsaved work is its notification settings
+      const ed = this._els && this._els[k === "people" ? "notify" : k];
       if (ed && ed.dirtyCheck && !ed.dirtyCheck()) return;
     }
     this._tab = tab;

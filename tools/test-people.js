@@ -16,7 +16,9 @@ const hass = { states: {}, user: { id: "me" }, callWS: async (m) => {
   calls.push(m);
   if (m.type === "charro/access_list") return { people: JSON.parse(JSON.stringify(people)) };
   if (m.type === "charro/access_set") return { mode: m.mode };
-  if (m.type === "charro/get_rooms") return { rooms: {}, house: { tooltips: false } };
+  if (m.type === "charro/get_rooms") return { rooms: {}, house: { tooltips: false }, notify: { people: [
+    { key: "jordan", name: "Jordan", ha_user_id: "j", devices: [{ service: "notify.mobile_app_jordans_iphone" }, { service: "notify.mobile_app_ipad" }] },
+    { key: "janell", name: "Janell", ha_user: "janell", service: "notify.mobile_app_janell" }] } };
   if (m.type === "charro/save_house") return {};
   throw new Error(m.type);
 } };
@@ -29,6 +31,9 @@ setTimeout(async () => {
   eq(sels().length, 4, "everyone who can sign in is listed");
   eq(sels().map((s) => s.value), ["", "paused", "", ""], "with their current setting");
   ok(!sels()[0].disabled && sels()[2].disabled && sels()[3].disabled, "admins and you can't be changed");
+  const notes = ed._body.querySelectorAll(".vhelp").map((n) => n.textContent);
+  ok(notes.includes("Devices: jordans_iphone, ipad"), "each sign-in shows the devices they own, tied by id");
+  ok(notes.includes("Devices: janell"), "or by name, for an older one-phone row");
   sels()[0].value = "hidden"; sels()[0].fire("change");
   await new Promise((r) => setTimeout(r, 5));
   eq(calls.filter((c) => c.type === "charro/access_set").pop(), { type: "charro/access_set", user_id: "j", mode: "hidden" },

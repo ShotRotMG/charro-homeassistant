@@ -1472,7 +1472,9 @@ Vehicles in from Available.
 
 ## Pausing a person's access
 
-**Charro Config → People** lists everyone who can sign in. Set a person to:
+**Charro Config → People** lists everyone who can sign in, with the devices
+each one owns, and below that their notification settings — what used to
+be the Notifications tab. Set a person's access to:
 
 - **Paused** — their dashboards show an "Access paused" screen (the wording
   is set at the top of the tab);
